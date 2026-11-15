@@ -113,7 +113,11 @@ where
                     persistence_dirty |= events.iter().any(|event| !event.is_transient());
 
                     let stopped = apply_events(
-                        events, &mut reduced_state, &state_tx, &event_tx_task, &mut activity_tracker,
+                        events,
+                        &mut reduced_state,
+                        &state_tx,
+                        &event_tx_task,
+                        &mut activity_tracker,
                     );
 
                     if shutdown_requested || stopped {
@@ -149,7 +153,13 @@ where
                 RuntimeInput::Update(Some(Ok(event))) => {
                     let stopped = event.is_terminal();
                     persistence_dirty |= !event.is_transient();
-                    apply_event(event, &mut reduced_state, &state_tx, &event_tx_task, &mut activity_tracker);
+                    apply_event(
+                        event,
+                        &mut reduced_state,
+                        &state_tx,
+                        &event_tx_task,
+                        &mut activity_tracker,
+                    );
 
                     if stopped {
                         persist_state(&store, &mut reduced_state, &state_tx, &event_tx_task).await;
@@ -171,7 +181,13 @@ where
                 }
                 RuntimeInput::ExpireActivities => {
                     for event in activity_tracker.expire(Instant::now().into_std()) {
-                        apply_event(event, &mut reduced_state, &state_tx, &event_tx_task, &mut activity_tracker);
+                        apply_event(
+                            event,
+                            &mut reduced_state,
+                            &state_tx,
+                            &event_tx_task,
+                            &mut activity_tracker,
+                        );
                     }
                 }
                 RuntimeInput::Persist => {
