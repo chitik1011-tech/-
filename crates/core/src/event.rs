@@ -16,6 +16,22 @@ pub enum CoreEvent {
         chat_id: i64,
         messages: Vec<MessageSummary>,
     },
+    MessagesPageLoading {
+        chat_id: i64,
+        before_message_id: Option<i64>,
+    },
+    MessagesPageLoaded {
+        chat_id: i64,
+        before_message_id: Option<i64>,
+        messages: Vec<MessageSummary>,
+        next_before_message_id: Option<i64>,
+        has_more: bool,
+    },
+    MessagesPageLoadFailed {
+        chat_id: i64,
+        before_message_id: Option<i64>,
+        error: String,
+    },
     ChatRead {
         chat_id: i64,
         max_message_id: i64,
@@ -33,6 +49,9 @@ impl CoreEvent {
             Self::ConnectionStateChanged(_) => "connection_state_changed",
             Self::ChatsLoaded(_) => "chats_loaded",
             Self::MessagesLoaded { .. } => "messages_loaded",
+            Self::MessagesPageLoading { .. } => "messages_page_loading",
+            Self::MessagesPageLoaded { .. } => "messages_page_loaded",
+            Self::MessagesPageLoadFailed { .. } => "messages_page_load_failed",
             Self::ChatRead { .. } => "chat_read",
             Self::MessageAdded(_) => "message_added",
             Self::Error(_) => "error",
