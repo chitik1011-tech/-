@@ -1,18 +1,22 @@
 use std::{
     collections::{HashMap, VecDeque},
+    path::Path,
     sync::Arc,
 };
 
 use grammers_client::{
+    media::Media,
     Client,
     sender::{SenderPool, SenderPoolHandle},
     session::{storages::SqliteSession, updates::UpdatesLike},
     tl,
 };
+use tg_media_cache::{CacheConfig, MediaCache};
 use tg_mobile_core::{
-    AuthorizationState, BackendFuture, BackendUpdateReceiver, BackendUpdateSender, ConnectionToken,
-    CoreCommand, CoreError, CoreEvent, MessageLinkResolution, MessagePeer, OutgoingSend,
-    PeerReference, PeerResolution, TelegramBackend, backend_update_channel,
+    AttachmentDownloadState, AuthorizationState, BackendFuture, BackendUpdateReceiver,
+    BackendUpdateSender, ConnectionToken, CoreCommand, CoreError, CoreEvent, DownloadState,
+    MessageLinkResolution, MessagePeer, MessageSummary, OutgoingSend, PeerReference, PeerResolution,
+    TelegramBackend, TransferDirection, TransferManager, TransferState, backend_update_channel,
 };
 use tokio::{
     sync::{broadcast, mpsc, watch},
@@ -23,22 +27,31 @@ use crate::{
     auth::AuthFlow,
     chats::{PeerRegistry, find_peer, load_chats, new_peer_registry},
     config::TelegramConfig,
+    downloads::{
+        event as media_event, spawn_download, state_from_snapshot, MediaTarget,
+    },
     error::{TelegramBackendError, session_error},
     messages::{
-        MessageDeduplicator, load_messages, load_messages_page, mark_read, search_messages_page,
-        send_text, send_text_idempotent,
+        message_to_summary, MessageDeduplicator, load_messages, load_messages_page, mark_read,
+        search_messages_page, send_text, send_text_idempotent,
     },
     updates::{TelegramUpdate, UpdateWorkerInput, run_update_worker},
 };
 
 const MESSAGE_DEDUP_CAPACITY: usize = 4096;
 const RELIABLE_SEND_CACHE_CAPACITY: usize = 4096;
+const MEDIA_CACHE_MAX_BYTES: u64 = 512 * 1024 * 1024;
 
 #[derive(Debug, Clone)]
 struct ReliableSendRecord {
     chat_id: i64,
     text: String,
     message_id: i64,
+}
+
+struct ActiveMediaTask {
+    reference: String,
+    handle: JoinHandle<()>,
 }
 
 /// Real Telegram implementation of the core `TelegramBackend` trait.
@@ -63,6 +76,9 @@ pub struct GrammersBackend {
     dedup: Arc<MessageDeduplicator>,
     reliable_sends: HashMap<i64, ReliableSendRecord>,
     reliable_send_order: VecDeque<i64>,
+    media_cache: MediaCache,
+    transfers: Arc<TransferManager>,
+    media_tasks: HashMap<(i64, i64, usize), ActiveMediaTask>,
     stopped: bool,
 }
 
@@ -86,6 +102,16 @@ impl GrammersBackend {
         let (update_tx, _) = broadcast::channel(config.update_channel_capacity);
         let (core_update_tx, core_update_rx) = backend_update_channel();
         let (connection_token_tx, _) = watch::channel(None);
+        let media_cache_root = config
+            .session_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join("media-cache");
+        let media_cache = MediaCache::new(CacheConfig {
+            root: media_cache_root,
+            max_bytes: MEDIA_CACHE_MAX_BYTES,
+        })
+        .map_err(|error| CoreError::Backend(format!("could not initialize media cache: {error}")))?;
 
         Ok(Self {
             config,
@@ -104,6 +130,9 @@ impl GrammersBackend {
             dedup: Arc::new(MessageDeduplicator::new(MESSAGE_DEDUP_CAPACITY)),
             reliable_sends: HashMap::new(),
             reliable_send_order: VecDeque::new(),
+            media_cache,
+            transfers: Arc::new(TransferManager::new()),
+            media_tasks: HashMap::new(),
             stopped: false,
         })
     }
