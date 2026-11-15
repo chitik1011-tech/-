@@ -6,10 +6,20 @@ use std::{
     sync::{Arc, RwLock},
 };
 
+use serde::{Deserialize, Serialize};
+
 use crate::{
     error::{CoreError, Result},
     state::CoreState,
 };
+
+const STATE_SCHEMA_VERSION: u32 = 1;
+
+#[derive(Debug, Serialize, Deserialize)]
+struct StoredState {
+    schema_version: u32,
+    state: CoreState,
+}
 
 pub type StoreFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T>> + Send + 'a>>;
 
@@ -94,19 +104,18 @@ impl StateStore for JsonFileStateStore {
             .await
             .map_err(|error| CoreError::Storage(format!("state load task failed: {error}")))??;
 
-            match content {
-                Some(content) => serde_json::from_str(&content)
-                    .map(Some)
-                    .map_err(|error| CoreError::Serialization(error.to_string())),
-                None => Ok(None),
-            }
+            content.map(|content| decode_stored_state(&content)).transpose()
         })
     }
 
     fn save<'a>(&'a self, state: &'a CoreState) -> StoreFuture<'a, ()> {
         let path = self.path.clone();
-        let encoded =
-            serde_json::to_vec(state).map_err(|error| CoreError::Serialization(error.to_string()));
+        let stored = StoredState {
+            schema_version: STATE_SCHEMA_VERSION,
+            state: state.clone(),
+        };
+        let encoded = serde_json::to_vec(&stored)
+            .map_err(|error| CoreError::Serialization(error.to_string()));
 
         Box::pin(async move {
             let encoded = encoded?;
@@ -130,5 +139,24 @@ impl StateStore for JsonFileStateStore {
             .await
             .map_err(|error| CoreError::Storage(format!("state save task failed: {error}")))?
         })
+    }
+}
+
+fn decode_stored_state(content: &str) -> Result<CoreState> {
+    match serde_json::from_str::<StoredState>(content) {
+        Ok(stored) => {
+            if stored.schema_version != STATE_SCHEMA_VERSION {
+                return Err(CoreError::Storage(format!(
+                    "unsupported state schema version: {}",
+                    stored.schema_version
+                )));
+            }
+            Ok(stored.state)
+        }
+        Err(versioned_error) => serde_json::from_str::<CoreState>(content).map_err(|legacy_error| {
+            CoreError::Serialization(format!(
+                "invalid persisted state: versioned={versioned_error}; legacy={legacy_error}"
+            ))
+        }),
     }
 }
