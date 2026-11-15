@@ -72,7 +72,9 @@ async fn successful_send_emits_draft_sending_sent_and_is_idempotent() {
         .unwrap()
         .clone();
     assert_eq!(sent.status, OutgoingMessageStatus::Sent);
-    let server_id = sent.server_message_id.expect("mock should return server message ID");
+    let server_id = sent
+        .server_message_id
+        .expect("mock should return server message ID");
     let state = core.state();
     assert_eq!(state.messages_for_chat(2).len(), 1);
     assert!(state
