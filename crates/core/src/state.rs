@@ -55,7 +55,7 @@ impl CoreState {
                 self.last_error = None;
             }
             CoreEvent::ChatsPageLoaded(page) => {
-                if self.merge_chat_page(page) {
+                if self.can_accept_chat_page(page) && self.merge_chat_page(page) {
                     self.chat_pagination.loading = false;
                     self.chat_pagination.loading_cursor = None;
                     self.chat_pagination.error = None;
@@ -101,6 +101,20 @@ impl CoreState {
             }
             CoreEvent::Stopped => {
                 self.running = false;
+            }
+        }
+    }
+
+    fn can_accept_chat_page(&self, page: &ChatPage) -> bool {
+        if self.chat_pagination.loading {
+            return self.chat_pagination.loading_cursor == page.requested_cursor;
+        }
+
+        match page.requested_cursor.as_deref() {
+            None => !self.chat_pagination.loaded,
+            Some(cursor) => {
+                self.chat_pagination.loaded
+                    && self.chat_pagination.next_cursor.as_deref() == Some(cursor)
             }
         }
     }
