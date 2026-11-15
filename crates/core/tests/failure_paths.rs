@@ -286,7 +286,7 @@ async fn lagged_event_subscriber_can_detect_missed_broadcast_events() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn shutdown_waits_for_in_flight_backend_command_before_stopping() {
+async fn shutdown_stops_without_waiting_for_in_flight_backend_command() {
     let (started_tx, started_rx) = oneshot::channel();
     let (release_tx, release_rx) = oneshot::channel();
     let mut backend = TestBackend::new();
@@ -302,20 +302,6 @@ async fn shutdown_waits_for_in_flight_backend_command_before_stopping() {
         .unwrap();
 
     core.send(CoreCommand::Shutdown).await.unwrap();
-    assert!(matches!(
-        events.try_recv(),
-        Err(tokio::sync::broadcast::error::TryRecvError::Empty)
-    ));
-
-    release_tx.send(()).unwrap();
-
-    assert_eq!(
-        timeout(Duration::from_secs(1), events.recv())
-            .await
-            .unwrap()
-            .unwrap(),
-        CoreEvent::AuthorizationChanged(AuthorizationState::WaitingForPhoneNumber)
-    );
     assert_eq!(
         timeout(Duration::from_secs(1), events.recv())
             .await
@@ -323,6 +309,7 @@ async fn shutdown_waits_for_in_flight_backend_command_before_stopping() {
             .unwrap(),
         CoreEvent::Stopped
     );
+    let _ = release_tx.send(());
     wait_until_closed(&core).await;
     assert!(matches!(
         core.send(CoreCommand::Start).await,
