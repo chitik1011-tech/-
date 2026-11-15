@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     event::CoreEvent,
-    model::{AccountState, ChatSummary, MessageSummary},
+    model::{AccountState, ChatPage, ChatPaginationState, ChatSummary, MessageSummary},
 };
 
 pub const MAX_CACHED_MESSAGES_PER_CHAT: usize = 512;
@@ -14,6 +14,9 @@ pub struct CoreState {
     pub running: bool,
     pub account: AccountState,
     pub messages: BTreeMap<i64, Vec<MessageSummary>>,
+    /// Cursor progress for the current sequence of chat pages.
+    #[serde(default)]
+    pub chat_pagination: ChatPaginationState,
     pub last_error: Option<String>,
 }
 
@@ -23,6 +26,7 @@ impl Default for CoreState {
             running: true,
             account: AccountState::default(),
             messages: BTreeMap::new(),
+            chat_pagination: ChatPaginationState::default(),
             last_error: None,
         }
     }
@@ -41,7 +45,13 @@ impl CoreState {
             }
             CoreEvent::ChatsLoaded(chats) => {
                 self.account.chats = chats.clone();
+                self.chat_pagination = ChatPaginationState::default();
                 self.last_error = None;
+            }
+            CoreEvent::ChatsPageLoaded(page) => {
+                if self.merge_chat_page(page) {
+                    self.last_error = None;
+                }
             }
             CoreEvent::MessageAdded(message) => {
                 let inserted = self.upsert_message(message.clone());
@@ -73,6 +83,75 @@ impl CoreState {
             CoreEvent::Stopped => {
                 self.running = false;
             }
+        }
+    }
+
+    fn merge_chat_page(&mut self, page: &ChatPage) -> bool {
+        let first_page = page.requested_cursor.is_none();
+
+        if let Some(requested_cursor) = page.requested_cursor.as_deref() {
+            if !self.chat_pagination.loaded
+                || self.chat_pagination.next_cursor.as_deref() != Some(requested_cursor)
+                || self
+                    .chat_pagination
+                    .consumed_cursors
+                    .contains(requested_cursor)
+            {
+                return false;
+            }
+        }
+
+        let previous_chats = if first_page {
+            std::mem::take(&mut self.account.chats)
+        } else {
+            Vec::new()
+        };
+
+        if first_page {
+            self.chat_pagination = ChatPaginationState::default();
+        } else if let Some(requested_cursor) = page.requested_cursor.as_ref() {
+            self.chat_pagination
+                .consumed_cursors
+                .insert(requested_cursor.clone());
+        }
+
+        for chat in page.chats.iter().cloned() {
+            self.upsert_chat_summary(chat);
+        }
+
+        if first_page {
+            // A live MessageAdded can arrive while the first page is in flight.
+            // Retain those live-only rows after replacing the previous page set.
+            for chat in previous_chats {
+                if self.messages.contains_key(&chat.id) {
+                    self.upsert_chat_summary(chat);
+                }
+            }
+            self.chat_pagination.loaded = true;
+        }
+
+        let next_cursor = page
+            .next_cursor
+            .as_ref()
+            .filter(|cursor| !cursor.trim().is_empty())
+            .cloned();
+        self.chat_pagination.next_cursor = next_cursor.filter(|cursor| {
+            !self.chat_pagination.consumed_cursors.contains(cursor)
+        });
+
+        true
+    }
+
+    fn upsert_chat_summary(&mut self, incoming: ChatSummary) {
+        if let Some(existing) = self
+            .account
+            .chats
+            .iter_mut()
+            .find(|chat| chat.id == incoming.id)
+        {
+            merge_chat_summary(existing, incoming);
+        } else {
+            self.account.chats.push(incoming);
         }
     }
 
@@ -115,3 +194,24 @@ impl CoreState {
         inserted
     }
 }
+
+fn merge_chat_summary(existing: &mut ChatSummary, incoming: ChatSummary) {
+    if !incoming.title.trim().is_empty()
+        && (existing.title.trim().is_empty()
+            || existing.title == format!("Chat {}", existing.id)
+            || incoming.title != format!("Chat {}", incoming.id))
+    {
+        existing.title = incoming.title;
+    }
+
+    existing.unread_count = existing.unread_count.max(incoming.unread_count);
+    existing.last_message = match (existing.last_message.take(), incoming.last_message) {
+        (Some(current), Some(next))
+            if (current.timestamp_unix, current.id) >= (next.timestamp_unix, next.id) =>
+        {
+            Some(current)
+        }
+        (_, next) => next,
+    };
+}
+
