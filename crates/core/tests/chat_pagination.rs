@@ -80,7 +80,8 @@ fn multiple_pages_merge_duplicates_without_reordering() {
     let old_message = message(1, 2, 100, "old");
     let new_message = message(2, 2, 200, "new");
 
-    apply_page(&mut state,
+    apply_page(
+        &mut state,
         None,
         vec![
             summary(1, "first", 0, None),
@@ -94,7 +95,8 @@ fn multiple_pages_merge_duplicates_without_reordering() {
         Some("cursor-2")
     );
 
-    apply_page(&mut state, 
+    apply_page(
+        &mut state,
         Some("cursor-2"),
         vec![
             summary(2, "renamed", 2, Some(new_message.clone())),
@@ -131,14 +133,16 @@ fn live_messages_survive_next_page_and_stale_page_summaries() {
     let live_message = message(2, 10, 200, "live");
     let new_chat_message = message(3, 30, 150, "new chat");
 
-    apply_page(&mut state, 
+    apply_page(
+        &mut state,
         None,
         vec![summary(10, "ten", 1, Some(first_message))],
         Some("cursor-2"),
     );
     state.reduce(&CoreEvent::MessageAdded(live_message.clone()));
     state.reduce(&CoreEvent::MessageAdded(new_chat_message.clone()));
-    apply_page(&mut state, 
+    apply_page(
+        &mut state,
         Some("cursor-2"),
         vec![
             summary(10, "ten", 1, Some(message(1, 10, 100, "stale"))),
@@ -199,13 +203,15 @@ fn live_message_received_before_first_page_is_preserved() {
 #[test]
 fn stale_or_repeated_page_cursor_is_ignored_and_loops_stop() {
     let mut state = CoreState::default();
-    apply_page(&mut state, 
+    apply_page(
+        &mut state,
         None,
         vec![summary(1, "one", 0, None)],
         Some("cursor-2"),
     );
 
-    apply_page(&mut state, 
+    apply_page(
+        &mut state,
         Some("wrong-cursor"),
         vec![summary(2, "stale", 0, None)],
         None,
@@ -224,7 +230,8 @@ fn stale_or_repeated_page_cursor_is_ignored_and_loops_stop() {
         Some("cursor-2")
     );
 
-    apply_page(&mut state, 
+    apply_page(
+        &mut state,
         Some("cursor-2"),
         vec![summary(2, "two", 0, None)],
         Some("cursor-2"),
@@ -273,7 +280,8 @@ fn page_command_validates_limit_and_nonblank_cursor() {
 #[test]
 fn failed_page_keeps_cursor_retryable_and_clears_error_on_success() {
     let mut state = CoreState::default();
-    apply_page(&mut state, 
+    apply_page(
+        &mut state,
         None,
         vec![summary(1, "one", 0, None)],
         Some("cursor-2"),
@@ -318,7 +326,8 @@ fn failed_page_keeps_cursor_retryable_and_clears_error_on_success() {
     state.reduce(&CoreEvent::ChatsPageLoading {
         cursor: Some("cursor-2".into()),
     });
-    apply_page(&mut state, 
+    apply_page(
+        &mut state,
         Some("cursor-2"),
         vec![summary(2, "two", 0, None)],
         None,
