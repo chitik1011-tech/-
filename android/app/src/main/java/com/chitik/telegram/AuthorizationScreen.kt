@@ -96,11 +96,13 @@ fun AuthorizationScreen(
         state.authorization == AuthorizationUiStep.WaitingForCode ||
         state.authorization == AuthorizationUiStep.WaitingForPassword
 
-    LaunchedEffect(state.isTelegramConfigured) {
-        if (state.isTelegramConfigured) {
-            apiId = ""
-            apiHash = ""
-        }
+    LaunchedEffect(state.isTelegramConfigured, state.authorization) {
+        val fieldsToClear = authorizationInputsToClear(state)
+        if (AuthorizationInputField.ApiId in fieldsToClear) apiId = ""
+        if (AuthorizationInputField.ApiHash in fieldsToClear) apiHash = ""
+        if (AuthorizationInputField.PhoneNumber in fieldsToClear) phoneNumber = ""
+        if (AuthorizationInputField.LoginCode in fieldsToClear) code = ""
+        if (AuthorizationInputField.TwoFactorPassword in fieldsToClear) password = ""
     }
 
     BackHandler(enabled = true) {
