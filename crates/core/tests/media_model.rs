@@ -1,4 +1,5 @@
 use serde_json::json;
+use tg_mobile_core::model::MediaDimensions;
 use tg_mobile_core::{
     AttachmentDownloadState, AttachmentKind, AttachmentThumbnail, MediaAttachment, MessageSummary,
 };
@@ -138,4 +139,113 @@ fn undownloaded_state_does_not_expose_a_local_path() {
     assert!(state
         .as_ref()
         .is_some_and(|value| value.get("local_path").is_none()));
+}
+
+#[test]
+fn telegram_dimensions_normalize_positive_values_and_reject_invalid_boundaries() {
+    let dimensions = MediaDimensions::from_telegram(1920, 1080);
+    assert_eq!(dimensions.map(MediaDimensions::width), Some(1920));
+    assert_eq!(dimensions.map(MediaDimensions::height), Some(1080));
+    assert_eq!(
+        MediaDimensions::from_telegram(i32::MAX, i32::MAX).map(MediaDimensions::width),
+        Some(i32::MAX as u32)
+    );
+
+    assert_eq!(MediaDimensions::from_telegram(0, 1080), None);
+    assert_eq!(MediaDimensions::from_telegram(1920, 0), None);
+    assert_eq!(MediaDimensions::from_telegram(-1, 1080), None);
+    assert_eq!(MediaDimensions::from_telegram(1920, i32::MIN), None);
+    assert_eq!(MediaDimensions::new(i32::MAX as u32 + 1, 1080), None);
+    assert_eq!(MediaDimensions::new(u32::MAX, 1080), None);
+}
+
+#[test]
+fn attachment_dimensions_require_a_valid_complete_pair() {
+    let mut attachment = media(AttachmentKind::Video);
+    assert_eq!(
+        attachment.dimensions(),
+        MediaDimensions::from_telegram(120, 80)
+    );
+
+    attachment.width = None;
+    assert_eq!(attachment.dimensions(), None);
+    attachment.width = Some(0);
+    assert_eq!(attachment.dimensions(), None);
+    attachment.width = Some(u32::MAX);
+    assert_eq!(attachment.dimensions(), None);
+
+    let mut thumbnail = attachment.thumbnail.clone().expect("test thumbnail exists");
+    assert_eq!(
+        thumbnail.dimensions(),
+        MediaDimensions::from_telegram(32, 24)
+    );
+    thumbnail.height = None;
+    assert_eq!(thumbnail.dimensions(), None);
+    thumbnail.height = Some(0);
+    assert_eq!(thumbnail.dimensions(), None);
+    thumbnail.width = Some(u32::MAX);
+    thumbnail.height = Some(24);
+    assert_eq!(thumbnail.dimensions(), None);
+}
+
+#[test]
+fn invalid_deserialized_attachment_dimensions_do_not_bypass_validation() {
+    for width in [0, i32::MAX as u32 + 1, u32::MAX] {
+        let mut serialized =
+            serde_json::to_value(media(AttachmentKind::Photo)).expect("test media serializes");
+        serialized["width"] = json!(width);
+
+        let attachment = serde_json::from_value::<MediaAttachment>(serialized)
+            .expect("raw media metadata remains deserializable");
+        assert_eq!(attachment.dimensions(), None);
+    }
+
+    let mut serialized =
+        serde_json::to_value(media(AttachmentKind::Photo)).expect("test media serializes");
+    serialized["height"] = json!(null);
+    let attachment = serde_json::from_value::<MediaAttachment>(serialized)
+        .expect("incomplete media metadata remains deserializable");
+    assert_eq!(attachment.dimensions(), None);
+
+    let mut serialized =
+        serde_json::to_value(media(AttachmentKind::Photo)).expect("test media serializes");
+    serialized["width"] = json!(-1);
+    assert!(serde_json::from_value::<MediaAttachment>(serialized).is_err());
+}
+
+#[test]
+fn invalid_deserialized_thumbnail_dimensions_do_not_bypass_validation() {
+    for width in [0, i32::MAX as u32 + 1, u32::MAX] {
+        let mut serialized =
+            serde_json::to_value(media(AttachmentKind::Photo)).expect("test media serializes");
+        serialized["thumbnail"]["width"] = json!(width);
+
+        let attachment = serde_json::from_value::<MediaAttachment>(serialized)
+            .expect("raw thumbnail metadata remains deserializable");
+        assert_eq!(
+            attachment
+                .thumbnail
+                .as_ref()
+                .and_then(AttachmentThumbnail::dimensions),
+            None
+        );
+    }
+
+    let mut serialized =
+        serde_json::to_value(media(AttachmentKind::Photo)).expect("test media serializes");
+    serialized["thumbnail"]["height"] = json!(null);
+    let attachment = serde_json::from_value::<MediaAttachment>(serialized)
+        .expect("incomplete thumbnail metadata remains deserializable");
+    assert_eq!(
+        attachment
+            .thumbnail
+            .as_ref()
+            .and_then(AttachmentThumbnail::dimensions),
+        None
+    );
+
+    let mut serialized =
+        serde_json::to_value(media(AttachmentKind::Photo)).expect("test media serializes");
+    serialized["thumbnail"]["width"] = json!(-1);
+    assert!(serde_json::from_value::<MediaAttachment>(serialized).is_err());
 }
