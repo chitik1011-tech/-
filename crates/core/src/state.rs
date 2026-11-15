@@ -51,7 +51,12 @@ impl CoreState {
             }
             CoreEvent::MessageAdded(message) => {
                 let inserted = self.upsert_message(message.clone());
-                if let Some(chat) = self.account.chats.iter_mut().find(|chat| chat.id == message.chat_id) {
+                if let Some(chat) = self
+                    .account
+                    .chats
+                    .iter_mut()
+                    .find(|chat| chat.id == message.chat_id)
+                {
                     if inserted && !message.outgoing {
                         chat.unread_count = chat.unread_count.saturating_add(1);
                     }
@@ -68,7 +73,8 @@ impl CoreState {
             }
             CoreEvent::MessagesForwarded(result) => {
                 if !self.forwarding.contains_key(&result.request_id) {
-                    self.forwarding.insert(result.request_id.clone(), result.clone());
+                    self.forwarding
+                        .insert(result.request_id.clone(), result.clone());
                     while self.forwarding.len() > MAX_CACHED_FORWARD_REQUESTS {
                         if let Some(oldest) = self.forwarding.keys().next().cloned() {
                             self.forwarding.remove(&oldest);
@@ -87,11 +93,18 @@ impl CoreState {
     }
 
     pub fn messages_for_chat(&self, chat_id: i64) -> &[MessageSummary] {
-        self.messages.get(&chat_id).map(Vec::as_slice).unwrap_or(&[])
+        self.messages
+            .get(&chat_id)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
     }
 
     pub fn total_unread_count(&self) -> u64 {
-        self.account.chats.iter().map(|chat| u64::from(chat.unread_count)).sum()
+        self.account
+            .chats
+            .iter()
+            .map(|chat| u64::from(chat.unread_count))
+            .sum()
     }
 
     fn upsert_message(&mut self, message: MessageSummary) -> bool {
@@ -105,7 +118,9 @@ impl CoreState {
         };
         messages.sort_by_key(|item| (item.timestamp_unix, item.id));
         let excess = messages.len().saturating_sub(MAX_CACHED_MESSAGES_PER_CHAT);
-        if excess > 0 { messages.drain(..excess); }
+        if excess > 0 {
+            messages.drain(..excess);
+        }
         inserted
     }
 }
