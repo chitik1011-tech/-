@@ -261,13 +261,15 @@ where
                             });
                         if let Err(error) = validation {
                             apply_event(
-                                CoreEvent::Error(error.to_string()),
+                                CoreEvent::PollVoteFailed {
+                                    poll_id: *poll_id,
+                                    error: error.to_string(),
+                                },
                                 &mut reduced_state,
                                 &state_tx,
                                 &event_tx_task,
                                 &mut activity_tracker,
                             );
-                            persistence_dirty = true;
                             continue;
                         }
                     }
@@ -737,6 +739,10 @@ fn operation_error_events(command: &CoreCommand, error: CoreError) -> Vec<CoreEv
             text.clone(),
             error,
         ))],
+        CoreCommand::VotePoll { poll_id, .. } => vec![CoreEvent::PollVoteFailed {
+            poll_id: *poll_id,
+            error: error.to_string(),
+        }],
         _ => vec![CoreEvent::Error(error.to_string())],
     }
 }
