@@ -31,6 +31,15 @@ impl CoreEvent {
         }
     }
 
+    pub const fn is_transient(&self) -> bool {
+        matches!(
+            self,
+            Self::ChatActivityChanged { .. }
+                | Self::ChatActivityEnded { .. }
+                | Self::ChatActivityExpired { .. }
+        )
+    }
+
     pub const fn is_terminal(&self) -> bool {
         matches!(self, Self::Stopped)
     }
