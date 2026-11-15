@@ -162,6 +162,7 @@ where
                                     &mut reduced_state,
                                     &state_tx,
                                     &event_tx_task,
+                                    &mut activity_tracker,
                                 );
                                 skip_backend = true;
                             } else if matches!(
@@ -180,6 +181,7 @@ where
                                     &mut reduced_state,
                                     &state_tx,
                                     &event_tx_task,
+                                    &mut activity_tracker,
                                 );
                                 skip_backend = true;
                             }
@@ -197,6 +199,7 @@ where
                                 &mut reduced_state,
                                 &state_tx,
                                 &event_tx_task,
+                                &mut activity_tracker,
                             );
                             persistence_dirty = true;
                             if persist_send_intent(
@@ -223,6 +226,7 @@ where
                             &mut reduced_state,
                             &state_tx,
                             &event_tx_task,
+                            &mut activity_tracker,
                         );
                         persistence_dirty = true;
                     }
@@ -232,6 +236,7 @@ where
                             &mut reduced_state,
                             &state_tx,
                             &event_tx_task,
+                            &mut activity_tracker,
                         );
                         persistence_dirty = true;
                     }
@@ -405,8 +410,13 @@ where
                     persistence_dirty |= events.iter().any(|event| !event.is_transient());
 
                     let previous_token = reduced_state.connection_machine.token();
-                    let stopped =
-                        apply_events(events, &mut reduced_state, &state_tx, &event_tx_task, &mut activity_tracker);
+                    let stopped = apply_events(
+                        events,
+                        &mut reduced_state,
+                        &state_tx,
+                        &event_tx_task,
+                        &mut activity_tracker,
+                    );
                     let current_token = reduced_state.connection_machine.token();
                     if current_token != previous_token {
                         backend.set_connection_token(current_token);
@@ -450,7 +460,13 @@ where
                     let previous_token = reduced_state.connection_machine.token();
                     let previous_phase = reduced_state.connection_machine.phase();
                     let event_is_persistent = !event.is_transient();
-                    apply_event(event, &mut reduced_state, &state_tx, &event_tx_task, &mut activity_tracker);
+                    apply_event(
+                        event,
+                        &mut reduced_state,
+                        &state_tx,
+                        &event_tx_task,
+                        &mut activity_tracker,
+                    );
                     let current_phase = reduced_state.connection_machine.phase();
                     if previous_phase != LinkPhase::Reconnecting
                         && current_phase == LinkPhase::Reconnecting

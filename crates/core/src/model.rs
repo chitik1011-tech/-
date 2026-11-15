@@ -11,7 +11,6 @@ pub enum ChatActivityKind {
     UploadingMedia,
 }
 
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AuthorizationState {
     WaitingForPhoneNumber,
