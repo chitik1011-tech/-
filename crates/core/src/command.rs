@@ -16,6 +16,8 @@ pub enum CoreCommand {
     LoadMessages { chat_id: i64, limit: usize },
     MarkRead { chat_id: i64, max_message_id: i64 },
     SendText { chat_id: i64, text: String },
+    /// Reliable text send. Retrying the same client_id with the same payload is idempotent.
+    SendTextReliable { client_id: i64, chat_id: i64, text: String },
     Shutdown,
 }
 
@@ -30,6 +32,7 @@ impl CoreCommand {
             Self::LoadMessages { .. } => "load_messages",
             Self::MarkRead { .. } => "mark_read",
             Self::SendText { .. } => "send_text",
+            Self::SendTextReliable { .. } => "send_text_reliable",
             Self::Shutdown => "shutdown",
         }
     }
@@ -65,6 +68,19 @@ impl CoreCommand {
                 }
             }
             Self::SendText { chat_id, text } => {
+                validate_chat_id(*chat_id)?;
+                require_non_blank("message text", text)
+            }
+            Self::SendTextReliable {
+                client_id,
+                chat_id,
+                text,
+            } => {
+                if *client_id == 0 {
+                    return Err(CoreError::InvalidInput(
+                        "client message id must be non-zero".into(),
+                    ));
+                }
                 validate_chat_id(*chat_id)?;
                 require_non_blank("message text", text)
             }
