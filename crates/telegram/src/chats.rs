@@ -1,10 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
-use grammers_client::{
-    Client,
-    session::types::PeerRef,
-    tl,
-};
+use grammers_client::{Client, session::types::PeerRef, tl};
 use tg_mobile_core::ChatSummary;
 use tokio::sync::RwLock;
 
