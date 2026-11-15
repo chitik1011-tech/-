@@ -294,13 +294,10 @@ fn older_persisted_state_defaults_to_no_polls() {
     assert!(decoded.polls.is_empty());
 }
 
-
 #[test]
 fn vote_selection_validates_single_and_multiple_choice() {
     let single = poll(10, 20);
-    assert!(single
-        .validate_vote_selection(&[b"Pizza".to_vec()])
-        .is_ok());
+    assert!(single.validate_vote_selection(&[b"Pizza".to_vec()]).is_ok());
     assert!(single
         .validate_vote_selection(&[b"Pizza".to_vec(), b"Soup".to_vec()])
         .is_err());
@@ -336,14 +333,16 @@ fn legacy_poll_without_option_ids_and_explanation_still_deserializes() {
     }
 
     let restored: PollSummary = serde_json::from_value(json).unwrap();
-    assert!(restored.options.iter().all(|option| option.option_id.is_empty()));
+    assert!(restored
+        .options
+        .iter()
+        .all(|option| option.option_id.is_empty()));
     assert_eq!(restored.explanation, None);
     assert!(restored.validate().is_ok());
     assert!(restored
         .validate_vote_selection(&[b"Pizza".to_vec()])
         .is_err());
 }
-
 
 #[test]
 fn poll_vote_command_has_stable_wire_kind_and_round_trips() {
