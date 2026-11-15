@@ -98,7 +98,6 @@ fn with_registry<T>(
     action(&mut guard)
 }
 
-
 fn event_kind(event: &CoreEvent) -> &'static str {
     match event {
         CoreEvent::State(_) => "account_state",
@@ -180,8 +179,12 @@ fn create_native_handle(env: &mut JNIEnv<'_>, callback: JObject<'_>) -> Result<i
                 Ok(event) => {
                     match encode_event(&event) {
                         Ok(payload) => {
-                            let _ =
-                                emit_callback(&event_vm, &event_callback, event_kind(&event), &payload);
+                            let _ = emit_callback(
+                                &event_vm,
+                                &event_callback,
+                                event_kind(&event),
+                                &payload,
+                            );
                         }
                         Err(error) => {
                             emit_error(&event_vm, &event_callback, &error.to_string());
