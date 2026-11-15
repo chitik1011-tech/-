@@ -62,7 +62,9 @@ impl TextEntity {
         if length == 0 {
             return Err(EntityError::EmptyRange);
         }
-        offset.checked_add(length).ok_or(EntityError::OffsetOverflow)?;
+        offset
+            .checked_add(length)
+            .ok_or(EntityError::OffsetOverflow)?;
         Ok(Self {
             offset,
             length,
@@ -311,10 +313,9 @@ mod tests {
         .expect_err("mid-surrogate offset must be rejected");
         assert!(error.to_string().contains("Unicode scalar"));
 
-        let empty_error = serde_json::from_str::<TextEntity>(
-            r#"{"type":"bold","offset":0,"length":0}"#,
-        )
-        .expect_err("zero-length entity must be rejected");
+        let empty_error =
+            serde_json::from_str::<TextEntity>(r#"{"type":"bold","offset":0,"length":0}"#)
+                .expect_err("zero-length entity must be rejected");
         assert!(empty_error.to_string().contains("greater than zero"));
     }
 
