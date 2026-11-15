@@ -178,8 +178,12 @@ fn create_native_handle(env: &mut JNIEnv<'_>, callback: JObject<'_>) -> Result<i
                 Ok(event) => {
                     match encode_event(&event) {
                         Ok(payload) => {
-                            let _ =
-                                emit_callback(&event_vm, &event_callback, event_kind(&event), &payload);
+                            let _ = emit_callback(
+                                &event_vm,
+                                &event_callback,
+                                event_kind(&event),
+                                &payload,
+                            );
                         }
                         Err(error) => {
                             emit_error(&event_vm, &event_callback, &error.to_string());
@@ -192,8 +196,7 @@ fn create_native_handle(env: &mut JNIEnv<'_>, callback: JObject<'_>) -> Result<i
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
                     let payload = serde_json::json!({ "skipped": skipped }).to_string();
-                    let _ =
-                        emit_callback(&event_vm, &event_callback, "events_lagged", &payload);
+                    let _ = emit_callback(&event_vm, &event_callback, "events_lagged", &payload);
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             }
