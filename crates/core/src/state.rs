@@ -121,6 +121,25 @@ impl CoreState {
             .unwrap_or(&[])
     }
 
+    /// Returns outgoing lifecycle entries that are not yet represented by a server message.
+    ///
+    /// UI can render this slice alongside `messages_for_chat`. A successful outbox record
+    /// remains available through `outgoing_message` for send status, but stops rendering as a
+    /// separate row once its server ID is present in the chat message cache.
+    pub fn visible_outgoing_messages_for_chat(&self, chat_id: i64) -> Vec<&OutgoingMessage> {
+        self.outgoing_messages
+            .values()
+            .filter(|pending| {
+                pending.chat_id == chat_id
+                    && !pending.server_message_id.is_some_and(|server_id| {
+                        self.messages_for_chat(chat_id)
+                            .iter()
+                            .any(|message| message.id == server_id)
+                    })
+            })
+            .collect()
+    }
+
     pub fn total_unread_count(&self) -> u64 {
         self.account
             .chats
