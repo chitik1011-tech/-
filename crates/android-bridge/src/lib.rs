@@ -296,7 +296,8 @@ fn destroy_native_handle(handle: i64) -> Result<(), BridgeError> {
             .ok_or(BridgeError::InvalidHandle(handle))
     })?;
 
-    runtime()?.spawn(async move {
+    let runtime = runtime()?;
+    runtime.block_on(async move {
         let NativeHandle {
             core,
             event_task,
@@ -307,16 +308,24 @@ fn destroy_native_handle(handle: i64) -> Result<(), BridgeError> {
         event_task.abort();
         state_task.abort();
 
-        let _ = core.shutdown().await;
-        let _ = timeout(SHUTDOWN_TIMEOUT, async {
+        if let Err(error) = core.shutdown().await {
+            if !core.is_closed() {
+                return Err(BridgeError::Runtime(format!(
+                    "failed to request core shutdown: {error}"
+                )));
+            }
+        }
+
+        timeout(SHUTDOWN_TIMEOUT, async {
             while !core.is_closed() {
                 tokio::task::yield_now().await;
             }
         })
-        .await;
-    });
+        .await
+        .map_err(|_| BridgeError::Runtime("core shutdown timed out".to_owned()))?;
 
-    Ok(())
+        Ok(())
+    })
 }
 
 fn send_command(handle: i64, command_json: &str) -> Result<(), BridgeError> {
