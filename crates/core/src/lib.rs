@@ -46,7 +46,7 @@ pub use search::{
 };
 pub use selection::{MessageSelection, SelectionAction, SelectionCapabilities, SelectionError};
 pub use send::{ClientMessageId, OutgoingSend, OutgoingSendState};
-pub use state::{CoreState, FolderAction, MAX_CACHED_MESSAGES_PER_CHAT};
+pub use state::{CoreState, FolderAction, MAX_CACHED_MESSAGES_PER_CHAT, MAX_CACHED_POLLS};
 pub use storage::{JsonFileStateStore, MemoryStateStore, NoopStateStore, StateStore};
 pub use transfer::{
     DownloadState, TransferDirection, TransferError, TransferKey, TransferManager,

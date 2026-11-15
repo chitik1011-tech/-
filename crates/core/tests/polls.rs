@@ -1,4 +1,6 @@
-use tg_mobile_core::{CoreEvent, CoreState, PollOption, PollSummary, MAX_POLL_OPTIONS};
+use tg_mobile_core::{
+    CoreEvent, CoreState, PollOption, PollSummary, MAX_CACHED_POLLS, MAX_POLL_OPTIONS,
+};
 
 const CHAT_ID: i64 = 42;
 
@@ -192,6 +194,23 @@ fn poll_id_reused_for_another_message_is_rejected() {
 }
 
 #[test]
+fn a_message_cannot_be_assigned_a_second_poll_id() {
+    let mut state = CoreState::default();
+    let original = poll(1, 10);
+    state.reduce(&CoreEvent::PollUpdated(original.clone()));
+
+    state.reduce(&CoreEvent::PollUpdated(poll(2, 10)));
+
+    assert_eq!(state.poll(1), Some(&original));
+    assert_eq!(state.poll(2), None);
+    assert!(state
+        .last_error
+        .as_deref()
+        .unwrap()
+        .contains("already has a different poll"));
+}
+
+#[test]
 fn invalid_poll_update_sets_error_without_storing() {
     let mut state = CoreState::default();
     let mut invalid = poll(1, 10);
@@ -216,6 +235,39 @@ fn deleting_the_message_removes_its_poll() {
 
     assert_eq!(state.poll(1), None);
     assert!(state.poll(2).is_some());
+    assert_eq!(state.poll_order.iter().copied().collect::<Vec<_>>(), [2]);
+    state.validate().unwrap();
+}
+
+#[test]
+fn poll_cache_evicts_fifo_without_touching_order_on_updates() {
+    let mut state = CoreState::default();
+    for id in 1..=MAX_CACHED_POLLS as i64 {
+        state.reduce(&CoreEvent::PollUpdated(poll(id, id + 1000)));
+    }
+
+    let mut updated_oldest = poll(1, 1001);
+    updated_oldest.options[0].voter_count = Some(8);
+    state.reduce(&CoreEvent::PollUpdated(updated_oldest));
+    state.reduce(&CoreEvent::PollUpdated(poll(
+        MAX_CACHED_POLLS as i64 + 1,
+        9999,
+    )));
+
+    assert_eq!(state.polls.len(), MAX_CACHED_POLLS);
+    assert_eq!(state.poll_order.len(), MAX_CACHED_POLLS);
+    assert_eq!(state.poll_order.front(), Some(&2));
+    assert_eq!(
+        state.poll_order.back(),
+        Some(&(MAX_CACHED_POLLS as i64 + 1))
+    );
+    assert_eq!(state.poll(1), None);
+    assert!(state.poll(2).is_some());
+    state.validate().unwrap();
+
+    let encoded = serde_json::to_string(&state).unwrap();
+    let restored: CoreState = serde_json::from_str(&encoded).unwrap();
+    assert_eq!(restored, state);
 }
 
 #[test]
@@ -233,6 +285,7 @@ fn poll_update_event_has_stable_wire_kind_and_round_trips() {
 fn older_persisted_state_defaults_to_no_polls() {
     let mut json = serde_json::to_value(CoreState::default()).unwrap();
     json.as_object_mut().unwrap().remove("polls");
+    json.as_object_mut().unwrap().remove("poll_order");
 
     let decoded: CoreState = serde_json::from_value(json).unwrap();
 

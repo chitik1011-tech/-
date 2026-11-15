@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use serde::{Deserialize, Serialize};
 
@@ -13,6 +13,7 @@ use crate::{
 };
 
 pub const MAX_CACHED_MESSAGES_PER_CHAT: usize = 512;
+pub const MAX_CACHED_POLLS: usize = 512;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CoreState {
@@ -42,6 +43,10 @@ pub struct CoreState {
     /// contain polls and defaults to an empty map.
     #[serde(default)]
     pub polls: BTreeMap<i64, PollSummary>,
+    /// Insertion order for deterministic FIFO poll eviction. Poll updates keep
+    /// their original position so high-traffic polls cannot evict newer polls.
+    #[serde(default)]
+    pub poll_order: VecDeque<i64>,
     pub last_error: Option<String>,
     #[serde(default)]
     pub folders: Vec<ChatFolder>,
@@ -60,6 +65,7 @@ impl Default for CoreState {
             outbox: BTreeMap::new(),
             send_ledger: BTreeMap::new(),
             polls: BTreeMap::new(),
+            poll_order: VecDeque::new(),
             last_error: None,
             folders: Vec::new(),
         }
@@ -67,7 +73,7 @@ impl Default for CoreState {
 }
 
 impl CoreState {
-    /// Validate persisted or externally constructed folder state.
+    /// Validate persisted or externally constructed state invariants.
     pub fn validate(&self) -> crate::error::Result<()> {
         use crate::error::CoreError;
 
@@ -85,6 +91,31 @@ impl CoreState {
                     "folder positions must be contiguous and match list order".into(),
                 ));
             }
+        }
+
+        if self.polls.len() > MAX_CACHED_POLLS {
+            return Err(CoreError::InvalidInput(format!(
+                "poll cache exceeds {MAX_CACHED_POLLS} entries"
+            )));
+        }
+        let mut ordered_poll_ids = BTreeSet::new();
+        if self
+            .poll_order
+            .iter()
+            .any(|id| !self.polls.contains_key(id) || !ordered_poll_ids.insert(*id))
+            || ordered_poll_ids.len() != self.polls.len()
+        {
+            return Err(CoreError::InvalidInput(
+                "poll cache order must contain every poll id exactly once".into(),
+            ));
+        }
+        for (poll_id, poll) in &self.polls {
+            if *poll_id != poll.id {
+                return Err(CoreError::InvalidInput(
+                    "poll cache key must match poll id".into(),
+                ));
+            }
+            poll.validate()?;
         }
         Ok(())
     }
@@ -369,6 +400,10 @@ impl CoreState {
                         !(chat_matches && deleted.contains(&poll.message_id))
                     });
                     updated |= self.polls.len() != polls_before;
+                    let order_before = self.poll_order.len();
+                    self.poll_order
+                        .retain(|poll_id| self.polls.contains_key(poll_id));
+                    updated |= self.poll_order.len() != order_before;
 
                     if updated {
                         self.last_error = None;
@@ -630,6 +665,16 @@ impl CoreState {
     /// Telegram sends no ordering for poll results, so the newest accepted
     /// snapshot wins. A closed poll is final: a later open snapshot is stale.
     fn apply_poll(&mut self, incoming: &PollSummary) -> std::result::Result<bool, String> {
+        let mut ordered_poll_ids = BTreeSet::new();
+        if self.poll_order.len() != self.polls.len()
+            || self
+                .poll_order
+                .iter()
+                .any(|id| !self.polls.contains_key(id) || !ordered_poll_ids.insert(*id))
+        {
+            return Err("poll cache order is inconsistent with stored polls".into());
+        }
+
         if let Some(existing) = self.polls.get(&incoming.id) {
             if existing.chat_id != incoming.chat_id || existing.message_id != incoming.message_id {
                 return Err(format!(
@@ -643,6 +688,24 @@ impl CoreState {
             if existing == incoming {
                 return Ok(false);
             }
+        } else if self.polls.values().any(|existing| {
+            existing.chat_id == incoming.chat_id && existing.message_id == incoming.message_id
+        }) {
+            return Err(format!(
+                "message {} in chat {} already has a different poll",
+                incoming.message_id, incoming.chat_id
+            ));
+        }
+
+        if !self.polls.contains_key(&incoming.id) {
+            if self.polls.len() >= MAX_CACHED_POLLS {
+                let oldest_poll_id = self
+                    .poll_order
+                    .pop_front()
+                    .ok_or_else(|| "poll cache is full but has no eviction order".to_owned())?;
+                self.polls.remove(&oldest_poll_id);
+            }
+            self.poll_order.push_back(incoming.id);
         }
 
         self.polls.insert(incoming.id, incoming.clone());
