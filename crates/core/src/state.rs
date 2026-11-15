@@ -6,7 +6,7 @@ use crate::{
     connection::ConnectionState,
     connection_machine::{ConnectionMachine, LinkEvent, LinkPhase, Outcome},
     event::CoreEvent,
-    model::{AccountState, ChatSummary, MessageHistoryState, MessageSummary},
+    model::{AccountState, ChatFolder, ChatSummary, MessageHistoryState, MessageSummary},
     search::MessageSearchState,
     send::{OutgoingSend, OutgoingSendState},
 };
@@ -38,6 +38,8 @@ pub struct CoreState {
     #[serde(default)]
     pub send_ledger: BTreeMap<i64, OutgoingSend>,
     pub last_error: Option<String>,
+    #[serde(default)]
+    pub folders: Vec<ChatFolder>,
 }
 
 impl Default for CoreState {
@@ -53,11 +55,98 @@ impl Default for CoreState {
             outbox: BTreeMap::new(),
             send_ledger: BTreeMap::new(),
             last_error: None,
+            folders: Vec::new(),
         }
     }
 }
 
 impl CoreState {
+    /// Validate persisted or externally constructed folder state.
+    pub fn validate(&self) -> crate::error::Result<()> {
+        use crate::error::CoreError;
+
+        let mut ids = std::collections::BTreeSet::new();
+        for (index, folder) in self.folders.iter().enumerate() {
+            folder.validate()?;
+            if !ids.insert(folder.id) {
+                return Err(CoreError::InvalidInput(format!(
+                    "duplicate folder id: {}",
+                    folder.id
+                )));
+            }
+            if folder.position as usize != index {
+                return Err(CoreError::InvalidInput(
+                    "folder positions must be contiguous and match list order".into(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Apply a deterministic saved-folder change and keep positions contiguous.
+    pub fn reduce_folder(&mut self, action: FolderAction) -> crate::error::Result<()> {
+        use crate::error::CoreError;
+
+        self.validate()?;
+        match action {
+            FolderAction::Upsert(folder) => {
+                folder.validate()?;
+                let existing_index = self.folders.iter().position(|item| item.id == folder.id);
+                let old_len = self.folders.len();
+                if folder.position as usize > old_len {
+                    return Err(CoreError::InvalidInput(format!(
+                        "folder position must be in 0..={old_len}"
+                    )));
+                }
+                if let Some(index) = existing_index {
+                    self.folders.remove(index);
+                }
+                let insertion_index = (folder.position as usize).min(self.folders.len());
+                self.folders.insert(insertion_index, folder);
+                self.normalize_folder_positions();
+            }
+            FolderAction::Remove { folder_id } => {
+                if folder_id <= 0 {
+                    return Err(CoreError::InvalidInput("folder id must be positive".into()));
+                }
+                self.folders.retain(|folder| folder.id != folder_id);
+                self.normalize_folder_positions();
+            }
+            FolderAction::Reorder { folder_ids } => {
+                if folder_ids.len() != self.folders.len() {
+                    return Err(CoreError::InvalidInput(
+                        "folder order must list every folder exactly once".into(),
+                    ));
+                }
+                let mut unique_ids = std::collections::BTreeSet::new();
+                if folder_ids.iter().any(|id| !unique_ids.insert(*id))
+                    || folder_ids
+                        .iter()
+                        .any(|id| !self.folders.iter().any(|folder| folder.id == *id))
+                {
+                    return Err(CoreError::InvalidInput(
+                        "folder order contains duplicate or unknown ids".into(),
+                    ));
+                }
+                let order: BTreeMap<_, _> = folder_ids
+                    .into_iter()
+                    .enumerate()
+                    .map(|(position, id)| (id, position))
+                    .collect();
+                self.folders
+                    .sort_by_key(|folder| order.get(&folder.id).copied().unwrap_or(usize::MAX));
+                self.normalize_folder_positions();
+            }
+        }
+        Ok(())
+    }
+
+    fn normalize_folder_positions(&mut self) {
+        for (index, folder) in self.folders.iter_mut().enumerate() {
+            folder.position = index as u32;
+        }
+    }
+
     pub fn reduce(&mut self, event: &CoreEvent) {
         match event {
             CoreEvent::State(account) => {
@@ -586,4 +675,11 @@ fn message_edit_is_newer(current: &MessageSummary, incoming: &MessageSummary) ->
         (None, Some(_)) => true,
         (None, None) => !current.edited && incoming.edited,
     }
+}
+/// Reducer inputs for saved chat folders.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FolderAction {
+    Upsert(ChatFolder),
+    Remove { folder_id: i64 },
+    Reorder { folder_ids: Vec<i64> },
 }
