@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::capabilities::ChatCapabilities;
 use crate::model::{AccountState, AuthorizationState, ChatSummary, MessageSummary};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -9,6 +10,7 @@ pub enum CoreEvent {
     AuthorizationChanged(AuthorizationState),
     ChatsLoaded(Vec<ChatSummary>),
     MessageAdded(MessageSummary),
+    ChatCapabilitiesUpdated(ChatCapabilities),
     Error(String),
     Stopped,
 }
@@ -20,6 +22,7 @@ impl CoreEvent {
             Self::AuthorizationChanged(_) => "authorization_changed",
             Self::ChatsLoaded(_) => "chats_loaded",
             Self::MessageAdded(_) => "message_added",
+            Self::ChatCapabilitiesUpdated(_) => "chat_capabilities_updated",
             Self::Error(_) => "error",
             Self::Stopped => "stopped",
         }

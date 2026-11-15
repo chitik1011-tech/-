@@ -2,6 +2,7 @@
 
 pub mod backend;
 pub mod command;
+pub mod capabilities;
 pub mod error;
 pub mod event;
 pub mod mock;
@@ -16,6 +17,7 @@ pub use backend::{
     TelegramBackend, DEFAULT_BACKEND_UPDATE_CAPACITY,
 };
 pub use command::{CoreCommand, MAX_CHAT_LOAD_LIMIT};
+pub use capabilities::{CapabilityValue, ChatAction, ChatCapabilities, ChatKind};
 pub use error::{CoreError, Result};
 pub use event::CoreEvent;
 pub use mock::MockTelegramBackend;

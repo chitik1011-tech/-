@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     event::CoreEvent,
+    capabilities::ChatCapabilities,
     model::{AccountState, ChatSummary, MessageSummary},
 };
 
@@ -14,6 +15,8 @@ pub struct CoreState {
     pub running: bool,
     pub account: AccountState,
     pub messages: BTreeMap<i64, Vec<MessageSummary>>,
+    #[serde(default)]
+    pub chat_capabilities: BTreeMap<i64, ChatCapabilities>,
     pub last_error: Option<String>,
 }
 
@@ -23,6 +26,7 @@ impl Default for CoreState {
             running: true,
             account: AccountState::default(),
             messages: BTreeMap::new(),
+            chat_capabilities: BTreeMap::new(),
             last_error: None,
         }
     }
@@ -66,6 +70,15 @@ impl CoreState {
                 }
 
                 self.last_error = None;
+            }
+            CoreEvent::ChatCapabilitiesUpdated(capabilities) => {
+                match capabilities.validate() {
+                    Ok(()) => {
+                        self.chat_capabilities.insert(capabilities.chat_id, capabilities.clone());
+                        self.last_error = None;
+                    }
+                    Err(error) => self.last_error = Some(error.to_string()),
+                }
             }
             CoreEvent::Error(error) => {
                 self.last_error = Some(error.clone());
