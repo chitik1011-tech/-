@@ -7,6 +7,7 @@ use crate::{
     connection_machine::{ConnectionMachine, LinkEvent, LinkPhase, Outcome},
     event::CoreEvent,
     model::{AccountState, ChatFolder, ChatSummary, MessageHistoryState, MessageSummary},
+    poll::PollSummary,
     search::MessageSearchState,
     send::{OutgoingSend, OutgoingSendState},
 };
@@ -37,6 +38,10 @@ pub struct CoreState {
     /// process restart.
     #[serde(default)]
     pub send_ledger: BTreeMap<i64, OutgoingSend>,
+    /// Telegram polls keyed by poll identifier. Older persisted state did not
+    /// contain polls and defaults to an empty map.
+    #[serde(default)]
+    pub polls: BTreeMap<i64, PollSummary>,
     pub last_error: Option<String>,
     #[serde(default)]
     pub folders: Vec<ChatFolder>,
@@ -54,6 +59,7 @@ impl Default for CoreState {
             message_search: MessageSearchState::default(),
             outbox: BTreeMap::new(),
             send_ledger: BTreeMap::new(),
+            polls: BTreeMap::new(),
             last_error: None,
             folders: Vec::new(),
         }
@@ -352,8 +358,30 @@ impl CoreState {
                             }
                         }
                     }
+
+                    // A poll lives on its message: drop polls whose message was deleted.
+                    let polls_before = self.polls.len();
+                    self.polls.retain(|_, poll| {
+                        let chat_matches = match chat_id {
+                            Some(chat) => *chat == poll.chat_id,
+                            None => true,
+                        };
+                        !(chat_matches && deleted.contains(&poll.message_id))
+                    });
+                    updated |= self.polls.len() != polls_before;
+
                     if updated {
                         self.last_error = None;
+                    }
+                }
+            }
+            CoreEvent::PollUpdated(poll) => {
+                if let Err(error) = poll.validate() {
+                    self.last_error = Some(error.to_string());
+                } else {
+                    match self.apply_poll(poll) {
+                        Ok(_) => self.last_error = None,
+                        Err(error) => self.last_error = Some(error),
                     }
                 }
             }
@@ -417,6 +445,18 @@ impl CoreState {
 
     pub fn outgoing_send(&self, client_id: i64) -> Option<&OutgoingSend> {
         self.outbox.get(&client_id)
+    }
+
+    /// Poll snapshot by Telegram poll identifier.
+    pub fn poll(&self, poll_id: i64) -> Option<&PollSummary> {
+        self.polls.get(&poll_id)
+    }
+
+    /// Poll attached to a specific message, if one is stored.
+    pub fn poll_for_message(&self, chat_id: i64, message_id: i64) -> Option<&PollSummary> {
+        self.polls
+            .values()
+            .find(|poll| poll.chat_id == chat_id && poll.message_id == message_id)
     }
 
     pub fn total_unread_count(&self) -> u64 {
@@ -581,6 +621,32 @@ impl CoreState {
             }
         }
         updated
+    }
+
+    /// Stores a poll snapshot. Returns `Ok(true)` when the stored poll changed,
+    /// `Ok(false)` for a duplicate or stale snapshot, and an error when the same
+    /// Telegram poll id is reported for a different message.
+    ///
+    /// Telegram sends no ordering for poll results, so the newest accepted
+    /// snapshot wins. A closed poll is final: a later open snapshot is stale.
+    fn apply_poll(&mut self, incoming: &PollSummary) -> std::result::Result<bool, String> {
+        if let Some(existing) = self.polls.get(&incoming.id) {
+            if existing.chat_id != incoming.chat_id || existing.message_id != incoming.message_id {
+                return Err(format!(
+                    "poll {} was reported for a different message",
+                    incoming.id
+                ));
+            }
+            if existing.closed && !incoming.closed {
+                return Ok(false);
+            }
+            if existing == incoming {
+                return Ok(false);
+            }
+        }
+
+        self.polls.insert(incoming.id, incoming.clone());
+        Ok(true)
     }
 
     fn upsert_message(&mut self, message: MessageSummary) -> bool {
