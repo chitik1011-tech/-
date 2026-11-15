@@ -98,3 +98,46 @@ fn require_non_blank(field: &str, value: &str) -> Result<()> {
         Ok(())
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::{CoreCommand, MAX_MESSAGE_PAGE_SIZE};
+    use crate::{CoreError, MessageCursor};
+
+    #[test]
+    fn caps_message_history_page_size() {
+        let command = CoreCommand::LoadMessages {
+            chat_id: 5,
+            cursor: None,
+            limit: MAX_MESSAGE_PAGE_SIZE + 100,
+        }
+        .cap_page_size();
+        assert!(matches!(command, CoreCommand::LoadMessages { limit, .. } if limit == MAX_MESSAGE_PAGE_SIZE));
+        assert!(command.validate().is_ok());
+    }
+
+    #[test]
+    fn validates_message_history_chat_cursor_and_limit() {
+        let zero_limit = CoreCommand::LoadMessages {
+            chat_id: 5,
+            cursor: None,
+            limit: 0,
+        };
+        assert!(matches!(zero_limit.validate(), Err(CoreError::InvalidInput(_))));
+
+        let zero_chat = CoreCommand::LoadMessages {
+            chat_id: 0,
+            cursor: None,
+            limit: 10,
+        };
+        assert!(matches!(zero_chat.validate(), Err(CoreError::InvalidInput(_))));
+
+        let empty_cursor = CoreCommand::LoadMessages {
+            chat_id: 5,
+            cursor: Some(MessageCursor::new("")),
+            limit: 10,
+        };
+        assert!(matches!(empty_cursor.validate(), Err(CoreError::InvalidInput(_))));
+    }
+}
