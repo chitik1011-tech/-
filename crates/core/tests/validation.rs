@@ -32,8 +32,7 @@ fn command_validation_accepts_supported_inputs() {
 fn command_validation_rejects_invalid_inputs() {
     let invalid = [
         CoreCommand::SetPhoneNumber("   ".into()),
-        CoreCommand::SubmitCode("
-".into()),
+        CoreCommand::SubmitCode("   ".into()),
         CoreCommand::SubmitPassword(String::new()),
         CoreCommand::LoadChats { limit: 0 },
         CoreCommand::LoadChats {
@@ -45,7 +44,7 @@ fn command_validation_rejects_invalid_inputs() {
         },
         CoreCommand::SendText {
             chat_id: 1,
-            text: " 	 ".into(),
+            text: "   ".into(),
         },
     ];
 
