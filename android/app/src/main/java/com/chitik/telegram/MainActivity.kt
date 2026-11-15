@@ -111,7 +111,17 @@ private fun TelegramRustApp(
 
         else -> {
             val chat = state.chats.firstOrNull { it.id == selectedChatId }
-            val messages = state.messages[selectedChatId].orEmpty()
+            val messages = state.messages[selectedChatId].orEmpty().map { message ->
+                val pollId = message.poll?.id
+                if (pollId == null) {
+                    message
+                } else {
+                    message.copy(
+                        pollVoting = pollId in state.votingPollIds,
+                        pollError = state.pollVoteErrors[pollId],
+                    )
+                }
+            }
 
             ConversationScreen(
                 state = ConversationScreenState(
@@ -134,6 +144,7 @@ private fun TelegramRustApp(
                         draft = ""
                     }
                 },
+                onPollVote = viewModel::votePoll,
                 onRetry = { viewModel.loadMessages(selectedChatId) },
             )
         }
