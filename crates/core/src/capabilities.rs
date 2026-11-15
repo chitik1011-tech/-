@@ -46,6 +46,7 @@ pub enum ChatAction {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ChatCapabilities {
     pub chat_id: i64,
     pub chat_kind: ChatKind,

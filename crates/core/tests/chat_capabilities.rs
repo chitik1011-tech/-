@@ -98,3 +98,31 @@ fn old_state_json_defaults_the_new_capability_map() {
     let decoded: CoreState = serde_json::from_value(old_state).unwrap();
     assert!(decoded.chat_capabilities.is_empty());
 }
+
+#[test]
+fn older_partial_capability_snapshot_defaults_missing_fields_to_unknown() {
+    let older_snapshot = json!({
+        "chat_id": 42,
+        "chat_kind": "supergroup",
+        "send_messages": { "availability": "known", "value": true }
+    });
+
+    let decoded: ChatCapabilities = serde_json::from_value(older_snapshot).unwrap();
+
+    assert_eq!(decoded.chat_id, 42);
+    assert_eq!(decoded.chat_kind, ChatKind::Supergroup);
+    assert_eq!(decoded.send_messages, CapabilityValue::Known(true));
+    assert_eq!(decoded.send_media, CapabilityValue::Unknown);
+    assert_eq!(decoded.send_polls, CapabilityValue::Unknown);
+    assert_eq!(decoded.add_users, CapabilityValue::Unknown);
+    assert_eq!(decoded.pin_messages, CapabilityValue::Unknown);
+    assert_eq!(decoded.delete_messages, CapabilityValue::Unknown);
+    assert_eq!(decoded.edit_messages, CapabilityValue::Unknown);
+    assert_eq!(decoded.manage_chat, CapabilityValue::Unknown);
+    assert_eq!(decoded.post_messages, CapabilityValue::Unknown);
+    assert_eq!(decoded.edit_others_messages, CapabilityValue::Unknown);
+    assert_eq!(
+        decoded.slow_mode_remaining_seconds,
+        CapabilityValue::Unknown
+    );
+}
