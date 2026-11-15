@@ -25,7 +25,8 @@ pub use event::CoreEvent;
 pub use mock::MockTelegramBackend;
 pub use model::{
     AccountState, AttachmentDownloadState, AttachmentKind, AttachmentThumbnail, AuthorizationState,
-    ChatSummary, ForwardedFrom, MediaAttachment, MessageSummary, ReplyMetadata,
+    ChatSummary, ForwardedFrom, MediaAttachment, MessageHistoryState, MessageSummary,
+    ReplyMetadata,
 };
 pub use runtime::{spawn_core, spawn_core_with_store, CoreHandle, PERSISTENCE_FLUSH_INTERVAL_MS};
 pub use selection::{MessageSelection, SelectionAction, SelectionCapabilities, SelectionError};
