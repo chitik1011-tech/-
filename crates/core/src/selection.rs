@@ -172,7 +172,8 @@ impl MessageSelection {
             can_forward: non_empty,
             can_copy: non_empty && selected.iter().all(|message| !message.text.is_empty()),
             can_reply: single,
-            can_edit: sole.is_some_and(|message| message.outgoing && !message.text.is_empty()),
+            can_edit: single
+                && sole.is_some_and(|message| message.outgoing && !message.text.is_empty()),
         }
     }
 
