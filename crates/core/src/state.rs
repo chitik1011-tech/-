@@ -709,7 +709,12 @@ impl CoreState {
             }
         }
 
-        if let Some(chat) = self.account.chats.iter_mut().find(|chat| chat.id == chat_id) {
+        if let Some(chat) = self
+            .account
+            .chats
+            .iter_mut()
+            .find(|chat| chat.id == chat_id)
+        {
             if let Some(message) = chat
                 .last_message
                 .as_mut()
