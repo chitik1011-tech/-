@@ -1,11 +1,13 @@
-use std::sync::Arc;
+use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
 
 use grammers_client::{
-    Client, sender::UpdatesConfiguration, session::updates::UpdatesLike, update::Update,
+    Client, InvocationError, client::UpdateStream, sender::UpdatesConfiguration,
+    session::updates::UpdatesLike, update::Update,
 };
 pub use tg_mobile_core::ConnectionState;
 use tg_mobile_core::{BackendUpdateSender, CoreError, CoreEvent, MessageSummary};
 use tokio::sync::{broadcast, mpsc, watch};
+use tokio::time::sleep;
 
 use crate::{
     chats::{PeerRegistry, remember_peer},
@@ -47,9 +49,7 @@ impl TelegramUpdate {
     pub(crate) fn to_core_event(&self) -> Option<CoreEvent> {
         match self {
             Self::MessageAdded(message) => Some(CoreEvent::MessageAdded(message.clone())),
-            Self::ConnectionStateChanged(state) => {
-                Some(CoreEvent::ConnectionStateChanged(*state))
-            }
+            Self::ConnectionStateChanged(state) => Some(CoreEvent::ConnectionStateChanged(*state)),
             Self::Error(message) => Some(CoreEvent::Error(message.clone())),
             _ => None,
         }
@@ -65,6 +65,133 @@ pub(crate) struct UpdateWorkerInput {
     pub events: broadcast::Sender<TelegramUpdate>,
     pub core_updates: Option<BackendUpdateSender>,
     pub shutdown: watch::Receiver<bool>,
+}
+
+const UPDATE_RETRY_INITIAL_DELAY: Duration = Duration::from_millis(250);
+const UPDATE_RETRY_MAX_DELAY: Duration = Duration::from_secs(30);
+
+trait UpdateSource {
+    type Item;
+
+    fn next(
+        &mut self,
+    ) -> Pin<Box<dyn Future<Output = Result<Self::Item, InvocationError>> + Send + '_>>;
+}
+
+impl UpdateSource for UpdateStream {
+    type Item = Update;
+
+    fn next(
+        &mut self,
+    ) -> Pin<Box<dyn Future<Output = Result<Self::Item, InvocationError>> + Send + '_>> {
+        Box::pin(UpdateStream::next(self))
+    }
+}
+
+#[derive(Debug)]
+enum NextOutcome<T> {
+    Item(T),
+    Shutdown,
+    Terminal(InvocationError),
+}
+
+#[derive(Debug, Clone, Copy)]
+struct RetryBackoff {
+    next_delay: Duration,
+}
+
+impl Default for RetryBackoff {
+    fn default() -> Self {
+        Self {
+            next_delay: UPDATE_RETRY_INITIAL_DELAY,
+        }
+    }
+}
+
+impl RetryBackoff {
+    fn on_transient_error(&mut self) -> Duration {
+        let delay = self.next_delay;
+        self.next_delay = delay
+            .checked_mul(2)
+            .unwrap_or(UPDATE_RETRY_MAX_DELAY)
+            .min(UPDATE_RETRY_MAX_DELAY);
+        delay
+    }
+
+    fn on_success(&mut self) {
+        self.next_delay = UPDATE_RETRY_INITIAL_DELAY;
+    }
+}
+
+fn is_transient_update_error(error: &InvocationError) -> bool {
+    match error {
+        InvocationError::Io(_) => true,
+        InvocationError::Rpc(error) => {
+            error.code >= 500
+                || error.code == 420
+                || error.name.starts_with("FLOOD_WAIT_")
+                || matches!(error.name.as_str(), "RPC_CALL_FAIL" | "RPC_MCGET_FAIL")
+        }
+        // A dropped invocation is the signal grammers uses when the sender
+        // pool or the updates receiver has closed. It cannot recover by polling
+        // this same stream again.
+        InvocationError::Dropped(_) => false,
+        InvocationError::Session(_)
+        | InvocationError::Deserialize(_)
+        | InvocationError::Transport(_)
+        | InvocationError::InvalidDc
+        | InvocationError::Authentication(_) => false,
+    }
+}
+
+async fn next_with_recovery<S, F, Fut>(
+    stream: &mut S,
+    shutdown: &mut watch::Receiver<bool>,
+    backoff: &mut RetryBackoff,
+    mut report_transient: F,
+) -> NextOutcome<S::Item>
+where
+    S: UpdateSource,
+    F: FnMut(String) -> Fut,
+    Fut: Future<Output = ()>,
+{
+    loop {
+        if *shutdown.borrow() {
+            return NextOutcome::Shutdown;
+        }
+
+        let result = tokio::select! {
+            biased;
+            changed = shutdown.changed() => {
+                if changed.is_err() || *shutdown.borrow() {
+                    return NextOutcome::Shutdown;
+                }
+                continue;
+            }
+            result = stream.next() => result,
+        };
+
+        match result {
+            Ok(update) => {
+                backoff.on_success();
+                return NextOutcome::Item(update);
+            }
+            Err(error) if is_transient_update_error(&error) => {
+                report_transient(format!("Telegram update stream (retrying): {error}")).await;
+                let delay = backoff.on_transient_error();
+                tokio::select! {
+                    biased;
+                    changed = shutdown.changed() => {
+                        if changed.is_err() || *shutdown.borrow() {
+                            return NextOutcome::Shutdown;
+                        }
+                    }
+                    _ = sleep(delay) => {}
+                }
+            }
+            Err(error) => return NextOutcome::Terminal(error),
+        }
+    }
 }
 
 pub(crate) async fn run_update_worker(mut input: UpdateWorkerInput) {
@@ -111,30 +238,32 @@ pub(crate) async fn run_update_worker(mut input: UpdateWorkerInput) {
     )
     .await;
 
+    let mut backoff = RetryBackoff::default();
     loop {
-        tokio::select! {
-            changed = input.shutdown.changed() => {
-                if changed.is_err() || *input.shutdown.borrow() {
-                    break;
+        let events = &input.events;
+        let core_updates = &input.core_updates;
+        let outcome = next_with_recovery(
+            &mut stream,
+            &mut input.shutdown,
+            &mut backoff,
+            |message| async move { emit_error(events, core_updates, message).await },
+        )
+        .await;
+        match outcome {
+            NextOutcome::Item(update) => {
+                if let Some(event) = map_update(update, &input.peers, &input.dedup).await {
+                    emit_update(&input.events, &input.core_updates, event).await;
                 }
             }
-            update = stream.next() => {
-                match update {
-                    Ok(update) => {
-                        if let Some(event) = map_update(update, &input.peers, &input.dedup).await {
-                            emit_update(&input.events, &input.core_updates, event).await;
-                        }
-                    }
-                    Err(error) => {
-                        emit_error(
-                            &input.events,
-                            &input.core_updates,
-                            format!("Telegram update stream: {error}"),
-                        )
-                        .await;
-                        break;
-                    }
-                }
+            NextOutcome::Shutdown => break,
+            NextOutcome::Terminal(error) => {
+                emit_error(
+                    &input.events,
+                    &input.core_updates,
+                    format!("Telegram update stream: {error}"),
+                )
+                .await;
+                break;
             }
         }
     }
@@ -212,8 +341,136 @@ async fn map_update(
 
 #[cfg(test)]
 mod tests {
+    use std::{collections::VecDeque, future::Future, pin::Pin, sync::Arc};
+
+    use grammers_client::{InvocationError, sender::RpcError};
+    use tokio::sync::watch;
+
     use super::{ConnectionState, TelegramUpdate};
+    use super::{
+        NextOutcome, RetryBackoff, UPDATE_RETRY_INITIAL_DELAY, UPDATE_RETRY_MAX_DELAY,
+        UpdateSource, is_transient_update_error, next_with_recovery,
+    };
     use tg_mobile_core::{CoreEvent, MessageSummary};
+
+    struct FakeUpdateSource {
+        results: VecDeque<Result<u8, InvocationError>>,
+        calls: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl UpdateSource for FakeUpdateSource {
+        type Item = u8;
+
+        fn next(
+            &mut self,
+        ) -> Pin<Box<dyn Future<Output = Result<Self::Item, InvocationError>> + Send + '_>>
+        {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let result = self
+                .results
+                .pop_front()
+                .unwrap_or(Err(InvocationError::Dropped("fake source exhausted")));
+            Box::pin(async move { result })
+        }
+    }
+
+    #[test]
+    fn transient_update_errors_retry_same_source_and_success_resets_backoff() {
+        let mut backoff = RetryBackoff::default();
+        assert_eq!(backoff.on_transient_error(), UPDATE_RETRY_INITIAL_DELAY);
+        assert_eq!(backoff.on_transient_error(), UPDATE_RETRY_INITIAL_DELAY * 2);
+        backoff.on_success();
+        assert_eq!(backoff.on_transient_error(), UPDATE_RETRY_INITIAL_DELAY);
+        for _ in 0..16 {
+            backoff.on_transient_error();
+        }
+        assert!(backoff.next_delay <= UPDATE_RETRY_MAX_DELAY);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn transient_error_retries_the_same_stream_until_an_update_arrives() {
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut source = FakeUpdateSource {
+            results: VecDeque::from([
+                Err(InvocationError::Io(std::io::Error::other("temporary"))),
+                Ok(7),
+            ]),
+            calls: Arc::clone(&calls),
+        };
+        let (_shutdown_tx, mut shutdown_rx) = watch::channel(false);
+        let mut backoff = RetryBackoff::default();
+        let result =
+            next_with_recovery(&mut source, &mut shutdown_rx, &mut backoff, |_| async {}).await;
+
+        assert!(matches!(result, NextOutcome::Item(7)));
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+        assert_eq!(backoff.next_delay, UPDATE_RETRY_INITIAL_DELAY);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn shutdown_interrupts_retry_backoff_sleep() {
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut source = FakeUpdateSource {
+            results: VecDeque::from([Err(InvocationError::Io(std::io::Error::other("temporary")))]),
+            calls: Arc::clone(&calls),
+        };
+        let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
+        let mut backoff = RetryBackoff::default();
+        let task = tokio::spawn(async move {
+            next_with_recovery(&mut source, &mut shutdown_rx, &mut backoff, |_| async {}).await
+        });
+        tokio::task::yield_now().await;
+        shutdown_tx.send(true).unwrap();
+
+        assert!(matches!(task.await.unwrap(), NextOutcome::Shutdown));
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn dropped_update_stream_is_terminal_without_retrying() {
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut source = FakeUpdateSource {
+            results: VecDeque::from([Err(InvocationError::Dropped("updates channel was closed"))]),
+            calls: Arc::clone(&calls),
+        };
+        let (_shutdown_tx, mut shutdown_rx) = watch::channel(false);
+        let mut backoff = RetryBackoff::default();
+        let result =
+            next_with_recovery(&mut source, &mut shutdown_rx, &mut backoff, |_| async {}).await;
+
+        assert!(matches!(result, NextOutcome::Terminal(_)));
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn only_transient_io_and_server_errors_are_retried() {
+        assert!(is_transient_update_error(&InvocationError::Io(
+            std::io::Error::other("temporary")
+        )));
+        assert!(is_transient_update_error(&InvocationError::Rpc(RpcError {
+            code: 420,
+            name: "FLOOD_WAIT_5".into(),
+            value: Some(5),
+            caused_by: None,
+        })));
+        assert!(is_transient_update_error(&InvocationError::Rpc(RpcError {
+            code: 500,
+            name: "INTERNAL".into(),
+            value: None,
+            caused_by: None,
+        })));
+        assert!(!is_transient_update_error(&InvocationError::Rpc(
+            RpcError {
+                code: 400,
+                name: "CHAT_WRITE_FORBIDDEN".into(),
+                value: None,
+                caused_by: None,
+            }
+        )));
+        assert!(!is_transient_update_error(&InvocationError::Dropped(
+            "updates channel was closed"
+        )));
+    }
 
     #[test]
     fn only_supported_update_types_cross_current_core_boundary() {
