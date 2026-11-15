@@ -5,21 +5,24 @@ use std::{
         atomic::{AtomicI64, Ordering},
         Arc, Mutex, OnceLock,
     },
+    time::Duration,
 };
 
 use jni::{
     objects::{GlobalRef, JObject, JString, JValue},
-    sys::{jboolean, jlong, jstring, JNI_FALSE, JNI_TRUE, JNI_VERSION_1_6},
+    sys::{jboolean, jint, jlong, jstring, JNI_FALSE, JNI_TRUE, JNI_VERSION_1_6},
     JNIEnv, JavaVM,
 };
 use tg_mobile_core::{
-    backend::BackendFuture, decode_command, encode_event, encode_state, spawn_core, CoreCommand,
-    CoreError, CoreEvent, CoreHandle, TelegramBackend,
+    decode_command, encode_event, encode_state, spawn_core, BackendFuture, CoreCommand, CoreError,
+    CoreEvent, CoreHandle, TelegramBackend,
 };
-use tokio::{runtime::Runtime, task::JoinHandle};
+use tg_mobile_telegram::{GrammersBackend, TelegramConfig};
+use tokio::{runtime::Runtime, task::JoinHandle, time::timeout};
 
 const CALLBACK_METHOD: &str = "onNativeEvent";
 const CALLBACK_SIGNATURE: &str = "(Ljava/lang/String;Ljava/lang/String;)V";
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 
 static NEXT_HANDLE: AtomicI64 = AtomicI64::new(1);
 static REGISTRY: OnceLock<Mutex<HashMap<i64, NativeHandle>>> = OnceLock::new();
@@ -31,6 +34,7 @@ enum BridgeError {
     InvalidHandle(i64),
     InvalidCommand(String),
     Runtime(String),
+    Telegram(String),
     RegistryUnavailable,
 }
 
@@ -41,6 +45,7 @@ impl std::fmt::Display for BridgeError {
             Self::InvalidHandle(handle) => write!(f, "invalid native handle: {handle}"),
             Self::InvalidCommand(message) => write!(f, "invalid command: {message}"),
             Self::Runtime(message) => write!(f, "runtime error: {message}"),
+            Self::Telegram(message) => write!(f, "Telegram backend error: {message}"),
             Self::RegistryUnavailable => write!(f, "native handle registry is unavailable"),
         }
     }
@@ -65,7 +70,7 @@ impl TelegramBackend for DisconnectedBackend {
             }
 
             Err(CoreError::Backend(
-                "Telegram backend is not linked into the Android bridge yet".to_owned(),
+                "Telegram backend is not configured for this native handle".to_owned(),
             ))
         })
     }
@@ -96,17 +101,6 @@ fn with_registry<T>(
         .lock()
         .map_err(|_| BridgeError::RegistryUnavailable)?;
     action(&mut guard)
-}
-
-fn event_kind(event: &CoreEvent) -> &'static str {
-    match event {
-        CoreEvent::State(_) => "account_state",
-        CoreEvent::AuthorizationChanged(_) => "authorization_changed",
-        CoreEvent::ChatsLoaded(_) => "chats_loaded",
-        CoreEvent::MessageAdded(_) => "message_added",
-        CoreEvent::Error(_) => "error",
-        CoreEvent::Stopped => "stopped",
-    }
 }
 
 fn error_payload(message: &str) -> String {
@@ -150,7 +144,10 @@ fn emit_error(vm: &JavaVM, callback: &GlobalRef, message: &str) {
     let _ = emit_callback(vm, callback, "error", &payload);
 }
 
-fn create_native_handle(env: &mut JNIEnv<'_>, callback: JObject<'_>) -> Result<i64, BridgeError> {
+fn prepare_callback(
+    env: &mut JNIEnv<'_>,
+    callback: JObject<'_>,
+) -> Result<(GlobalRef, Arc<JavaVM>), BridgeError> {
     if callback.is_null() {
         return Err(BridgeError::Jni("callback must not be null".to_owned()));
     }
@@ -162,13 +159,15 @@ fn create_native_handle(env: &mut JNIEnv<'_>, callback: JObject<'_>) -> Result<i
         env.get_java_vm()
             .map_err(|error| BridgeError::Jni(error.to_string()))?,
     );
+    Ok((callback, vm))
+}
+
+fn install_native_handle(
+    callback: GlobalRef,
+    vm: Arc<JavaVM>,
+    core: CoreHandle,
+) -> Result<i64, BridgeError> {
     let runtime = runtime()?;
-
-    let core = {
-        let _guard = runtime.enter();
-        spawn_core(DisconnectedBackend)
-    };
-
     let mut events = core.subscribe();
     let event_callback = callback.clone();
     let event_vm = Arc::clone(&vm);
@@ -181,7 +180,7 @@ fn create_native_handle(env: &mut JNIEnv<'_>, callback: JObject<'_>) -> Result<i
                             let _ = emit_callback(
                                 &event_vm,
                                 &event_callback,
-                                event_kind(&event),
+                                event.kind(),
                                 &payload,
                             );
                         }
@@ -190,7 +189,7 @@ fn create_native_handle(env: &mut JNIEnv<'_>, callback: JObject<'_>) -> Result<i
                         }
                     }
 
-                    if matches!(event, CoreEvent::Stopped) {
+                    if event.is_terminal() {
                         break;
                     }
                 }
@@ -254,6 +253,36 @@ fn create_native_handle(env: &mut JNIEnv<'_>, callback: JObject<'_>) -> Result<i
     Ok(handle)
 }
 
+fn create_native_handle(env: &mut JNIEnv<'_>, callback: JObject<'_>) -> Result<i64, BridgeError> {
+    let (callback, vm) = prepare_callback(env, callback)?;
+    let runtime = runtime()?;
+    let core = {
+        let _guard = runtime.enter();
+        spawn_core(DisconnectedBackend)
+    };
+    install_native_handle(callback, vm, core)
+}
+
+fn create_telegram_native_handle(
+    env: &mut JNIEnv<'_>,
+    callback: JObject<'_>,
+    api_id: i32,
+    api_hash: String,
+    session_path: String,
+) -> Result<i64, BridgeError> {
+    let (callback, vm) = prepare_callback(env, callback)?;
+    let runtime = runtime()?;
+    let config = TelegramConfig::new(api_id, api_hash, session_path);
+    let backend = runtime
+        .block_on(GrammersBackend::connect(config))
+        .map_err(|error| BridgeError::Telegram(error.to_string()))?;
+    let core = {
+        let _guard = runtime.enter();
+        spawn_core(backend)
+    };
+    install_native_handle(callback, vm, core)
+}
+
 fn destroy_native_handle(handle: i64) -> Result<(), BridgeError> {
     let native = with_registry(|registry| {
         registry
@@ -261,12 +290,24 @@ fn destroy_native_handle(handle: i64) -> Result<(), BridgeError> {
             .ok_or(BridgeError::InvalidHandle(handle))
     })?;
 
-    native.event_task.abort();
-    native.state_task.abort();
-
-    let core = native.core;
     runtime()?.spawn(async move {
-        let _ = core.send(CoreCommand::Shutdown).await;
+        let NativeHandle {
+            core,
+            event_task,
+            state_task,
+            ..
+        } = native;
+
+        let _ = core.shutdown().await;
+        let _ = timeout(SHUTDOWN_TIMEOUT, async {
+            while !core.is_closed() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+
+        event_task.abort();
+        state_task.abort();
     });
 
     Ok(())
@@ -369,6 +410,37 @@ pub extern "system" fn Java_com_chitik_telegram_nativebridge_NativeBridge_create
 ) -> jlong {
     let result = catch_unwind(AssertUnwindSafe(|| {
         create_native_handle(&mut env, callback)
+    }));
+
+    match result {
+        Ok(Ok(handle)) => handle as jlong,
+        Ok(Err(error)) => {
+            throw_bridge_error(&mut env, error);
+            0
+        }
+        Err(_) => {
+            throw_bridge_error(
+                &mut env,
+                BridgeError::Runtime("panic caught at JNI boundary".to_owned()),
+            );
+            0
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_chitik_telegram_nativebridge_NativeBridge_createTelegramHandle(
+    mut env: JNIEnv<'_>,
+    _this: JObject<'_>,
+    callback: JObject<'_>,
+    api_id: jint,
+    api_hash: JString<'_>,
+    session_path: JString<'_>,
+) -> jlong {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let api_hash = read_java_string(&mut env, api_hash)?;
+        let session_path = read_java_string(&mut env, session_path)?;
+        create_telegram_native_handle(&mut env, callback, api_id, api_hash, session_path)
     }));
 
     match result {
