@@ -1,13 +1,12 @@
 use std::{
-    fs,
-    process,
+    fs, process,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use tg_mobile_core::{
     spawn_core, spawn_core_with_store, AuthorizationState, BackendFuture, BackendUpdateReceiver,
-    CoreCommand, CoreError, CoreEvent, CoreHandle, CoreState, JsonFileStateStore,
-    MemoryStateStore, MessageSummary, MockTelegramBackend, TelegramBackend,
+    CoreCommand, CoreError, CoreEvent, CoreHandle, CoreState, JsonFileStateStore, MemoryStateStore,
+    MessageSummary, MockTelegramBackend, TelegramBackend,
 };
 use tokio::{
     sync::{mpsc, oneshot},
@@ -221,13 +220,21 @@ async fn duplicate_and_reordered_message_updates_merge_in_chronological_order() 
     let (updates_tx, updates_rx) = mpsc::channel(8);
     let core = spawn_core(TestBackend::with_updates(updates_rx));
 
-    updates_tx.send(Ok(CoreEvent::MessageAdded(message(8, 5, 80, "late"))))
+    updates_tx
+        .send(Ok(CoreEvent::MessageAdded(message(8, 5, 80, "late"))))
         .await
         .unwrap();
-    updates_tx.send(Ok(CoreEvent::MessageAdded(message(2, 5, 20, "early"))))
+    updates_tx
+        .send(Ok(CoreEvent::MessageAdded(message(2, 5, 20, "early"))))
         .await
         .unwrap();
-    updates_tx.send(Ok(CoreEvent::MessageAdded(message(8, 5, 80, "late corrected"))))
+    updates_tx
+        .send(Ok(CoreEvent::MessageAdded(message(
+            8,
+            5,
+            80,
+            "late corrected",
+        ))))
         .await
         .unwrap();
 
@@ -238,7 +245,10 @@ async fn duplicate_and_reordered_message_updates_merge_in_chronological_order() 
     .await;
     let messages = state.messages_for_chat(5);
 
-    assert_eq!(messages.iter().map(|item| item.id).collect::<Vec<_>>(), [2, 8]);
+    assert_eq!(
+        messages.iter().map(|item| item.id).collect::<Vec<_>>(),
+        [2, 8]
+    );
     assert_eq!(messages[0].timestamp_unix, 20);
     assert_eq!(messages[1].text, "late corrected");
     assert_eq!(state.chat(5).unwrap().unread_count, 2);
