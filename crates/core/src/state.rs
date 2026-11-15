@@ -279,7 +279,10 @@ mod outgoing_message_tests {
             state.messages_for_chat(7).len(),
             super::MAX_CACHED_MESSAGES_PER_CHAT
         );
-        assert!(state.messages_for_chat(7).iter().all(|cached| cached.id != 88));
+        assert!(state
+            .messages_for_chat(7)
+            .iter()
+            .all(|cached| cached.id != 88));
         assert!(state.visible_outgoing_messages_for_chat(7).is_empty());
         let status = state.outgoing_message("pending-1").unwrap();
         assert_eq!(status.status, OutgoingMessageStatus::Sent);
