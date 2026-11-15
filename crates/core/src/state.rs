@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     connection::ConnectionState,
+    connection_machine::{ConnectionMachine, LinkEvent, LinkPhase, Outcome},
     event::CoreEvent,
     model::{AccountState, ChatSummary, MessageHistoryState, MessageSummary},
 };
@@ -17,6 +18,9 @@ pub struct CoreState {
     /// Current Telegram transport state. Older persisted snapshots default to disconnected.
     #[serde(default)]
     pub connection_state: ConnectionState,
+    /// Generation-safe connection lifecycle owned by the core actor.
+    #[serde(default)]
+    pub connection_machine: ConnectionMachine,
     pub messages: BTreeMap<i64, Vec<MessageSummary>>,
     #[serde(default)]
     pub message_history: BTreeMap<i64, MessageHistoryState>,
@@ -29,6 +33,7 @@ impl Default for CoreState {
             running: true,
             account: AccountState::default(),
             connection_state: ConnectionState::Disconnected,
+            connection_machine: ConnectionMachine::default(),
             messages: BTreeMap::new(),
             message_history: BTreeMap::new(),
             last_error: None,
@@ -47,11 +52,38 @@ impl CoreState {
                 self.account.authorization = authorization.clone();
                 self.last_error = None;
             }
-            CoreEvent::ConnectionStateChanged(connection_state) => {
-                self.connection_state = *connection_state;
+            CoreEvent::ConnectionSessionStarted => {
+                self.connection_machine.start_session();
+                self.connection_state = self.connection_machine.transport_state();
+            }
+            CoreEvent::ConnectionLifecycle { token, event } => {
+                if matches!(
+                    self.connection_machine.apply(*token, *event),
+                    Ok(Outcome::Changed { .. })
+                ) {
+                    self.connection_state = self.connection_machine.transport_state();
+                }
+            }
+            CoreEvent::SessionUpdate { token, event } => {
+                if *token == self.connection_machine.token() {
+                    self.reduce(event);
+                }
+            }
+            CoreEvent::ConnectionStateChanged(_) => {
+                // Untagged connection callbacks cannot be made generation-safe.
             }
             CoreEvent::ChatsLoaded(chats) => {
                 self.account.chats = chats.clone();
+                if self.connection_machine.phase() == LinkPhase::Synchronizing {
+                    let token = self.connection_machine.token();
+                    if matches!(
+                        self.connection_machine
+                            .apply(token, LinkEvent::SyncCompleted),
+                        Ok(Outcome::Changed { .. })
+                    ) {
+                        self.connection_state = self.connection_machine.transport_state();
+                    }
+                }
                 self.last_error = None;
             }
             CoreEvent::MessagesLoaded { chat_id, messages } => {

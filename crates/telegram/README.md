@@ -88,7 +88,11 @@ If the Android agent uses `cargo-ndk`, the equivalent target/ABI is `arm64-v8a` 
 
 The core runtime exposes `TelegramBackend::take_updates()` and polls the returned receiver alongside commands with `tokio::select!`. `GrammersBackend` connects its continuous Telegram update worker directly to that channel, so incoming `MessageAdded` events reach `CoreHandle::subscribe()` immediately without waiting for another command. The richer `subscribe_updates()` stream remains available for protocol events that do not yet have a `CoreEvent` variant.
 
-Edits, deletions, chat-list changes, unread changes, typing, and connection state still need corresponding `CoreEvent` variants before they can cross the core boundary without loss of semantics.
+Every asynchronous core update from the Telegram worker is wrapped with the `ConnectionToken` captured before the corresponding stream operation. The core actor rejects updates whose generation or attempt epoch is stale. Worker lifecycle events use the same token contract. The current `grammers` API has no initial catch-up completion callback: `UpdateStream::next()` performs `GetState`/difference work internally, while `sync_update_state()` persists state at shutdown. The core therefore enters `Ready` after a successful `LoadChats` result while synchronizing; this is an app-level dialogs-loaded boundary and does not claim that all message history has been downloaded. After reconnect, it remains `Synchronizing` until a successful dialogs load establishes that boundary again.
+
+The actor keeps reconnect-sync intent in runtime memory: an accepted transition to `Reconnecting` schedules one automatic `LoadChats` after the next `SyncStarted`. Initial dialog loading stays with the Android session flow, so process restore does not replay a persisted reconnect request or duplicate the UI's initial load. If an initial or reconnect `LoadChats` fails or returns no `ChatsLoaded` event, the lifecycle enters `Failed`; ordinary refreshes while `Ready` do not change the connection phase.
+
+Edits, deletions, chat-list changes, unread changes, and typing still need corresponding `CoreEvent` variants before they can cross the core boundary without loss of semantics.
 
 ## Known limitations / next core work
 

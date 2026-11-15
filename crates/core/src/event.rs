@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     connection::ConnectionState,
+    connection_machine::{ConnectionToken, LinkEvent},
     model::{AccountState, AuthorizationState, ChatSummary, MessageSummary},
 };
 
@@ -10,6 +11,19 @@ use crate::{
 pub enum CoreEvent {
     State(AccountState),
     AuthorizationChanged(AuthorizationState),
+    /// Starts a new connection session and creates its generation token.
+    ConnectionSessionStarted,
+    /// Lifecycle input produced by work started for a specific connection token.
+    ConnectionLifecycle {
+        token: ConnectionToken,
+        event: LinkEvent,
+    },
+    /// Update produced by asynchronous work. The actor drops it if its token is stale.
+    SessionUpdate {
+        token: ConnectionToken,
+        event: Box<CoreEvent>,
+    },
+    /// Legacy untagged state event. Runtime reducers ignore it; use `ConnectionLifecycle`.
     ConnectionStateChanged(ConnectionState),
     ChatsLoaded(Vec<ChatSummary>),
     MessagesLoaded {
@@ -46,6 +60,9 @@ impl CoreEvent {
         match self {
             Self::State(_) => "state",
             Self::AuthorizationChanged(_) => "authorization_changed",
+            Self::ConnectionSessionStarted => "connection_session_started",
+            Self::ConnectionLifecycle { .. } => "connection_lifecycle",
+            Self::SessionUpdate { .. } => "session_update",
             Self::ConnectionStateChanged(_) => "connection_state_changed",
             Self::ChatsLoaded(_) => "chats_loaded",
             Self::MessagesLoaded { .. } => "messages_loaded",
