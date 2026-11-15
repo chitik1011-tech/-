@@ -26,6 +26,7 @@ pub struct CoreHandle {
 
 impl CoreHandle {
     pub async fn send(&self, command: CoreCommand) -> Result<()> {
+        let command = command.cap_page_size();
         command.validate()?;
 
         self.commands
@@ -98,10 +99,77 @@ where
             match input {
                 RuntimeInput::Command(Some(command)) => {
                     let shutdown_requested = matches!(command, CoreCommand::Shutdown);
-                    let events = match backend.handle(command).await {
-                        Ok(events) => events,
-                        Err(error) => vec![CoreEvent::Error(error.to_string())],
+                    let history_request = match &command {
+                        CoreCommand::LoadMessages { chat_id, cursor, .. } => {
+                            Some((*chat_id, cursor.clone()))
+                        }
+                        _ => None,
                     };
+                    if let Some((chat_id, cursor)) = history_request.as_ref() {
+                        apply_event(
+                            CoreEvent::MessagesLoading {
+                                chat_id: *chat_id,
+                                cursor: cursor.clone(),
+                            },
+                            &mut reduced_state,
+                            &state_tx,
+                            &event_tx_task,
+                        );
+                        persistence_dirty = true;
+                    }
+
+                    let mut events = match backend.handle(command).await {
+                        Ok(events) => events,
+                        Err(error) => {
+                            if let Some((chat_id, cursor)) = history_request.as_ref() {
+                                vec![CoreEvent::MessageHistoryLoadFailed {
+                                    chat_id: *chat_id,
+                                    cursor: cursor.clone(),
+                                    error: error.to_string(),
+                                }]
+                            } else {
+                                vec![CoreEvent::Error(error.to_string())]
+                            }
+                        }
+                    };
+
+                    if let Some((chat_id, cursor)) = history_request.as_ref() {
+                        let has_completion = events.iter().any(|event| match event {
+                            CoreEvent::MessagesLoaded {
+                                chat_id: event_chat_id,
+                                cursor: event_cursor,
+                                ..
+                            }
+                            | CoreEvent::MessageHistoryLoadFailed {
+                                chat_id: event_chat_id,
+                                cursor: event_cursor,
+                                ..
+                            } => event_chat_id == chat_id && event_cursor == cursor,
+                            _ => false,
+                        });
+                        if !has_completion {
+                            if let Some(error) = events.iter().find_map(|event| match event {
+                                CoreEvent::Error(error) => Some(error.clone()),
+                                _ => None,
+                            }) {
+                                events.push(CoreEvent::MessageHistoryLoadFailed {
+                                    chat_id: *chat_id,
+                                    cursor: cursor.clone(),
+                                    error,
+                                });
+                            } else {
+                                // An empty result is an explicit end-of-history page, not a
+                                // permanent loading state.
+                                events.push(CoreEvent::MessagesLoaded {
+                                    chat_id: *chat_id,
+                                    cursor: cursor.clone(),
+                                    messages: Vec::new(),
+                                    next_cursor: None,
+                                    has_more: false,
+                                });
+                            }
+                        }
+                    }
 
                     if !events.is_empty() {
                         persistence_dirty = true;
@@ -213,6 +281,10 @@ async fn restore_state<S: StateStore>(
         Ok(Some(mut state)) => {
             state.running = true;
             state.last_error = None;
+            for history in state.message_history.values_mut() {
+                // An in-flight network request cannot survive process restart.
+                history.loading = false;
+            }
             let _ = state_tx.send(state.clone());
             state
         }
