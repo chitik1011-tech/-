@@ -1,14 +1,17 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::{
     event::CoreEvent,
-    model::{AccountState, ChatSummary},
+    model::{AccountState, ChatSummary, MessageSummary},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CoreState {
     pub running: bool,
     pub account: AccountState,
+    pub messages: BTreeMap<i64, Vec<MessageSummary>>,
     pub last_error: Option<String>,
 }
 
@@ -17,6 +20,7 @@ impl Default for CoreState {
         Self {
             running: true,
             account: AccountState::default(),
+            messages: BTreeMap::new(),
             last_error: None,
         }
     }
@@ -38,6 +42,8 @@ impl CoreState {
                 self.last_error = None;
             }
             CoreEvent::MessageAdded(message) => {
+                self.upsert_message(message.clone());
+
                 if let Some(chat) = self
                     .account
                     .chats
@@ -49,10 +55,11 @@ impl CoreState {
                     self.account.chats.push(ChatSummary {
                         id: message.chat_id,
                         title: format!("Chat {}", message.chat_id),
-                        unread_count: u32::from(!message.outgoing),
+                        unread_count: if message.outgoing { 0 } else { 1 },
                         last_message: Some(message.clone()),
                     });
                 }
+
                 self.last_error = None;
             }
             CoreEvent::Error(error) => {
@@ -62,5 +69,17 @@ impl CoreState {
                 self.running = false;
             }
         }
+    }
+
+    fn upsert_message(&mut self, message: MessageSummary) {
+        let messages = self.messages.entry(message.chat_id).or_default();
+
+        if let Some(existing) = messages.iter_mut().find(|item| item.id == message.id) {
+            *existing = message;
+            return;
+        }
+
+        messages.push(message);
+        messages.sort_by_key(|item| (item.timestamp_unix, item.id));
     }
 }
