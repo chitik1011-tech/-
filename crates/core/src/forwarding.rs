@@ -114,9 +114,10 @@ pub fn normalize_forward_events(
                             source: source.clone(),
                             error: "backend returned an invalid destination message id".into(),
                         },
-                        ForwardOutcome::Failed { error, .. } => {
-                            ForwardOutcome::Failed { source: source.clone(), error }
-                        }
+                        ForwardOutcome::Failed { error, .. } => ForwardOutcome::Failed {
+                            source: source.clone(),
+                            error,
+                        },
                     };
                     first.insert(source, normalized);
                 }
