@@ -36,6 +36,10 @@ impl Default for MockTelegramBackend {
                         text: "Core online".into(),
                         timestamp_unix: unix_timestamp(),
                         outgoing: false,
+                        forwarded_from: None,
+                        edited: false,
+                        edit_timestamp_unix: None,
+                        reply_to: None,
                     }),
                 },
             ],
@@ -110,6 +114,10 @@ impl MockTelegramBackend {
                     text,
                     timestamp_unix: unix_timestamp(),
                     outgoing: true,
+                    forwarded_from: None,
+                    edited: false,
+                    edit_timestamp_unix: None,
+                    reply_to: None,
                 };
                 self.next_message_id += 1;
 
