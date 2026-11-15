@@ -1,6 +1,11 @@
 use tg_mobile_core::{ChatPage, ChatSummary, CoreCommand, CoreEvent, CoreState, MessageSummary};
 
-fn summary(id: i64, title: &str, unread_count: u32, last_message: Option<MessageSummary>) -> ChatSummary {
+fn summary(
+    id: i64,
+    title: &str,
+    unread_count: u32,
+    last_message: Option<MessageSummary>,
+) -> ChatSummary {
     ChatSummary {
         id,
         title: title.into(),
@@ -47,11 +52,7 @@ fn zero_chat_page_marks_pagination_complete() {
 fn one_page_exposes_no_next_cursor() {
     let mut state = CoreState::default();
 
-    state.reduce(&page(
-        None,
-        vec![summary(1, "one", 0, None)],
-        None,
-    ));
+    state.reduce(&page(None, vec![summary(1, "one", 0, None)], None));
 
     assert_eq!(state.account.chats.len(), 1);
     assert_eq!(state.account.chats[0].id, 1);
@@ -89,7 +90,12 @@ fn multiple_pages_merge_duplicates_without_reordering() {
     ));
 
     assert_eq!(
-        state.account.chats.iter().map(|chat| chat.id).collect::<Vec<_>>(),
+        state
+            .account
+            .chats
+            .iter()
+            .map(|chat| chat.id)
+            .collect::<Vec<_>>(),
         vec![1, 2, 3]
     );
     assert_eq!(state.account.chats[1].title, "renamed");
@@ -128,7 +134,12 @@ fn live_messages_survive_next_page_and_stale_page_summaries() {
     ));
 
     assert_eq!(
-        state.account.chats.iter().map(|chat| chat.id).collect::<Vec<_>>(),
+        state
+            .account
+            .chats
+            .iter()
+            .map(|chat| chat.id)
+            .collect::<Vec<_>>(),
         vec![10, 30, 20]
     );
     let live_chat = state.chat(10).expect("live chat remains present");
@@ -155,7 +166,12 @@ fn live_message_received_before_first_page_is_preserved() {
     ));
 
     assert_eq!(
-        state.account.chats.iter().map(|chat| chat.id).collect::<Vec<_>>(),
+        state
+            .account
+            .chats
+            .iter()
+            .map(|chat| chat.id)
+            .collect::<Vec<_>>(),
         vec![1, 90]
     );
     assert_eq!(state.chat(90).unwrap().last_message.as_ref(), Some(&live_message));
