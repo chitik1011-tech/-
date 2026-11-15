@@ -59,6 +59,14 @@ impl CoreState {
                 next_cursor,
                 has_more,
             } => {
+                let is_active_request = self
+                    .message_history
+                    .get(chat_id)
+                    .is_some_and(|history| history.loading && history.next_cursor == *cursor);
+                if !is_active_request {
+                    return;
+                }
+
                 self.merge_message_page(*chat_id, cursor.as_ref(), messages);
 
                 let page_has_messages = messages.iter().any(|message| message.chat_id == *chat_id);
@@ -72,7 +80,19 @@ impl CoreState {
                 history.error = None;
                 self.last_error = None;
             }
-            CoreEvent::MessageHistoryLoadFailed { chat_id, error, .. } => {
+            CoreEvent::MessageHistoryLoadFailed {
+                chat_id,
+                cursor,
+                error,
+            } => {
+                let is_active_request = self
+                    .message_history
+                    .get(chat_id)
+                    .is_some_and(|history| history.loading && history.next_cursor == *cursor);
+                if !is_active_request {
+                    return;
+                }
+
                 let history = self.message_history.entry(*chat_id).or_default();
                 history.loading = false;
                 history.error = Some(error.clone());
@@ -273,6 +293,10 @@ mod tests {
     fn older_pages_keep_the_cache_bounded_and_preserve_the_older_window() {
         let mut state = CoreState::default();
         let latest: Vec<_> = (512..1024).map(|id| message(id, "latest")).collect();
+        state.reduce(&CoreEvent::MessagesLoading {
+            chat_id: 7,
+            cursor: None,
+        });
         state.reduce(&CoreEvent::MessagesLoaded {
             chat_id: 7,
             cursor: None,
@@ -281,6 +305,10 @@ mod tests {
             has_more: true,
         });
         let older: Vec<_> = (412..512).map(|id| message(id, "older")).collect();
+        state.reduce(&CoreEvent::MessagesLoading {
+            chat_id: 7,
+            cursor: Some(MessageCursor::new("512")),
+        });
         state.reduce(&CoreEvent::MessagesLoaded {
             chat_id: 7,
             cursor: Some(MessageCursor::new("512")),
