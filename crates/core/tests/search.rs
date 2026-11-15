@@ -24,8 +24,14 @@ fn result(message_id: i64, chat_id: i64, timestamp_unix: i64) -> SearchResult {
             timestamp_unix,
             outgoing: false,
         },
-        chat: SearchChatMetadata { id: chat_id, title: format!("chat {chat_id}") },
-        sender: SearchSenderMetadata { id: 7, display_name: Some("sender".into()) },
+        chat: SearchChatMetadata {
+            id: chat_id,
+            title: format!("chat {chat_id}"),
+        },
+        sender: SearchSenderMetadata {
+            id: 7,
+            display_name: Some("sender".into()),
+        },
         snippet: format!("snippet {message_id}"),
     }
 }
@@ -51,18 +57,43 @@ fn page(
 #[test]
 fn search_command_validates_query_limits_scope_and_cursor() {
     let valid = request(1, " needle ", None);
-    assert!(CoreCommand::SearchMessages(valid.clone()).validate().is_ok());
-    assert!(SearchMessagesRequest { limit: MAX_MESSAGE_SEARCH_LIMIT, ..valid.clone() }.validate().is_ok());
+    assert!(CoreCommand::SearchMessages(valid.clone())
+        .validate()
+        .is_ok());
+    assert!(SearchMessagesRequest {
+        limit: MAX_MESSAGE_SEARCH_LIMIT,
+        ..valid.clone()
+    }
+    .validate()
+    .is_ok());
 
     let invalid = [
-        SearchMessagesRequest { query: "  ".into(), ..valid.clone() },
-        SearchMessagesRequest { limit: 0, ..valid.clone() },
-        SearchMessagesRequest { limit: MAX_MESSAGE_SEARCH_LIMIT + 1, ..valid.clone() },
-        SearchMessagesRequest { scope: SearchScope::Chat(0), ..valid.clone() },
-        SearchMessagesRequest { cursor: Some(" ".into()), ..valid },
+        SearchMessagesRequest {
+            query: "  ".into(),
+            ..valid.clone()
+        },
+        SearchMessagesRequest {
+            limit: 0,
+            ..valid.clone()
+        },
+        SearchMessagesRequest {
+            limit: MAX_MESSAGE_SEARCH_LIMIT + 1,
+            ..valid.clone()
+        },
+        SearchMessagesRequest {
+            scope: SearchScope::Chat(0),
+            ..valid.clone()
+        },
+        SearchMessagesRequest {
+            cursor: Some(" ".into()),
+            ..valid
+        },
     ];
     for request in invalid {
-        assert!(matches!(request.validate(), Err(CoreError::InvalidInput(_))));
+        assert!(matches!(
+            request.validate(),
+            Err(CoreError::InvalidInput(_))
+        ));
     }
 }
 
@@ -83,7 +114,11 @@ fn reducer_ignores_stale_search_response_after_newer_query() {
     assert!(state.message_search.global.results.is_empty());
 
     state.reduce(&CoreEvent::MessagesSearchCompleted(page(
-        2, None, vec![result(2, 4, 20)], None, false,
+        2,
+        None,
+        vec![result(2, 4, 20)],
+        None,
+        false,
     )));
     state.reduce(&CoreEvent::SearchStarted(request(1, "late", None)));
     state.reduce(&CoreEvent::MessagesSearchCompleted(MessagesSearchResult {
@@ -109,7 +144,11 @@ fn reducer_deduplicates_and_sorts_paginated_results_deterministically() {
         Some("next"),
         true,
     )));
-    state.reduce(&CoreEvent::SearchStarted(request(9, "needle", Some("next"))));
+    state.reduce(&CoreEvent::SearchStarted(request(
+        9,
+        "needle",
+        Some("next"),
+    )));
     state.reduce(&CoreEvent::MessagesSearchCompleted(page(
         9,
         Some("next"),
@@ -121,7 +160,14 @@ fn reducer_deduplicates_and_sorts_paginated_results_deterministically() {
     let results = &state.message_search.global.results;
     assert_eq!(results.len(), 3);
     assert_eq!(
-        results.iter().map(|item| (item.message.timestamp_unix, item.message.chat_id, item.message.id)).collect::<Vec<_>>(),
+        results
+            .iter()
+            .map(|item| (
+                item.message.timestamp_unix,
+                item.message.chat_id,
+                item.message.id
+            ))
+            .collect::<Vec<_>>(),
         vec![(30, 1, 4), (30, 2, 3), (20, 3, 1)],
     );
     assert!(!state.message_search.global.has_more);
@@ -131,12 +177,24 @@ fn reducer_deduplicates_and_sorts_paginated_results_deterministically() {
 #[test]
 fn reducer_rejects_page_with_wrong_cursor_or_request_id() {
     let mut state = CoreState::default();
-    state.reduce(&CoreEvent::SearchStarted(request(4, "needle", Some("expected"))));
-    state.reduce(&CoreEvent::MessagesSearchCompleted(page(
-        4, Some("wrong"), vec![result(1, 1, 1)], None, false,
+    state.reduce(&CoreEvent::SearchStarted(request(
+        4,
+        "needle",
+        Some("expected"),
     )));
     state.reduce(&CoreEvent::MessagesSearchCompleted(page(
-        3, Some("expected"), vec![result(2, 1, 2)], None, false,
+        4,
+        Some("wrong"),
+        vec![result(1, 1, 1)],
+        None,
+        false,
+    )));
+    state.reduce(&CoreEvent::MessagesSearchCompleted(page(
+        3,
+        Some("expected"),
+        vec![result(2, 1, 2)],
+        None,
+        false,
     )));
     assert!(state.message_search.global.results.is_empty());
 }

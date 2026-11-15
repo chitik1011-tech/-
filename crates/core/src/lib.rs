@@ -21,7 +21,10 @@ pub use error::{CoreError, Result};
 pub use event::CoreEvent;
 pub use mock::MockTelegramBackend;
 pub use model::{AccountState, AuthorizationState, ChatSummary, MessageSummary};
-pub use search::{MessageSearchState, MessagesSearchResult, SearchChatMetadata, SearchMessagesRequest, SearchResult, SearchResultsState, SearchScope, SearchSenderMetadata, MAX_MESSAGE_SEARCH_LIMIT};
+pub use search::{
+    MessageSearchState, MessagesSearchResult, SearchChatMetadata, SearchMessagesRequest,
+    SearchResult, SearchResultsState, SearchScope, SearchSenderMetadata, MAX_MESSAGE_SEARCH_LIMIT,
+};
 pub use runtime::{spawn_core, spawn_core_with_store, CoreHandle, PERSISTENCE_FLUSH_INTERVAL_MS};
 pub use state::{CoreState, MAX_CACHED_MESSAGES_PER_CHAT};
 pub use storage::{JsonFileStateStore, MemoryStateStore, NoopStateStore, StateStore};

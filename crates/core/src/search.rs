@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{error::{CoreError, Result}, model::MessageSummary};
+use crate::{
+    error::{CoreError, Result},
+    model::MessageSummary,
+};
 
 pub const MAX_MESSAGE_SEARCH_LIMIT: usize = 100;
 
@@ -34,7 +37,12 @@ impl SearchMessagesRequest {
         if matches!(self.scope, SearchScope::Chat(0)) {
             return Err(CoreError::InvalidInput("chat id must be non-zero".into()));
         }
-        if self.cursor.as_deref().map(str::trim).map_or(false, str::is_empty) {
+        if self
+            .cursor
+            .as_deref()
+            .map(str::trim)
+            .map_or(false, str::is_empty)
+        {
             return Err(CoreError::InvalidInput("search cursor is empty".into()));
         }
         Ok(())
@@ -101,7 +109,10 @@ pub struct MessageSearchState {
 impl MessageSearchState {
     pub fn begin(&mut self, request: &SearchMessagesRequest) {
         let state = self.results_mut(&request.scope);
-        if state.current_request_id.map_or(false, |current| request.request_id < current) {
+        if state
+            .current_request_id
+            .map_or(false, |current| request.request_id < current)
+        {
             return;
         }
         if state.current_request_id == Some(request.request_id)
@@ -128,7 +139,9 @@ impl MessageSearchState {
 
     pub fn complete(&mut self, page: &MessagesSearchResult) {
         let state = self.results_mut(&page.scope);
-        let Some(active) = state.active_request.as_ref() else { return };
+        let Some(active) = state.active_request.as_ref() else {
+            return;
+        };
         if active.request_id != page.request_id
             || active.query != page.query.trim()
             || active.cursor != page.requested_cursor
@@ -148,7 +161,9 @@ impl MessageSearchState {
             }
         }
         state.results.sort_by(|a, b| {
-            b.message.timestamp_unix.cmp(&a.message.timestamp_unix)
+            b.message
+                .timestamp_unix
+                .cmp(&a.message.timestamp_unix)
                 .then_with(|| a.message.chat_id.cmp(&b.message.chat_id))
                 .then_with(|| a.message.id.cmp(&b.message.id))
         });

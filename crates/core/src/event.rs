@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{model::{AccountState, AuthorizationState, ChatSummary, MessageSummary}, search::{MessagesSearchResult, SearchMessagesRequest}};
+use crate::{
+    model::{AccountState, AuthorizationState, ChatSummary, MessageSummary},
+    search::{MessagesSearchResult, SearchMessagesRequest},
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]

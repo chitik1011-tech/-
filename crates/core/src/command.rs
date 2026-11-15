@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{error::{CoreError, Result}, search::SearchMessagesRequest};
+use crate::{
+    error::{CoreError, Result},
+    search::SearchMessagesRequest,
+};
 
 pub const MAX_CHAT_LOAD_LIMIT: usize = 500;
 
