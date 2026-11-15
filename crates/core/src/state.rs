@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    connection::ConnectionState,
     event::CoreEvent,
     model::{AccountState, ChatSummary, MessageSummary},
 };
@@ -13,6 +14,9 @@ pub const MAX_CACHED_MESSAGES_PER_CHAT: usize = 512;
 pub struct CoreState {
     pub running: bool,
     pub account: AccountState,
+    /// Current Telegram transport state. Older persisted snapshots default to disconnected.
+    #[serde(default)]
+    pub connection_state: ConnectionState,
     pub messages: BTreeMap<i64, Vec<MessageSummary>>,
     pub last_error: Option<String>,
 }
@@ -22,6 +26,7 @@ impl Default for CoreState {
         Self {
             running: true,
             account: AccountState::default(),
+            connection_state: ConnectionState::Disconnected,
             messages: BTreeMap::new(),
             last_error: None,
         }
@@ -38,6 +43,9 @@ impl CoreState {
             CoreEvent::AuthorizationChanged(authorization) => {
                 self.account.authorization = authorization.clone();
                 self.last_error = None;
+            }
+            CoreEvent::ConnectionStateChanged(connection_state) => {
+                self.connection_state = *connection_state;
             }
             CoreEvent::ChatsLoaded(chats) => {
                 self.account.chats = chats.clone();
