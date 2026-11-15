@@ -1,5 +1,6 @@
 package com.chitik.telegram
 
+import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.Context
 import android.content.Intent
@@ -28,7 +29,7 @@ object MediaFileOpener {
             filename = attachment.filename,
         )
 
-        return runCatching {
+        return try {
             val uri = FileProvider.getUriForFile(context, spec.authority, file)
             val intent = Intent(spec.action)
                 .setDataAndType(uri, spec.mimeType)
@@ -38,12 +39,11 @@ object MediaFileOpener {
                     clipData = ClipData.newRawUri("media", uri)
                 }
 
-            if (intent.resolveActivity(context.packageManager) == null) {
-                return OpenMediaResult.NoHandler
-            }
             context.startActivity(intent)
             OpenMediaResult.Opened
-        }.getOrElse { error ->
+        } catch (_: ActivityNotFoundException) {
+            OpenMediaResult.NoHandler
+        } catch (error: Exception) {
             OpenMediaResult.Failed(error.message ?: error::class.java.simpleName)
         }
     }
