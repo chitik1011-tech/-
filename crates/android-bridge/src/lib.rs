@@ -294,6 +294,9 @@ fn destroy_native_handle(handle: i64) -> Result<(), BridgeError> {
             ..
         } = native;
 
+        event_task.abort();
+        state_task.abort();
+
         let _ = core.shutdown().await;
         let _ = timeout(SHUTDOWN_TIMEOUT, async {
             while !core.is_closed() {
@@ -301,9 +304,6 @@ fn destroy_native_handle(handle: i64) -> Result<(), BridgeError> {
             }
         })
         .await;
-
-        event_task.abort();
-        state_task.abort();
     });
 
     Ok(())
