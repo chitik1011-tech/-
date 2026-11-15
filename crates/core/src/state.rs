@@ -503,6 +503,7 @@ impl CoreState {
                     self.drafts.remove(chat_id);
                 }
             }
+            CoreEvent::PeerResolved(_) => {}
             CoreEvent::Error(error) => {
                 self.last_error = Some(error.clone());
             }

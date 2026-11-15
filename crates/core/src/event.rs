@@ -4,6 +4,7 @@ use crate::{
     connection::ConnectionState,
     connection_machine::{ConnectionToken, LinkEvent},
     model::{AccountState, AuthorizationState, ChatActivityKind, ChatSummary, MessageSummary},
+    peer::PeerResolution,
     poll::PollSummary,
     search::{MessageSearchPage, SearchMessagesRequest},
     send::OutgoingSend,
@@ -112,6 +113,7 @@ pub enum CoreEvent {
         #[serde(default)]
         expected_draft: Option<crate::model::Draft>,
     },
+    PeerResolved(PeerResolution),
     Error(String),
     Stopped,
 }
@@ -148,6 +150,7 @@ impl CoreEvent {
             Self::ChatActivityExpired { .. } => "chat_activity_expired",
             Self::DraftUpdated(_) => "draft_updated",
             Self::DraftCleared { .. } => "draft_cleared",
+            Self::PeerResolved(_) => "peer_resolved",
             Self::Error(_) => "error",
             Self::Stopped => "stopped",
         }

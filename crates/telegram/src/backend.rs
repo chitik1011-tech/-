@@ -11,7 +11,8 @@ use grammers_client::{
 };
 use tg_mobile_core::{
     AuthorizationState, BackendFuture, BackendUpdateReceiver, BackendUpdateSender, ConnectionToken,
-    CoreCommand, CoreError, CoreEvent, OutgoingSend, TelegramBackend, backend_update_channel,
+    CoreCommand, CoreError, CoreEvent, MessageLinkResolution, MessagePeer, OutgoingSend,
+    PeerReference, PeerResolution, TelegramBackend, backend_update_channel,
 };
 use tokio::{
     sync::{broadcast, mpsc, watch},
@@ -355,6 +356,12 @@ impl GrammersBackend {
                 let chats = load_chats(&self.client, &self.peers, limit).await?;
                 vec![CoreEvent::ChatsLoaded(chats)]
             }
+            CoreCommand::ResolvePeer { input } => {
+                self.require_ready().await?;
+                let reference = tg_mobile_core::parse_peer_reference(&input)?;
+                let resolution = self.resolve_reference(reference).await?;
+                vec![CoreEvent::PeerResolved(resolution)]
+            }
             CoreCommand::LoadMessages { chat_id, limit } => {
                 self.require_ready().await?;
                 let peer = find_peer(&self.peers, chat_id)
@@ -538,6 +545,78 @@ impl GrammersBackend {
         };
 
         Ok(command_events)
+    }
+
+    async fn resolve_reference(
+        &mut self,
+        reference: PeerReference,
+    ) -> tg_mobile_core::Result<PeerResolution> {
+        let (username, message_link) = match reference {
+            PeerReference::Username { username } => (username, None),
+            PeerReference::MessageLink(link) => match &link.peer {
+                MessagePeer::Username { username } => (username.clone(), Some(link)),
+                MessagePeer::InternalChannelId { .. } => {
+                    return Ok(PeerResolution::Unsupported {
+                        reason: "private /c/ message links require a previously loaded peer".into(),
+                    });
+                }
+            },
+            PeerReference::NumericUserId { .. } => {
+                return Ok(PeerResolution::Unknown {
+                    reason: "numeric user IDs cannot be resolved without a known access hash"
+                        .into(),
+                });
+            }
+        };
+        let Some(peer) = self
+            .client
+            .resolve_username(&username)
+            .await
+            .map_err(|error| crate::error::api_error("resolve Telegram username", error))?
+        else {
+            return Ok(PeerResolution::NotFound);
+        };
+        let chat_id = crate::ids::peer_id_to_core(peer.id());
+        if let Some(peer_ref) = peer
+            .to_ref()
+            .await
+            .map_err(|error| CoreError::Backend(error.to_string()))?
+        {
+            crate::chats::remember_peer(&self.peers, chat_id, peer_ref).await;
+        }
+        if let Some(link) = message_link {
+            return Ok(PeerResolution::MessageLink(MessageLinkResolution {
+                chat_id,
+                message_id: link.message_id,
+                metadata: link.metadata,
+            }));
+        }
+        use grammers_client::peer::Peer;
+        Ok(match peer {
+            Peer::User(user) if user.is_bot() => PeerResolution::Bot {
+                user_id: chat_id,
+                username: user.username().map(str::to_owned),
+            },
+            Peer::User(user) => PeerResolution::User {
+                user_id: chat_id,
+                username: user.username().map(str::to_owned),
+            },
+            Peer::Group(group) if group.is_megagroup() => PeerResolution::Supergroup {
+                chat_id,
+                title: group.title().map(str::to_owned),
+            },
+            Peer::Group(group) => PeerResolution::Group {
+                chat_id,
+                title: group.title().map(str::to_owned),
+            },
+            Peer::Channel(channel) => PeerResolution::Channel {
+                chat_id,
+                title: Some(channel.title().to_owned()),
+            },
+            Peer::Community(_) => PeerResolution::Unsupported {
+                reason: "Telegram community peers are not yet supported".into(),
+            },
+        })
     }
 }
 

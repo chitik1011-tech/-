@@ -9,6 +9,7 @@ pub mod error;
 pub mod event;
 pub mod mock;
 pub mod model;
+pub mod peer;
 pub mod poll;
 pub mod runtime;
 pub mod search;
@@ -37,6 +38,10 @@ pub use model::{
     AccountState, AttachmentDownloadState, AttachmentKind, AttachmentThumbnail, AuthorizationState,
     ChatActivityKind, ChatFolder, ChatFolderFacts, ChatSummary, Draft, ForwardedFrom,
     MediaAttachment, MessageHistoryState, MessageSummary, ReplyMetadata,
+};
+pub use peer::{
+    parse_peer_reference, MessageLink, MessageLinkMetadata, MessageLinkResolution, MessagePeer,
+    PeerParseError, PeerReference, PeerResolution, MAX_PEER_REFERENCE_LENGTH,
 };
 pub use poll::{PollOption, PollSummary, MAX_POLL_OPTIONS};
 pub use runtime::{spawn_core, spawn_core_with_store, CoreHandle, PERSISTENCE_FLUSH_INTERVAL_MS};

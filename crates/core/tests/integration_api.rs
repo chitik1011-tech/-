@@ -15,6 +15,13 @@ fn command_and_event_kinds_are_stable() {
     );
     assert_eq!(CoreCommand::LoadChats { limit: 1 }.kind(), "load_chats");
     assert_eq!(
+        CoreCommand::ResolvePeer {
+            input: "@example".into()
+        }
+        .kind(),
+        "resolve_peer"
+    );
+    assert_eq!(
         CoreCommand::SendText {
             chat_id: 1,
             text: "hello".into(),
@@ -28,6 +35,10 @@ fn command_and_event_kinds_are_stable() {
         "authorization_changed"
     );
     assert_eq!(CoreEvent::Error("test".into()).kind(), "error");
+    assert_eq!(
+        CoreEvent::PeerResolved(tg_mobile_core::PeerResolution::NotFound).kind(),
+        "peer_resolved"
+    );
     assert_eq!(CoreEvent::Stopped.kind(), "stopped");
     assert!(CoreEvent::Stopped.is_terminal());
     assert!(!CoreEvent::Error("test".into()).is_terminal());

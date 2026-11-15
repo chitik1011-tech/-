@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     error::{CoreError, Result},
+    peer::parse_peer_reference,
     search::SearchMessagesRequest,
 };
 
@@ -76,6 +77,9 @@ pub enum CoreCommand {
         #[serde(default)]
         expected_draft: Option<crate::model::Draft>,
     },
+    ResolvePeer {
+        input: String,
+    },
     Shutdown,
 }
 
@@ -103,6 +107,7 @@ impl CoreCommand {
             Self::MarkChatRead { .. } => "mark_chat_read",
             Self::UpdateDraft(_) => "update_draft",
             Self::ClearDraft { .. } => "clear_draft",
+            Self::ResolvePeer { .. } => "resolve_peer",
             Self::Shutdown => "shutdown",
         }
     }
@@ -110,6 +115,9 @@ impl CoreCommand {
     pub fn validate(&self) -> Result<()> {
         match self {
             Self::Start | Self::Shutdown => Ok(()),
+            Self::ResolvePeer { input } => {
+                parse_peer_reference(input).map(|_| ()).map_err(Into::into)
+            }
             Self::SetPhoneNumber(phone_number) => require_non_blank("phone number", phone_number),
             Self::SubmitCode(code) => require_non_blank("login code", code),
             Self::SubmitPassword(password) => {
