@@ -12,16 +12,27 @@ pub enum CoreCommand {
     SetPhoneNumber(String),
     SubmitCode(String),
     SubmitPassword(String),
-    LoadChats { limit: usize },
-    LoadMessages { chat_id: i64, limit: usize },
+    LoadChats {
+        limit: usize,
+    },
+    LoadMessages {
+        chat_id: i64,
+        limit: usize,
+    },
     /// Fetch one page older than `before_message_id` (exclusive).
     LoadMessagesPage {
         chat_id: i64,
         before_message_id: Option<i64>,
         limit: usize,
     },
-    MarkRead { chat_id: i64, max_message_id: i64 },
-    SendText { chat_id: i64, text: String },
+    MarkRead {
+        chat_id: i64,
+        max_message_id: i64,
+    },
+    SendText {
+        chat_id: i64,
+        text: String,
+    },
     Shutdown,
 }
 

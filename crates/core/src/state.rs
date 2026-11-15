@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -75,27 +75,24 @@ impl CoreState {
                 has_more,
             } => {
                 let accepts_page = self.message_history.get(chat_id).is_some_and(|history| {
-                    history.loading
-                        && history.requested_before_message_id == *before_message_id
+                    history.loading && history.requested_before_message_id == *before_message_id
                 });
                 if !accepts_page {
                     return;
                 }
 
-                self.merge_messages(*chat_id, messages);
+                self.merge_message_page(*chat_id, messages);
 
                 let next_cursor = (*next_before_message_id)
                     .filter(|message_id| *message_id > 0)
-                    .filter(|message_id| Some(*message_id) != *before_message_id);
+                    .filter(|message_id| {
+                        before_message_id.is_none_or(|cursor| *message_id < cursor)
+                    });
                 let history = self.message_history.entry(*chat_id).or_default();
                 history.loading = false;
                 history.requested_before_message_id = None;
                 history.has_more = *has_more && next_cursor.is_some();
-                history.next_before_message_id = if history.has_more {
-                    next_cursor
-                } else {
-                    None
-                };
+                history.next_before_message_id = if history.has_more { next_cursor } else { None };
                 history.error = None;
                 self.last_error = None;
             }
@@ -104,11 +101,9 @@ impl CoreState {
                 before_message_id,
                 error,
             } => {
-                let accepts_failure =
-                    self.message_history.get(chat_id).is_some_and(|history| {
-                        history.loading
-                            && history.requested_before_message_id == *before_message_id
-                    });
+                let accepts_failure = self.message_history.get(chat_id).is_some_and(|history| {
+                    history.loading && history.requested_before_message_id == *before_message_id
+                });
                 if !accepts_failure {
                     return;
                 }
@@ -213,19 +208,60 @@ impl CoreState {
             }
         }
 
+        self.refresh_chat_preview(chat_id);
+    }
+
+    fn merge_message_page(&mut self, chat_id: i64, messages: &[MessageSummary]) {
+        let mut page_ids = BTreeSet::new();
+        let cache = self.messages.entry(chat_id).or_default();
+
+        for message in messages.iter().filter(|message| message.chat_id == chat_id) {
+            page_ids.insert(message.id);
+            if let Some(index) = cache.iter().position(|cached| cached.id == message.id) {
+                cache[index] = message.clone();
+            } else {
+                cache.push(message.clone());
+            }
+        }
+
+        cache.sort_by_key(|message| (message.timestamp_unix, message.id));
+
+        // When an older page arrives into a full cache, preserve the page the
+        // caller just requested. Evict newer cached messages from the tail;
+        // those can be loaded again by paging from the latest end.
+        let excess = cache.len().saturating_sub(MAX_CACHED_MESSAGES_PER_CHAT);
+        if excess > 0 {
+            let evicted_ids = cache
+                .iter()
+                .rev()
+                .filter(|message| !page_ids.contains(&message.id))
+                .take(excess)
+                .map(|message| message.id)
+                .collect::<BTreeSet<_>>();
+            cache.retain(|message| !evicted_ids.contains(&message.id));
+        }
+
+        self.refresh_chat_preview(chat_id);
+    }
+
+    fn refresh_chat_preview(&mut self, chat_id: i64) {
         if let Some(latest) = self
             .messages_for_chat(chat_id)
             .iter()
             .max_by_key(|message| (message.timestamp_unix, message.id))
             .cloned()
         {
-            if let Some(chat) = self.account.chats.iter_mut().find(|chat| chat.id == chat_id) {
+            if let Some(chat) = self
+                .account
+                .chats
+                .iter_mut()
+                .find(|chat| chat.id == chat_id)
+            {
                 let replace = chat
                     .last_message
                     .as_ref()
                     .map(|current| {
-                        (latest.timestamp_unix, latest.id)
-                            > (current.timestamp_unix, current.id)
+                        (latest.timestamp_unix, latest.id) > (current.timestamp_unix, current.id)
                     })
                     .unwrap_or(true);
                 if replace {

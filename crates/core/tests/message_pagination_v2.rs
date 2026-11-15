@@ -27,10 +27,8 @@ fn message(id: i64, timestamp_unix: i64) -> MessageSummary {
 
 #[test]
 fn page_command_is_additive_and_validates_cursor() {
-    let legacy = decode_command(
-        r#"{"type":"load_messages","payload":{"chat_id":7,"limit":50}}"#,
-    )
-    .unwrap();
+    let legacy =
+        decode_command(r#"{"type":"load_messages","payload":{"chat_id":7,"limit":50}}"#).unwrap();
     assert_eq!(legacy.kind(), "load_messages");
 
     let page = decode_command(
@@ -102,6 +100,73 @@ fn matching_pages_merge_chronologically_and_advance_cursor() {
             .collect::<Vec<_>>(),
         vec![2, 3, 4, 5]
     );
+}
+
+#[test]
+fn older_page_survives_merge_into_a_full_message_cache() {
+    let mut state = CoreState::default();
+    let recent_window = (513..=1024)
+        .map(|id| message(id, id * 100))
+        .collect::<Vec<_>>();
+    state.reduce(&CoreEvent::MessagesLoaded {
+        chat_id: 7,
+        messages: recent_window,
+    });
+    assert_eq!(state.messages_for_chat(7).len(), 512);
+
+    state.reduce(&CoreEvent::MessagesPageLoading {
+        chat_id: 7,
+        before_message_id: Some(513),
+    });
+    let older_page = (493..=512)
+        .map(|id| message(id, id * 100))
+        .collect::<Vec<_>>();
+    state.reduce(&CoreEvent::MessagesPageLoaded {
+        chat_id: 7,
+        before_message_id: Some(513),
+        messages: older_page,
+        next_before_message_id: Some(493),
+        has_more: true,
+    });
+
+    let cached_ids = state
+        .messages_for_chat(7)
+        .iter()
+        .map(|message| message.id)
+        .collect::<Vec<_>>();
+    assert_eq!(cached_ids.len(), 512);
+    assert_eq!(&cached_ids[..20], &(493..=512).collect::<Vec<_>>());
+    assert_eq!(cached_ids.last(), Some(&1004));
+    assert!(state
+        .messages_for_chat(7)
+        .iter()
+        .all(|message| message.id != 1005));
+
+    let history = state.message_history_for_chat(7).unwrap();
+    assert!(history.has_more);
+    assert_eq!(history.next_before_message_id, Some(493));
+}
+
+#[test]
+fn older_page_rejects_a_cursor_that_moves_forward_or_repeats() {
+    for next_before_message_id in [Some(10), Some(11)] {
+        let mut state = CoreState::default();
+        state.reduce(&CoreEvent::MessagesPageLoading {
+            chat_id: 7,
+            before_message_id: Some(10),
+        });
+        state.reduce(&CoreEvent::MessagesPageLoaded {
+            chat_id: 7,
+            before_message_id: Some(10),
+            messages: vec![message(8, 800), message(9, 900)],
+            next_before_message_id,
+            has_more: true,
+        });
+
+        let history = state.message_history_for_chat(7).unwrap();
+        assert!(!history.has_more);
+        assert_eq!(history.next_before_message_id, None);
+    }
 }
 
 #[test]

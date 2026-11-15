@@ -290,7 +290,10 @@ mod tests {
 
         let page = finalize_message_page(vec![summary(5), summary(4), summary(3)], 2);
         assert_eq!(
-            page.messages.iter().map(|message| message.id).collect::<Vec<_>>(),
+            page.messages
+                .iter()
+                .map(|message| message.id)
+                .collect::<Vec<_>>(),
             vec![4, 5]
         );
         assert_eq!(page.next_before_message_id, Some(4));
