@@ -143,7 +143,8 @@ mod tests {
         tracker.apply(&changed(5, 0, ChatActivityKind::Typing, 20), now);
         tracker.apply(&changed(5, 6, ChatActivityKind::Typing, u64::MAX), now);
 
-        assert!(!tracker.expire(now + Duration::from_millis(MAX_CHAT_ACTIVITY_TTL_MS - 1)).is_empty() == false);
+        assert!(tracker.expire(now + Duration::from_millis(MAX_CHAT_ACTIVITY_TTL_MS - 1)).is_empty());
+        assert!(tracker.has_active());
         assert_eq!(
             tracker.expire(now + Duration::from_millis(MAX_CHAT_ACTIVITY_TTL_MS)),
             vec![CoreEvent::ChatActivityExpired { chat_id: 5, user_id: 6 }]
