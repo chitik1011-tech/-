@@ -16,13 +16,18 @@ pub enum CoreCommand {
     SetPhoneNumber(String),
     SubmitCode(String),
     SubmitPassword(String),
-    LoadChats { limit: usize },
+    LoadChats {
+        limit: usize,
+    },
     LoadMessages {
         chat_id: i64,
         cursor: Option<MessageCursor>,
         limit: usize,
     },
-    SendText { chat_id: i64, text: String },
+    SendText {
+        chat_id: i64,
+        text: String,
+    },
     Shutdown,
 }
 
@@ -83,8 +88,7 @@ impl CoreCommand {
                     )));
                 }
                 if cursor.as_ref().is_some_and(|value| {
-                    value.as_str().is_empty()
-                        || value.as_str().len() > MAX_MESSAGE_CURSOR_LENGTH
+                    value.as_str().is_empty() || value.as_str().len() > MAX_MESSAGE_CURSOR_LENGTH
                 }) {
                     return Err(CoreError::InvalidInput(format!(
                         "message cursor must contain 1..={MAX_MESSAGE_CURSOR_LENGTH} bytes"
@@ -138,14 +142,20 @@ mod tests {
             cursor: None,
             limit: 0,
         };
-        assert!(matches!(zero_limit.validate(), Err(CoreError::InvalidInput(_))));
+        assert!(matches!(
+            zero_limit.validate(),
+            Err(CoreError::InvalidInput(_))
+        ));
 
         let zero_chat = CoreCommand::LoadMessages {
             chat_id: 0,
             cursor: None,
             limit: 10,
         };
-        assert!(matches!(zero_chat.validate(), Err(CoreError::InvalidInput(_))));
+        assert!(matches!(
+            zero_chat.validate(),
+            Err(CoreError::InvalidInput(_))
+        ));
 
         let empty_cursor = CoreCommand::LoadMessages {
             chat_id: 5,
