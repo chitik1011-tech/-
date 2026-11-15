@@ -23,7 +23,7 @@ data class NativeUiState(
  *
  * Activity recreation keeps this ViewModel and its native handle. When the owner is
  * permanently cleared, the handle is destroyed once. A process restart creates a new
- * handle; durable Telegram session restoration is provided by the Rust backend.
+ * handle. Telegram session restoration depends on the configured Rust backend.
  */
 class NativeSessionViewModel : ViewModel(), NativeEventCallback {
     private val _state = MutableStateFlow(NativeUiState())
