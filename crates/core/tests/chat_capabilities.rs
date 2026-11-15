@@ -20,7 +20,10 @@ fn unknown_capabilities_never_grant_actions_or_invent_slow_mode() {
         CapabilityValue::Unknown
     );
     assert!(!snapshot.allows(ChatAction::SendMessages));
-    assert_eq!(snapshot.slow_mode_remaining_seconds, CapabilityValue::Unknown);
+    assert_eq!(
+        snapshot.slow_mode_remaining_seconds,
+        CapabilityValue::Unknown
+    );
 }
 
 #[test]

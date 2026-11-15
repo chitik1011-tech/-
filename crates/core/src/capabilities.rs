@@ -59,8 +59,12 @@ pub struct ChatCapabilities {
     pub manage_chat: CapabilityValue<bool>,
     pub post_messages: CapabilityValue<bool>,
     pub edit_others_messages: CapabilityValue<bool>,
-    /// Known(None) means slow mode is disabled; Unknown means its state is unavailable.
-    pub slow_mode_seconds: CapabilityValue<Option<u32>>,
+    /// Remaining slow-mode wait in seconds at snapshot time.
+    ///
+    /// Known(None) means the backend authoritatively reports that slow mode is disabled.
+    /// Known(Some(0)) means no wait remains; Unknown means no authoritative remaining-time
+    /// value is available. Backends must not substitute the configured slow-mode duration.
+    pub slow_mode_remaining_seconds: CapabilityValue<Option<u32>>,
 }
 
 impl ChatCapabilities {
