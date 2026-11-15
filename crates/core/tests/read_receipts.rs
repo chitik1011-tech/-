@@ -10,6 +10,7 @@ fn last_message(id: i64) -> MessageSummary {
         text: format!("message-{id}"),
         timestamp_unix: id,
         outgoing: false,
+        attachments: Vec::new(),
     }
 }
 

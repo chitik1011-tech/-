@@ -8,6 +8,7 @@ fn message(id: i64, timestamp_unix: i64) -> MessageSummary {
         text: format!("history-{id}"),
         timestamp_unix,
         outgoing: false,
+        attachments: Vec::new(),
     }
 }
 

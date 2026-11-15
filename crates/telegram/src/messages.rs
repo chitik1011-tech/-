@@ -39,6 +39,7 @@ fn message_summary_from_fields(fields: MessageFields<'_>) -> MessageSummary {
         text: fields.text.to_owned(),
         timestamp_unix: fields.timestamp_unix,
         outgoing: fields.outgoing,
+        attachments: Vec::new(),
     }
 }
 

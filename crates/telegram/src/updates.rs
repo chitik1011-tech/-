@@ -215,6 +215,7 @@ mod tests {
             text: "hello".into(),
             timestamp_unix: 4,
             outgoing: false,
+            attachments: Vec::new(),
         };
         assert!(matches!(
             TelegramUpdate::MessageAdded(message).to_core_event(),
