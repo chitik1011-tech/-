@@ -201,6 +201,17 @@ fn stale_or_repeated_page_cursor_is_ignored_and_loops_stop() {
     assert_eq!(state.chat_pagination.next_cursor, None);
 }
 
+
+#[test]
+fn legacy_core_state_defaults_chat_pagination() {
+    let state: CoreState = serde_json::from_str(
+        r#"{"running":true,"account":{"authorization":"Closed","chats":[]},"messages":{},"last_error":null}"#,
+    )
+    .expect("legacy state without pagination should deserialize");
+
+    assert_eq!(state.chat_pagination, Default::default());
+}
+
 #[test]
 fn page_command_validates_limit_and_nonblank_cursor() {
     assert!(CoreCommand::LoadChatsPage {
