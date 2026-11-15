@@ -469,7 +469,11 @@ mod tests {
             -42,
             7,
             &raw_poll(false, false, false),
-            &results(1, vec![voters(b"a", 1, false, false), voters(b"b", 0, false, false)], None),
+            &results(
+                1,
+                vec![voters(b"a", 1, false, false), voters(b"b", 0, false, false)],
+                None,
+            ),
         )
         .unwrap();
         remember_poll(&registry, base).await;
