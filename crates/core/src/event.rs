@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::model::{AccountState, AuthorizationState, ChatSummary, MessageSummary};
+use crate::model::{AccountState, AuthorizationState, ChatPage, ChatSummary, MessageSummary};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
@@ -8,6 +8,8 @@ pub enum CoreEvent {
     State(AccountState),
     AuthorizationChanged(AuthorizationState),
     ChatsLoaded(Vec<ChatSummary>),
+    /// A cursor-addressed chat page. Stale page responses are ignored by CoreState.
+    ChatsPageLoaded(ChatPage),
     MessageAdded(MessageSummary),
     Error(String),
     Stopped,
@@ -19,6 +21,7 @@ impl CoreEvent {
             Self::State(_) => "state",
             Self::AuthorizationChanged(_) => "authorization_changed",
             Self::ChatsLoaded(_) => "chats_loaded",
+            Self::ChatsPageLoaded(_) => "chats_page_loaded",
             Self::MessageAdded(_) => "message_added",
             Self::Error(_) => "error",
             Self::Stopped => "stopped",
