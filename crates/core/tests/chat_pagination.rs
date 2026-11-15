@@ -41,8 +41,11 @@ fn page(
 fn zero_chat_page_marks_pagination_complete() {
     let mut state = CoreState::default();
 
+    state.reduce(&CoreEvent::ChatsPageLoading { cursor: None });
+    assert!(state.chat_pagination.loading);
     state.reduce(&page(None, Vec::new(), None));
 
+    assert!(!state.chat_pagination.loading);
     assert!(state.account.chats.is_empty());
     assert!(state.chat_pagination.loaded);
     assert_eq!(state.chat_pagination.next_cursor, None);
@@ -253,4 +256,48 @@ fn page_command_validates_limit_and_nonblank_cursor() {
     }
     .validate()
     .is_err());
+}
+
+#[test]
+fn failed_page_keeps_cursor_retryable_and_clears_error_on_success() {
+    let mut state = CoreState::default();
+    state.reduce(&page(
+        None,
+        vec![summary(1, "one", 0, None)],
+        Some("cursor-2"),
+    ));
+
+    state.reduce(&CoreEvent::ChatsPageLoading {
+        cursor: Some("cursor-2".into()),
+    });
+    assert!(state.chat_pagination.loading);
+    assert_eq!(
+        state.chat_pagination.loading_cursor.as_deref(),
+        Some("cursor-2")
+    );
+
+    state.reduce(&CoreEvent::ChatsPageFailed {
+        cursor: Some("cursor-2".into()),
+        error: "temporary network failure".into(),
+    });
+
+    assert!(!state.chat_pagination.loading);
+    assert_eq!(state.chat_pagination.error.as_deref(), Some("temporary network failure"));
+    assert_eq!(
+        state.chat_pagination.next_cursor.as_deref(),
+        Some("cursor-2")
+    );
+
+    state.reduce(&CoreEvent::ChatsPageLoading {
+        cursor: Some("cursor-2".into()),
+    });
+    state.reduce(&page(
+        Some("cursor-2"),
+        vec![summary(2, "two", 0, None)],
+        None,
+    ));
+
+    assert!(!state.chat_pagination.loading);
+    assert_eq!(state.chat_pagination.error, None);
+    assert_eq!(state.chat_pagination.next_cursor, None);
 }
