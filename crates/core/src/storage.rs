@@ -165,7 +165,6 @@ fn decode_stored_state(content: &str) -> Result<CoreState> {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
