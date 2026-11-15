@@ -11,7 +11,7 @@ pub mod state;
 pub mod storage;
 pub mod wire;
 
-pub use backend::TelegramBackend;
+pub use backend::{BackendUpdateReceiver, TelegramBackend};
 pub use command::{CoreCommand, MAX_CHAT_LOAD_LIMIT};
 pub use error::{CoreError, Result};
 pub use event::CoreEvent;
