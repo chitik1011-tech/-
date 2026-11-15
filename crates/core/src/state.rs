@@ -290,6 +290,40 @@ mod tests {
     }
 
     #[test]
+    fn stale_page_completion_does_not_merge_or_clear_active_request() {
+        let mut state = CoreState::default();
+        state.reduce(&CoreEvent::MessagesLoading {
+            chat_id: 7,
+            cursor: None,
+        });
+        state.reduce(&CoreEvent::MessagesLoaded {
+            chat_id: 7,
+            cursor: Some(MessageCursor::new("stale-cursor")),
+            messages: vec![message(9, "stale")],
+            next_cursor: Some(MessageCursor::new("stale-next")),
+            has_more: true,
+        });
+
+        let history = state.message_history_for_chat(7);
+        assert!(history.loading);
+        assert_eq!(history.next_cursor, None);
+        assert!(state.messages_for_chat(7).is_empty());
+
+        state.reduce(&CoreEvent::MessagesLoaded {
+            chat_id: 7,
+            cursor: None,
+            messages: vec![message(1, "current")],
+            next_cursor: Some(MessageCursor::new("next")),
+            has_more: true,
+        });
+        assert_eq!(state.messages_for_chat(7), &[message(1, "current")]);
+        let history = state.message_history_for_chat(7);
+        assert!(!history.loading);
+        assert!(history.has_more);
+        assert_eq!(history.next_cursor, Some(MessageCursor::new("next")));
+    }
+
+    #[test]
     fn older_pages_keep_the_cache_bounded_and_preserve_the_older_window() {
         let mut state = CoreState::default();
         let latest: Vec<_> = (512..1024).map(|id| message(id, "latest")).collect();
