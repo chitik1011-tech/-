@@ -73,12 +73,11 @@ pub(crate) async fn run_update_worker(mut input: UpdateWorkerInput) {
         ConnectionState::Connecting,
     ));
 
-    let mut update_configuration = Default::default();
-    update_configuration.catch_up = input.catch_up;
+    let _catch_up = input.catch_up;
 
     let mut stream = match input
         .client
-        .stream_updates(input.network_updates, update_configuration)
+        .stream_updates(input.network_updates, ())
         .await
     {
         Ok(stream) => stream,
