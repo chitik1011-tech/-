@@ -7,6 +7,8 @@ import com.chitik.telegram.AuthorizationUiStep
 import com.chitik.telegram.ChatListEntry
 import com.chitik.telegram.ChatListPreview
 import com.chitik.telegram.ConversationMessageUi
+import com.chitik.telegram.ConversationPollOptionUi
+import com.chitik.telegram.ConversationPollUi
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -27,6 +29,8 @@ data class NativeUiState(
     val authorization: AuthorizationUiStep = AuthorizationUiStep.Closed,
     val chats: List<ChatListEntry> = emptyList(),
     val messages: Map<Long, List<ConversationMessageUi>> = emptyMap(),
+    val votingPollIds: Set<Long> = emptySet(),
+    val pollVoteErrors: Map<Long, String> = emptyMap(),
     val busy: Boolean = false,
     val lastEventType: String = "none",
     val lastEventPayload: String = "",
@@ -117,6 +121,8 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                             authorization = AuthorizationUiStep.Closed,
                             chats = emptyList(),
                             messages = emptyMap(),
+                            votingPollIds = emptySet(),
+                            pollVoteErrors = emptyMap(),
                             busy = false,
                             error = null,
                         )
@@ -155,6 +161,8 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                             authorization = AuthorizationUiStep.Closed,
                             chats = emptyList(),
                             messages = emptyMap(),
+                            votingPollIds = emptySet(),
+                            pollVoteErrors = emptyMap(),
                             busy = false,
                             error = null,
                         )
@@ -349,6 +357,52 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         )
     }
 
+    fun votePoll(poll: ConversationPollUi, optionIds: List<List<Int>>) {
+        if (poll.closed) {
+            _state.update {
+                it.copy(pollVoteErrors = it.pollVoteErrors + (poll.id to "Опрос закрыт"))
+            }
+            return
+        }
+
+        val optionsJson = JSONArray()
+        optionIds.forEach { optionId ->
+            val optionJson = JSONArray()
+            optionId.forEach { byte -> optionJson.put(byte) }
+            optionsJson.put(optionJson)
+        }
+
+        _state.update {
+            it.copy(
+                votingPollIds = it.votingPollIds + poll.id,
+                pollVoteErrors = it.pollVoteErrors - poll.id,
+            )
+        }
+
+        val accepted = sendCommand(
+            JSONObject()
+                .put("type", "vote_poll")
+                .put(
+                    "payload",
+                    JSONObject()
+                        .put("poll_id", poll.id)
+                        .put("chat_id", poll.chatId)
+                        .put("message_id", poll.messageId)
+                        .put("option_ids", optionsJson),
+                )
+                .toString(),
+        )
+        if (!accepted) {
+            _state.update {
+                it.copy(
+                    votingPollIds = it.votingPollIds - poll.id,
+                    pollVoteErrors = it.pollVoteErrors +
+                        (poll.id to "Не удалось отправить голос"),
+                )
+            }
+        }
+    }
+
     private fun markRead(chatId: Long, maxMessageId: Long) {
         if (chatId == 0L || maxMessageId <= 0L) return
         sendCommand(
@@ -364,10 +418,10 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         )
     }
 
-    private fun sendCommand(commandJson: String) {
+    private fun sendCommand(commandJson: String): Boolean {
         if (!NativeLibrary.isLoaded) {
             setErrorIfOpen("Native bridge is not available")
-            return
+            return false
         }
 
         val result = runCatching {
@@ -376,10 +430,12 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
             }
         }.getOrElse { error ->
             setErrorIfOpen(error.message ?: error::class.java.simpleName)
-            return
+            return false
         }
 
         reportDispatchResult(result, "Rust rejected the command")
+        return result == LifecycleDispatchResult.Accepted ||
+            result == LifecycleDispatchResult.Duplicate
     }
 
     private fun reportDispatchResult(
@@ -439,6 +495,48 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 }
                 target?.let { (chatId, maxMessageId) ->
                     markRead(chatId, maxMessageId)
+                }
+            }
+            "poll_updated" -> {
+                val pollId = parsePollEventId(payload)
+                _state.update {
+                    it.copy(
+                        votingPollIds = if (pollId != null) {
+                            it.votingPollIds - pollId
+                        } else {
+                            it.votingPollIds
+                        },
+                        pollVoteErrors = if (pollId != null) {
+                            it.pollVoteErrors - pollId
+                        } else {
+                            it.pollVoteErrors
+                        },
+                        lastEventType = type,
+                        lastEventPayload = payload,
+                    )
+                }
+            }
+            "poll_vote_submitted" -> {
+                _state.update {
+                    it.copy(
+                        lastEventType = type,
+                        lastEventPayload = payload,
+                    )
+                }
+            }
+            "poll_vote_failed" -> {
+                val failure = parsePollVoteFailure(payload)
+                _state.update {
+                    if (failure == null) {
+                        it.copy(lastEventType = type, lastEventPayload = payload)
+                    } else {
+                        it.copy(
+                            votingPollIds = it.votingPollIds - failure.first,
+                            pollVoteErrors = it.pollVoteErrors + failure,
+                            lastEventType = type,
+                            lastEventPayload = payload,
+                        )
+                    }
                 }
             }
             "message_added",
@@ -506,7 +604,8 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
             val account = root.getJSONObject("account")
             val authorization = parseAuthorization(account.optString("authorization"))
             val chats = parseChats(account.optJSONArray("chats") ?: JSONArray())
-            val messages = parseMessages(root.optJSONObject("messages"))
+            val polls = parsePolls(root.optJSONObject("polls"))
+            val messages = parseMessages(root.optJSONObject("messages"), polls)
             Triple(authorization, chats, messages)
         }.onSuccess { (authorization, chats, messages) ->
             _state.update {
@@ -551,7 +650,86 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         }
     }
 
-    private fun parseMessages(root: JSONObject?): Map<Long, List<ConversationMessageUi>> {
+    private fun parsePolls(root: JSONObject?): Map<Pair<Long, Long>, ConversationPollUi> {
+        if (root == null) return emptyMap()
+
+        return buildMap {
+            val keys = root.keys()
+            while (keys.hasNext()) {
+                val key = keys.next()
+                val poll = root.optJSONObject(key) ?: continue
+                val pollId = poll.optLong("id")
+                val chatId = poll.optLong("chat_id")
+                val messageId = poll.optLong("message_id")
+                if (pollId == 0L || chatId == 0L || messageId <= 0L) continue
+
+                val optionsJson = poll.optJSONArray("options") ?: JSONArray()
+                val options = buildList {
+                    for (index in 0 until optionsJson.length()) {
+                        val option = optionsJson.optJSONObject(index) ?: continue
+                        val optionIdJson = option.optJSONArray("option_id") ?: JSONArray()
+                        val optionId = buildList {
+                            for (byteIndex in 0 until optionIdJson.length()) {
+                                add(optionIdJson.optInt(byteIndex).coerceIn(0, 255))
+                            }
+                        }
+                        val voterCount = if (option.has("voter_count") && !option.isNull("voter_count")) {
+                            option.optInt("voter_count")
+                        } else {
+                            null
+                        }
+                        val correct = if (option.has("correct") && !option.isNull("correct")) {
+                            option.optBoolean("correct")
+                        } else {
+                            null
+                        }
+                        add(
+                            ConversationPollOptionUi(
+                                optionId = optionId,
+                                text = option.optString("text"),
+                                voterCount = voterCount,
+                                chosen = option.optBoolean("chosen"),
+                                correct = correct,
+                            ),
+                        )
+                    }
+                }
+
+                val totalVoters = if (poll.has("total_voters") && !poll.isNull("total_voters")) {
+                    poll.optInt("total_voters")
+                } else {
+                    null
+                }
+                val explanation = if (poll.has("explanation") && !poll.isNull("explanation")) {
+                    poll.optString("explanation").takeIf(String::isNotBlank)
+                } else {
+                    null
+                }
+
+                put(
+                    chatId to messageId,
+                    ConversationPollUi(
+                        id = pollId,
+                        chatId = chatId,
+                        messageId = messageId,
+                        question = poll.optString("question"),
+                        options = options,
+                        totalVoters = totalVoters,
+                        publicVoters = poll.optBoolean("public_voters"),
+                        multipleChoice = poll.optBoolean("multiple_choice"),
+                        quiz = poll.optBoolean("quiz"),
+                        closed = poll.optBoolean("closed"),
+                        explanation = explanation,
+                    ),
+                )
+            }
+        }
+    }
+
+    private fun parseMessages(
+        root: JSONObject?,
+        polls: Map<Pair<Long, Long>, ConversationPollUi>,
+    ): Map<Long, List<ConversationMessageUi>> {
         if (root == null) return emptyMap()
 
         return buildMap {
@@ -571,6 +749,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                                 text = message.optString("text"),
                                 timestamp = formatTimestamp(timestamp),
                                 isOutgoing = message.optBoolean("outgoing"),
+                                poll = polls[chatId to message.optLong("id")],
                             ),
                         )
                     }
@@ -579,6 +758,21 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
             }
         }
     }
+
+    private fun parsePollEventId(payload: String): Long? = runCatching {
+        val root = JSONObject(payload)
+        val body = root.optJSONObject("payload") ?: return@runCatching null
+        body.optLong("poll_id").takeIf { it != 0L }
+            ?: body.optLong("id").takeIf { it != 0L }
+    }.getOrNull()
+
+    private fun parsePollVoteFailure(payload: String): Pair<Long, String>? = runCatching {
+        val root = JSONObject(payload)
+        val body = root.optJSONObject("payload") ?: return@runCatching null
+        val pollId = body.optLong("poll_id")
+        val error = body.optString("error")
+        if (pollId != 0L && error.isNotBlank()) pollId to error else null
+    }.getOrNull()
 
     private fun parseReadTarget(payload: String): Pair<Long, Long>? = runCatching {
         val root = JSONObject(payload)

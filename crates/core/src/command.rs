@@ -44,6 +44,13 @@ pub enum CoreCommand {
         chat_id: i64,
         text: String,
     },
+    /// Submit one or more opaque Telegram option identifiers for an existing poll.
+    VotePoll {
+        poll_id: i64,
+        chat_id: i64,
+        message_id: i64,
+        option_ids: Vec<Vec<u8>>,
+    },
     ArchiveChat {
         chat_id: i64,
     },
@@ -97,6 +104,7 @@ impl CoreCommand {
             Self::SearchMessages(_) => "search_messages",
             Self::SendText { .. } => "send_text",
             Self::SendTextReliable { .. } => "send_text_reliable",
+            Self::VotePoll { .. } => "vote_poll",
             Self::ArchiveChat { .. } => "archive_chat",
             Self::UnarchiveChat { .. } => "unarchive_chat",
             Self::MuteChat { .. } => "mute_chat",
@@ -176,6 +184,46 @@ impl CoreCommand {
                 }
                 validate_chat_id(*chat_id)?;
                 require_non_blank("message text", text)
+            }
+            Self::VotePoll {
+                poll_id,
+                chat_id,
+                message_id,
+                option_ids,
+            } => {
+                if *poll_id == 0 {
+                    return Err(CoreError::InvalidInput("poll id must be non-zero".into()));
+                }
+                validate_chat_id(*chat_id)?;
+                if *message_id <= 0 {
+                    return Err(CoreError::InvalidInput(
+                        "poll message id must be positive".into(),
+                    ));
+                }
+                if option_ids.is_empty() {
+                    return Err(CoreError::InvalidInput(
+                        "poll vote must select at least one option".into(),
+                    ));
+                }
+                if option_ids.len() > crate::poll::MAX_POLL_OPTIONS {
+                    return Err(CoreError::InvalidInput(
+                        "poll vote selects too many options".into(),
+                    ));
+                }
+                let mut unique = std::collections::HashSet::with_capacity(option_ids.len());
+                for option_id in option_ids {
+                    if option_id.is_empty() {
+                        return Err(CoreError::InvalidInput(
+                            "poll option identifier must not be empty".into(),
+                        ));
+                    }
+                    if !unique.insert(option_id.as_slice()) {
+                        return Err(CoreError::InvalidInput(
+                            "poll vote contains a duplicate option".into(),
+                        ));
+                    }
+                }
+                Ok(())
             }
             Self::ArchiveChat { chat_id }
             | Self::UnarchiveChat { chat_id }

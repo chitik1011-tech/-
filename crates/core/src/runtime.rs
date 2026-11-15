@@ -237,6 +237,43 @@ where
                     persistence_dirty = true;
                 }
                 RuntimeInput::Command(Some(command)) => {
+                    if let CoreCommand::VotePoll {
+                        poll_id,
+                        chat_id,
+                        message_id,
+                        option_ids,
+                    } = &command
+                    {
+                        let validation = reduced_state
+                            .poll(*poll_id)
+                            .ok_or_else(|| {
+                                CoreError::InvalidInput(format!(
+                                    "poll {poll_id} is not present in the current state"
+                                ))
+                            })
+                            .and_then(|poll| {
+                                if poll.chat_id != *chat_id || poll.message_id != *message_id {
+                                    return Err(CoreError::InvalidInput(
+                                        "poll vote identity does not match the stored poll".into(),
+                                    ));
+                                }
+                                poll.validate_vote_selection(option_ids)
+                            });
+                        if let Err(error) = validation {
+                            apply_event(
+                                CoreEvent::PollVoteFailed {
+                                    poll_id: *poll_id,
+                                    error: error.to_string(),
+                                },
+                                &mut reduced_state,
+                                &state_tx,
+                                &event_tx_task,
+                                &mut activity_tracker,
+                            );
+                            continue;
+                        }
+                    }
+
                     match &command {
                         CoreCommand::UpdateDraft(draft) => {
                             apply_event(
@@ -702,6 +739,10 @@ fn operation_error_events(command: &CoreCommand, error: CoreError) -> Vec<CoreEv
             text.clone(),
             error,
         ))],
+        CoreCommand::VotePoll { poll_id, .. } => vec![CoreEvent::PollVoteFailed {
+            poll_id: *poll_id,
+            error: error.to_string(),
+        }],
         _ => vec![CoreEvent::Error(error.to_string())],
     }
 }

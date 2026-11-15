@@ -443,6 +443,10 @@ impl CoreState {
                     }
                 }
             }
+            CoreEvent::PollVoteSubmitted { .. } => {}
+            CoreEvent::PollVoteFailed { error, .. } => {
+                self.last_error = Some(error.clone());
+            }
             CoreEvent::MessageSendStateChanged(update) => {
                 let client_id = update.client_id;
                 if let Some(existing) = self.send_ledger.get(&client_id) {
