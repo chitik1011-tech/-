@@ -7,14 +7,14 @@ use grammers_client::{
 pub use tg_mobile_core::ConnectionState;
 use tg_mobile_core::{
     BackendUpdateSender, ConnectionToken, CoreError, CoreEvent, LinkEvent, MessageSummary,
-    PollSummary,
+    PollSummary, ReadDirection,
 };
 use tokio::sync::{broadcast, mpsc, watch};
 use tokio::time::sleep;
 
 use crate::{
     chats::{PeerRegistry, remember_peer},
-    ids::channel_id_to_core,
+    ids::{PeerClass, channel_id_to_core, encode_peer},
     messages::{MessageDeduplicator, message_to_summary},
     polls::{
         PollRegistry, forget_deleted_polls, poll_from_message, poll_from_update, remember_poll,
@@ -41,6 +41,11 @@ pub enum TelegramUpdate {
     UnreadCountChanged {
         chat_id: i64,
         unread_count: u32,
+    },
+    ReadReceiptUpdated {
+        chat_id: i64,
+        direction: ReadDirection,
+        max_message_id: i64,
     },
     Typing {
         chat_id: i64,
@@ -69,6 +74,15 @@ impl TelegramUpdate {
                 message_ids: message_ids.clone(),
             }),
             Self::PollUpdated(poll) => Some(CoreEvent::PollUpdated(poll.clone())),
+            Self::ReadReceiptUpdated {
+                chat_id,
+                direction,
+                max_message_id,
+            } => Some(CoreEvent::ReadReceiptUpdated {
+                chat_id: *chat_id,
+                direction: *direction,
+                max_message_id: *max_message_id,
+            }),
             Self::ConnectionStateChanged(_) => None,
             Self::ConnectionLifecycle { token, event } => Some(CoreEvent::ConnectionLifecycle {
                 token: *token,
@@ -170,6 +184,14 @@ fn is_transient_update_error(error: &InvocationError) -> bool {
         | InvocationError::Transport(_)
         | InvocationError::InvalidDc
         | InvocationError::Authentication(_) => false,
+    }
+}
+
+fn raw_peer_to_core(peer: &tl::enums::Peer) -> i64 {
+    match peer {
+        tl::enums::Peer::User(peer) => encode_peer(PeerClass::User, peer.user_id),
+        tl::enums::Peer::Chat(peer) => encode_peer(PeerClass::Chat, peer.chat_id),
+        tl::enums::Peer::Channel(peer) => encode_peer(PeerClass::Channel, peer.channel_id),
     }
 }
 
@@ -616,17 +638,42 @@ async fn map_update(
                 message_ids,
             }])
         }
-        Update::Raw(raw) => {
-            if let tl::enums::Update::MessagePoll(update) = &raw.raw {
-                Ok(poll_from_update(update, polls)
-                    .await?
-                    .map(TelegramUpdate::PollUpdated)
-                    .into_iter()
-                    .collect())
-            } else {
-                Ok(vec![TelegramUpdate::Unhandled])
+        Update::Raw(raw) => match &raw.raw {
+            tl::enums::Update::MessagePoll(update) => Ok(poll_from_update(update, polls)
+                .await?
+                .map(TelegramUpdate::PollUpdated)
+                .into_iter()
+                .collect()),
+            tl::enums::Update::ReadHistoryInbox(update) => {
+                Ok(vec![TelegramUpdate::ReadReceiptUpdated {
+                    chat_id: raw_peer_to_core(&update.peer),
+                    direction: ReadDirection::Inbox,
+                    max_message_id: i64::from(update.max_id),
+                }])
             }
-        }
+            tl::enums::Update::ReadHistoryOutbox(update) => {
+                Ok(vec![TelegramUpdate::ReadReceiptUpdated {
+                    chat_id: raw_peer_to_core(&update.peer),
+                    direction: ReadDirection::Outbox,
+                    max_message_id: i64::from(update.max_id),
+                }])
+            }
+            tl::enums::Update::ReadChannelInbox(update) => {
+                Ok(vec![TelegramUpdate::ReadReceiptUpdated {
+                    chat_id: crate::ids::channel_id_to_core(update.channel_id),
+                    direction: ReadDirection::Inbox,
+                    max_message_id: i64::from(update.max_id),
+                }])
+            }
+            tl::enums::Update::ReadChannelOutbox(update) => {
+                Ok(vec![TelegramUpdate::ReadReceiptUpdated {
+                    chat_id: crate::ids::channel_id_to_core(update.channel_id),
+                    direction: ReadDirection::Outbox,
+                    max_message_id: i64::from(update.max_id),
+                }])
+            }
+            _ => Ok(vec![TelegramUpdate::Unhandled]),
+        },
         _ => Ok(Vec::new()),
     }
 }
@@ -644,7 +691,8 @@ mod tests {
         UpdateSource, is_transient_update_error, next_with_recovery, wait_for_current_attempt,
     };
     use tg_mobile_core::{
-        ConnectionMachine, CoreEvent, LinkEvent, MessageSummary, backend_update_channel,
+        ConnectionMachine, CoreEvent, LinkEvent, MessageSummary, ReadDirection,
+        backend_update_channel,
     };
 
     struct FakeUpdateSource {
@@ -802,6 +850,19 @@ mod tests {
         assert_eq!(
             TelegramUpdate::MessageEdited(message.clone()).to_core_event(),
             Some(CoreEvent::MessageEdited(message))
+        );
+        assert_eq!(
+            TelegramUpdate::ReadReceiptUpdated {
+                chat_id: 77,
+                direction: ReadDirection::Outbox,
+                max_message_id: 42
+            }
+            .to_core_event(),
+            Some(CoreEvent::ReadReceiptUpdated {
+                chat_id: 77,
+                direction: ReadDirection::Outbox,
+                max_message_id: 42
+            })
         );
         assert_eq!(
             TelegramUpdate::MessagesDeleted {

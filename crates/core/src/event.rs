@@ -57,6 +57,12 @@ pub enum CoreEvent {
         chat_id: i64,
         max_message_id: i64,
     },
+    /// Monotonic Telegram read boundary for one side of a chat.
+    ReadReceiptUpdated {
+        chat_id: i64,
+        direction: crate::model::ReadDirection,
+        max_message_id: i64,
+    },
     MessageSearchStarted(SearchMessagesRequest),
     MessageSearchCompleted(MessageSearchPage),
     MessageSearchFailed {
@@ -153,6 +159,7 @@ impl CoreEvent {
             Self::MessagesPageLoaded { .. } => "messages_page_loaded",
             Self::MessagesPageLoadFailed { .. } => "messages_page_load_failed",
             Self::ChatRead { .. } => "chat_read",
+            Self::ReadReceiptUpdated { .. } => "read_receipt_updated",
             Self::MessageSearchStarted(_) => "message_search_started",
             Self::MessageSearchCompleted(_) => "message_search_completed",
             Self::MessageSearchFailed { .. } => "message_search_failed",

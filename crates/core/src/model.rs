@@ -42,6 +42,23 @@ pub struct ChatSummary {
     pub last_message: Option<MessageSummary>,
 }
 
+/// Which message stream a Telegram read boundary applies to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReadDirection {
+    Inbox,
+    Outbox,
+}
+
+/// Highest message IDs reported as read in each direction for a chat.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ReadReceipt {
+    #[serde(default)]
+    pub inbox_max_message_id: i64,
+    #[serde(default)]
+    pub outbox_max_message_id: i64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MessageSummary {
     pub id: i64,

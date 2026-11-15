@@ -647,7 +647,8 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
             val authorization = parseAuthorization(account.optString("authorization"))
             val chats = parseChats(account.optJSONArray("chats") ?: JSONArray())
             val polls = parsePolls(root.optJSONObject("polls"))
-            val messages = parseMessages(root.optJSONObject("messages"), polls)
+            val readOutboxMaxIds = parseReadOutboxMaxIds(root.optJSONObject("read_receipts"))
+            val messages = parseMessages(root.optJSONObject("messages"), polls, readOutboxMaxIds)
             Triple(authorization, chats, messages)
         }.onSuccess { (authorization, chats, messages) ->
             _state.update {
@@ -771,6 +772,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
     private fun parseMessages(
         root: JSONObject?,
         polls: Map<Pair<Long, Long>, ConversationPollUi>,
+        readOutboxMaxIds: Map<Long, Long>,
     ): Map<Long, List<ConversationMessageUi>> {
         if (root == null) return emptyMap()
 
@@ -791,6 +793,8 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                                 text = message.optString("text"),
                                 timestamp = formatTimestamp(timestamp),
                                 isOutgoing = message.optBoolean("outgoing"),
+                                isRead = message.optBoolean("outgoing") &&
+                                    message.optLong("id") <= (readOutboxMaxIds[chatId] ?: 0L),
                                 attachments = parseMediaAttachments(
                                     message.optJSONArray("attachments") ?: JSONArray(),
                                 ),
@@ -800,6 +804,18 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                     }
                 }
                 put(chatId, messages)
+            }
+        }
+    }
+
+    private fun parseReadOutboxMaxIds(root: JSONObject?): Map<Long, Long> {
+        if (root == null) return emptyMap()
+        return buildMap {
+            val keys = root.keys()
+            while (keys.hasNext()) {
+                val chatId = keys.next().toLongOrNull() ?: continue
+                val receipt = root.optJSONObject(chatId.toString()) ?: continue
+                put(chatId, receipt.optLong("outbox_max_message_id", 0L).coerceAtLeast(0L))
             }
         }
     }
