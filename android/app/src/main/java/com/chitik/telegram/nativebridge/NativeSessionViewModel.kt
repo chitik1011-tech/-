@@ -7,6 +7,9 @@ import com.chitik.telegram.AuthorizationUiStep
 import com.chitik.telegram.ChatListEntry
 import com.chitik.telegram.ChatListPreview
 import com.chitik.telegram.ConversationMessageUi
+import com.chitik.telegram.MediaAttachmentUi
+import com.chitik.telegram.mediaDownloadStateFromWire
+import com.chitik.telegram.mediaKindFromWire
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -349,6 +352,45 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         )
     }
 
+    fun downloadMedia(
+        chatId: Long,
+        messageId: Long,
+        attachmentIndex: Int,
+        retry: Boolean = false,
+    ) {
+        sendCommand(
+            JSONObject()
+                .put("type", if (retry) "retry_media_download" else "download_media")
+                .put(
+                    "payload",
+                    JSONObject()
+                        .put("chat_id", chatId)
+                        .put("message_id", messageId)
+                        .put("attachment_index", attachmentIndex),
+                )
+                .toString(),
+        )
+    }
+
+    fun cancelMediaDownload(
+        chatId: Long,
+        messageId: Long,
+        attachmentIndex: Int,
+    ) {
+        sendCommand(
+            JSONObject()
+                .put("type", "cancel_media_download")
+                .put(
+                    "payload",
+                    JSONObject()
+                        .put("chat_id", chatId)
+                        .put("message_id", messageId)
+                        .put("attachment_index", attachmentIndex),
+                )
+                .toString(),
+        )
+    }
+
     private fun markRead(chatId: Long, maxMessageId: Long) {
         if (chatId == 0L || maxMessageId <= 0L) return
         sendCommand(
@@ -571,12 +613,72 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                                 text = message.optString("text"),
                                 timestamp = formatTimestamp(timestamp),
                                 isOutgoing = message.optBoolean("outgoing"),
+                                attachments = parseMediaAttachments(
+                                    message.optJSONArray("attachments") ?: JSONArray(),
+                                ),
                             ),
                         )
                     }
                 }
                 put(chatId, messages)
             }
+        }
+    }
+
+    private fun parseMediaAttachments(array: JSONArray): List<MediaAttachmentUi> = buildList {
+        for (index in 0 until array.length()) {
+            val attachment = array.optJSONObject(index) ?: continue
+            val reference = attachment.optString("file_reference").takeIf { it.isNotBlank() }
+                ?: continue
+            val download = attachment.optJSONObject("download_state")
+            val status = download?.optString("status").orEmpty()
+            val totalBytes = download
+                ?.takeIf { it.has("total_bytes") && !it.isNull("total_bytes") }
+                ?.optLong("total_bytes")
+                ?.takeIf { it > 0L }
+            val localPath = download
+                ?.optString("local_path")
+                ?.takeIf { it.isNotBlank() }
+            val reason = download
+                ?.optString("reason")
+                ?.takeIf { it.isNotBlank() }
+
+            add(
+                MediaAttachmentUi(
+                    index = index,
+                    kind = mediaKindFromWire(attachment.optString("kind")),
+                    fileReference = reference,
+                    sizeBytes = attachment
+                        .takeIf { it.has("size_bytes") && !it.isNull("size_bytes") }
+                        ?.optLong("size_bytes")
+                        ?.takeIf { it >= 0L },
+                    mimeType = attachment
+                        .optString("mime_type")
+                        .takeIf { it.isNotBlank() },
+                    width = attachment
+                        .takeIf { it.has("width") && !it.isNull("width") }
+                        ?.optInt("width")
+                        ?.takeIf { it > 0 },
+                    height = attachment
+                        .takeIf { it.has("height") && !it.isNull("height") }
+                        ?.optInt("height")
+                        ?.takeIf { it > 0 },
+                    durationMs = attachment
+                        .takeIf { it.has("duration_ms") && !it.isNull("duration_ms") }
+                        ?.optLong("duration_ms")
+                        ?.takeIf { it >= 0L },
+                    filename = attachment
+                        .optString("filename")
+                        .takeIf { it.isNotBlank() },
+                    downloadState = mediaDownloadStateFromWire(
+                        status = status,
+                        bytesTransferred = download?.optLong("bytes_transferred", 0L) ?: 0L,
+                        totalBytes = totalBytes,
+                        localPath = localPath,
+                        reason = reason,
+                    ),
+                ),
+            )
         }
     }
 
