@@ -31,6 +31,15 @@ data class ChatUi(
     val lastMessage: String?,
 )
 
+data class MessageUi(
+    val id: Long,
+    val chatId: Long,
+    val senderId: Long,
+    val text: String,
+    val timestampUnix: Long,
+    val outgoing: Boolean,
+)
+
 data class NativeUiState(
     val libraryLoaded: Boolean = false,
     val coreVersion: String = "Not loaded",
@@ -38,6 +47,7 @@ data class NativeUiState(
     val telegramConfigured: Boolean = false,
     val authorization: AuthorizationUiState = AuthorizationUiState.Closed,
     val chats: List<ChatUi> = emptyList(),
+    val messages: Map<Long, List<MessageUi>> = emptyMap(),
     val lastEventType: String = "none",
     val lastEventPayload: String = "",
     val busy: Boolean = false,
@@ -336,12 +346,14 @@ class NativeSessionViewModel(application: Application) :
             val account = root.getJSONObject("account")
             val authorization = parseAuthorization(account.optString("authorization"))
             val chats = parseChats(account.optJSONArray("chats") ?: JSONArray())
-            authorization to chats
-        }.onSuccess { (authorization, chats) ->
+            val messages = parseMessages(root.optJSONObject("messages"))
+            Triple(authorization, chats, messages)
+        }.onSuccess { (authorization, chats, messages) ->
             _state.update {
                 it.copy(
                     authorization = authorization,
                     chats = chats,
+                    messages = messages,
                     lastEventType = "state",
                     lastEventPayload = payload,
                     busy = false,
@@ -366,6 +378,35 @@ class NativeSessionViewModel(application: Application) :
                     lastMessage = lastMessage?.optString("text")?.takeIf { it.isNotBlank() },
                 ),
             )
+        }
+    }
+
+    private fun parseMessages(root: JSONObject?): Map<Long, List<MessageUi>> {
+        if (root == null) return emptyMap()
+
+        return buildMap {
+            val keys = root.keys()
+            while (keys.hasNext()) {
+                val chatKey = keys.next()
+                val chatId = chatKey.toLongOrNull() ?: continue
+                val array = root.optJSONArray(chatKey) ?: continue
+                val messages = buildList {
+                    for (index in 0 until array.length()) {
+                        val message = array.optJSONObject(index) ?: continue
+                        add(
+                            MessageUi(
+                                id = message.optLong("id"),
+                                chatId = message.optLong("chat_id", chatId),
+                                senderId = message.optLong("sender_id"),
+                                text = message.optString("text"),
+                                timestampUnix = message.optLong("timestamp_unix"),
+                                outgoing = message.optBoolean("outgoing"),
+                            ),
+                        )
+                    }
+                }
+                put(chatId, messages)
+            }
         }
     }
 
