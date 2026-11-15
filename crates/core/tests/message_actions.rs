@@ -201,6 +201,10 @@ fn reducer_tracks_reply_targets_and_removes_deleted_reply_metadata() {
     });
     assert_eq!(state.messages_for_chat(2), &[reply]);
     assert_eq!(state.reply_target_for_message(2, 8), Some(7));
+    let persisted = serde_json::to_string(&state).expect("serialize reply state");
+    let restored: CoreState =
+        serde_json::from_str(&persisted).expect("deserialize reply state");
+    assert_eq!(restored.reply_target_for_message(2, 8), Some(7));
 
     state.reduce(&CoreEvent::MessageDeleted {
         chat_id: 2,
