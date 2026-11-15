@@ -147,7 +147,8 @@ async fn shutdown_flushes_dirty_state_before_periodic_tick_is_required() -> Resu
 
     update_tx
         .send(Ok(CoreEvent::MessageAdded(message(1))))
-        .await?;
+        .await
+        .unwrap();
 
     timeout(Duration::from_secs(1), async {
         while core.state().messages_for_chat(123).is_empty() {
