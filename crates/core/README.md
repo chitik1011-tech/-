@@ -51,7 +51,7 @@ let (update_tx, update_rx) = backend_update_channel();
 
 The default capacity is exposed as `DEFAULT_BACKEND_UPDATE_CAPACITY`.
 
-The runtime listens to the command queue and backend update stream concurrently. Each successful backend update is reduced into `CoreState`, broadcast as a `CoreEvent`, and persisted through the configured `StateStore`.
+The runtime listens to the command queue and backend update stream concurrently. Each successful backend update is reduced into `CoreState` and broadcast as a `CoreEvent`.
 
 An error sent through the backend update channel is translated into `CoreEvent::Error`. Closing the update channel only disables unsolicited updates; command handling continues.
 
@@ -73,7 +73,11 @@ The core exposes three storage implementations:
 - `MemoryStateStore` — useful for tests and process-local caching.
 - `JsonFileStateStore` — persists the complete `CoreState` to a JSON file.
 
-File reads and writes are moved onto Tokio blocking workers so filesystem I/O does not block the async core task. File writes use a temporary file followed by rename.
+File reads and writes are moved onto Tokio blocking workers so filesystem I/O does not block executor threads. File writes use a temporary file followed by rename.
+
+Runtime persistence is coalesced on a short periodic interval instead of writing the full state after every Telegram update. The default interval is exposed as `PERSISTENCE_FLUSH_INTERVAL_MS`. This keeps bursty message traffic from turning into one filesystem write per update while in-memory state and UI subscriptions remain immediate.
+
+A terminal `Stopped` event, explicit `CoreHandle::shutdown`, or command-channel closure performs a final synchronous flush before the runtime exits. Therefore normal shutdown preserves the newest snapshot even if the periodic flush has not fired yet.
 
 When persisted state is restored, transient runtime fields are normalized: the runtime is marked active and an old error is cleared.
 
@@ -112,7 +116,7 @@ This wire format is intended for the Android/JNI bridge. Keep it backward compat
 
 `CoreState` is updated only from `CoreEvent` values.
 
-Incoming `MessageAdded` events are cached per chat and deduplicated by message ID. The cache is bounded per chat for mobile memory safety.
+Incoming `MessageAdded` events are cached per chat and deduplicated by message ID. The cache is bounded per chat for mobile memory safety. Newly inserted incoming messages increment unread count once; duplicate or edited updates of the same message do not.
 
 ## Safety
 
