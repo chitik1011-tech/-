@@ -216,6 +216,12 @@ mod tests {
             timestamp_unix: 4,
             outgoing: false,
             attachments: Vec::new(),
+            forwarded_from: None,
+            edited: false,
+            edit_timestamp_unix: None,
+            service_message: false,
+            media_caption: None,
+            reply_to: None,
         };
         assert!(matches!(
             TelegramUpdate::MessageAdded(message).to_core_event(),
