@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     event::CoreEvent,
     model::{AccountState, ChatSummary, MessageSummary},
+    send::{OutgoingSend, OutgoingSendState},
 };
 
 pub const MAX_CACHED_MESSAGES_PER_CHAT: usize = 512;
@@ -14,6 +15,10 @@ pub struct CoreState {
     pub running: bool,
     pub account: AccountState,
     pub messages: BTreeMap<i64, Vec<MessageSummary>>,
+    /// Reliable sends that are still in flight or failed and can be retried.
+    /// Older persisted state did not contain this field.
+    #[serde(default)]
+    pub outbox: BTreeMap<i64, OutgoingSend>,
     pub last_error: Option<String>,
 }
 
@@ -23,6 +28,7 @@ impl Default for CoreState {
             running: true,
             account: AccountState::default(),
             messages: BTreeMap::new(),
+            outbox: BTreeMap::new(),
             last_error: None,
         }
     }
@@ -123,6 +129,26 @@ impl CoreState {
 
                 self.last_error = None;
             }
+            CoreEvent::MessageSendStateChanged(update) => {
+                let client_id = update.client_id;
+                if let Some(existing) = self.outbox.get(&client_id) {
+                    if !existing.same_request(update.chat_id, &update.text) {
+                        self.last_error = Some(format!(
+                            "client message id {client_id} was reused for a different outgoing message"
+                        ));
+                        return;
+                    }
+                }
+
+                match &update.state {
+                    OutgoingSendState::Sent { .. } => {
+                        self.outbox.remove(&client_id);
+                    }
+                    OutgoingSendState::Sending | OutgoingSendState::Failed { .. } => {
+                        self.outbox.insert(client_id, update.clone());
+                    }
+                }
+            }
             CoreEvent::Error(error) => {
                 self.last_error = Some(error.clone());
             }
@@ -141,6 +167,10 @@ impl CoreState {
             .get(&chat_id)
             .map(Vec::as_slice)
             .unwrap_or(&[])
+    }
+
+    pub fn outgoing_send(&self, client_id: i64) -> Option<&OutgoingSend> {
+        self.outbox.get(&client_id)
     }
 
     pub fn total_unread_count(&self) -> u64 {
