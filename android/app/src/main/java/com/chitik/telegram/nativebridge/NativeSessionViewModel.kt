@@ -60,7 +60,12 @@ class NativeSessionViewModel : ViewModel(), NativeEventCallback {
                 throw IllegalStateException("Native session owner was already cleared")
             }
 
-            NativeBridge.probe(createdHandle)
+            val probeResult = lifecycle.dispatchCommand { currentHandle ->
+                NativeBridge.probe(currentHandle)
+            }
+            if (probeResult != LifecycleDispatchResult.Accepted) {
+                throw IllegalStateException("Native bridge probe was not accepted: $probeResult")
+            }
             version
         }.onSuccess { version ->
             lifecycle.runIfOpen {
