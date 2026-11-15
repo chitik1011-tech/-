@@ -388,13 +388,8 @@ pub(crate) async fn run_update_worker(mut input: UpdateWorkerInput) {
                 match map_update(update, &input.peers, &input.dedup, &input.polls).await {
                     Ok(events) => {
                         for event in events {
-                            emit_update(
-                                &input.events,
-                                &input.core_updates,
-                                event,
-                                operation_token,
-                            )
-                            .await;
+                            emit_update(&input.events, &input.core_updates, event, operation_token)
+                                .await;
                         }
                     }
                     Err(error) => {
