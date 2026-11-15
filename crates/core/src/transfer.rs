@@ -500,7 +500,8 @@ mod tests {
             .map(|worker_index| {
                 let manager = Arc::clone(&manager);
                 thread::spawn(move || {
-                    for bytes in (worker_index + 1..=1_000).step_by(8).rev() {
+                    for count in (0..125).rev() {
+                        let bytes = worker_index + 1 + count * 8;
                         manager.report_progress(active, bytes).unwrap();
                     }
                 })
