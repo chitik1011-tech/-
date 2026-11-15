@@ -319,7 +319,13 @@ mod reaction_tests {
             vec![reaction("👍", 2, true)]
         );
         assert_eq!(
-            state.chat(1).unwrap().last_message.as_ref().unwrap().reactions,
+            state
+                .chat(1)
+                .unwrap()
+                .last_message
+                .as_ref()
+                .unwrap()
+                .reactions,
             vec![reaction("👍", 2, true)]
         );
     }
@@ -341,7 +347,6 @@ mod reaction_tests {
 
     #[test]
     fn commands_have_stable_wire_names_and_validate_reaction_targets() {
-
         use crate::command::MAX_REACTION_EMOJI_BYTES;
         use crate::{command::CoreCommand, error::CoreError};
         let valid = CoreCommand::AddReaction {
