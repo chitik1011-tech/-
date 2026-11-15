@@ -13,8 +13,13 @@ pub enum CoreCommand {
     SetPhoneNumber(String),
     SubmitCode(String),
     SubmitPassword(String),
-    LoadChats { limit: usize },
-    SendText { chat_id: i64, text: String },
+    LoadChats {
+        limit: usize,
+    },
+    SendText {
+        chat_id: i64,
+        text: String,
+    },
     /// Sends text as a reply to a message in the same chat.
     ReplyMessage {
         chat_id: i64,
@@ -28,7 +33,10 @@ pub enum CoreCommand {
         text: String,
     },
     /// Deletes an existing message in the specified chat.
-    DeleteMessage { chat_id: i64, message_id: i64 },
+    DeleteMessage {
+        chat_id: i64,
+        message_id: i64,
+    },
     Shutdown,
 }
 
@@ -89,9 +97,10 @@ impl CoreCommand {
                 require_message_ids(*chat_id, *message_id)?;
                 validate_message_text("message text", text)
             }
-            Self::DeleteMessage { chat_id, message_id } => {
-                require_message_ids(*chat_id, *message_id)
-            }
+            Self::DeleteMessage {
+                chat_id,
+                message_id,
+            } => require_message_ids(*chat_id, *message_id),
         }
     }
 }
