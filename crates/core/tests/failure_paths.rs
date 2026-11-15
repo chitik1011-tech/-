@@ -6,7 +6,7 @@ use std::{
 use tg_mobile_core::{
     spawn_core, spawn_core_with_store, AuthorizationState, BackendFuture, BackendUpdateReceiver,
     CoreCommand, CoreError, CoreEvent, CoreHandle, CoreState, JsonFileStateStore, MemoryStateStore,
-    MessageSummary, MockTelegramBackend, TelegramBackend,
+    MessageSummary, MockTelegramBackend, StateStore, TelegramBackend,
 };
 use tokio::{
     sync::{mpsc, oneshot},
