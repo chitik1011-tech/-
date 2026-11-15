@@ -6,6 +6,7 @@ use tokio::{
 };
 
 use crate::{
+    activity::{ChatActivityTracker, CHAT_ACTIVITY_EXPIRY_CHECK_INTERVAL_MS},
     backend::{BackendUpdateReceiver, TelegramBackend},
     command::CoreCommand,
     error::{CoreError, Result},
@@ -85,6 +86,10 @@ where
         let mut persistence_tick = interval_at(Instant::now() + flush_interval, flush_interval);
         persistence_tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
         let mut persistence_dirty = false;
+        let mut activity_tracker = ChatActivityTracker::default();
+        let activity_interval = Duration::from_millis(CHAT_ACTIVITY_EXPIRY_CHECK_INTERVAL_MS);
+        let mut activity_tick = interval_at(Instant::now() + activity_interval, activity_interval);
+        activity_tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
         loop {
             let input = next_runtime_input(
@@ -92,6 +97,8 @@ where
                 &mut backend_updates,
                 &mut persistence_tick,
                 persistence_dirty,
+                activity_tracker.has_active(),
+                &mut activity_tick,
             )
             .await;
 
@@ -107,8 +114,9 @@ where
                         persistence_dirty = true;
                     }
 
-                    let stopped =
-                        apply_events(events, &mut reduced_state, &state_tx, &event_tx_task);
+                    let stopped = apply_events(
+                        events, &mut reduced_state, &state_tx, &event_tx_task, &mut activity_tracker,
+                    );
 
                     if shutdown_requested || stopped {
                         if !stopped {
@@ -117,6 +125,7 @@ where
                                 &mut reduced_state,
                                 &state_tx,
                                 &event_tx_task,
+                                &mut activity_tracker,
                             );
                             persistence_dirty = true;
                         }
@@ -134,13 +143,14 @@ where
                         &mut reduced_state,
                         &state_tx,
                         &event_tx_task,
+                        &mut activity_tracker,
                     );
                     persist_state(&store, &mut reduced_state, &state_tx, &event_tx_task).await;
                     break;
                 }
                 RuntimeInput::Update(Some(Ok(event))) => {
                     let stopped = event.is_terminal();
-                    apply_event(event, &mut reduced_state, &state_tx, &event_tx_task);
+                    apply_event(event, &mut reduced_state, &state_tx, &event_tx_task, &mut activity_tracker);
                     persistence_dirty = true;
 
                     if stopped {
@@ -154,11 +164,17 @@ where
                         &mut reduced_state,
                         &state_tx,
                         &event_tx_task,
+                        &mut activity_tracker,
                     );
                     persistence_dirty = true;
                 }
                 RuntimeInput::Update(None) => {
                     backend_updates = None;
+                }
+                RuntimeInput::ExpireActivities => {
+                    for event in activity_tracker.expire(Instant::now().into_std()) {
+                        apply_event(event, &mut reduced_state, &state_tx, &event_tx_task, &mut activity_tracker);
+                    }
                 }
                 RuntimeInput::Persist => {
                     persist_state(&store, &mut reduced_state, &state_tx, &event_tx_task).await;
@@ -179,6 +195,7 @@ enum RuntimeInput {
     Command(Option<CoreCommand>),
     Update(Option<Result<CoreEvent>>),
     Persist,
+    ExpireActivities,
 }
 
 async fn next_runtime_input(
@@ -186,6 +203,8 @@ async fn next_runtime_input(
     updates: &mut Option<BackendUpdateReceiver>,
     persistence_tick: &mut Interval,
     persistence_dirty: bool,
+    activity_active: bool,
+    activity_tick: &mut Interval,
 ) -> RuntimeInput {
     match updates.as_mut() {
         Some(updates) => {
@@ -193,6 +212,7 @@ async fn next_runtime_input(
                 command = commands.recv() => RuntimeInput::Command(command),
                 update = updates.recv() => RuntimeInput::Update(update),
                 _ = persistence_tick.tick(), if persistence_dirty => RuntimeInput::Persist,
+                _ = activity_tick.tick(), if activity_active => RuntimeInput::ExpireActivities,
             }
         }
         None => {
@@ -233,12 +253,13 @@ fn apply_events(
     state: &mut CoreState,
     state_tx: &watch::Sender<CoreState>,
     event_tx: &broadcast::Sender<CoreEvent>,
+    activity_tracker: &mut ChatActivityTracker,
 ) -> bool {
     let mut stopped = false;
 
     for event in events {
         stopped |= event.is_terminal();
-        apply_event(event, state, state_tx, event_tx);
+        apply_event(event, state, state_tx, event_tx, activity_tracker);
     }
 
     stopped
@@ -249,7 +270,9 @@ fn apply_event(
     state: &mut CoreState,
     state_tx: &watch::Sender<CoreState>,
     event_tx: &broadcast::Sender<CoreEvent>,
+    activity_tracker: &mut ChatActivityTracker,
 ) {
+    activity_tracker.apply(&event, Instant::now().into_std());
     state.reduce(&event);
     let _ = state_tx.send(state.clone());
     let _ = event_tx.send(event);
