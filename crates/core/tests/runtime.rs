@@ -6,7 +6,7 @@ use std::{
 use tg_mobile_core::{
     decode_command, encode_event, encode_state, spawn_core, spawn_core_with_store,
     AuthorizationState, CoreCommand, CoreEvent, CoreState, JsonFileStateStore, MemoryStateStore,
-    MessageSummary, MockTelegramBackend, StateStore,
+    BackendFuture, MessageSummary, MockTelegramBackend, StateStore, TelegramBackend,
 };
 use tokio::time::timeout;
 
@@ -204,4 +204,65 @@ async fn mock_backend_can_authorize_load_chats_and_send() {
             .unwrap(),
         CoreEvent::MessageAdded(message) if message.text == "hello from rust"
     ));
+}
+
+#[derive(Clone, Copy)]
+enum MissingPageCompletion {
+    Empty,
+    ErrorEvent,
+}
+
+struct MissingPageBackend(MissingPageCompletion);
+
+impl TelegramBackend for MissingPageBackend {
+    fn handle<'a>(&'a mut self, command: CoreCommand) -> BackendFuture<'a> {
+        let events = match command {
+            CoreCommand::LoadChatsPage { .. } => match self.0 {
+                MissingPageCompletion::Empty => Vec::new(),
+                MissingPageCompletion::ErrorEvent => {
+                    vec![CoreEvent::Error("page failed".into())]
+                }
+            },
+            _ => Vec::new(),
+        };
+        Box::pin(async move { Ok(events) })
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn runtime_completes_page_loading_when_backend_omits_a_page() {
+    for completion in [
+        MissingPageCompletion::Empty,
+        MissingPageCompletion::ErrorEvent,
+    ] {
+        let core = spawn_core(MissingPageBackend(completion));
+        let mut events = core.subscribe();
+
+        core.send(CoreCommand::LoadChatsPage {
+            cursor: None,
+            limit: 20,
+        })
+        .await
+        .unwrap();
+
+        assert!(matches!(
+            timeout(Duration::from_secs(1), events.recv())
+                .await
+                .unwrap()
+                .unwrap(),
+            CoreEvent::ChatsPageLoading { cursor: None }
+        ));
+        assert!(matches!(
+            timeout(Duration::from_secs(1), events.recv())
+                .await
+                .unwrap()
+                .unwrap(),
+            CoreEvent::ChatsPageFailed {
+                cursor: None,
+                error: _
+            }
+        ));
+        assert!(!core.state().chat_pagination.loading);
+        assert!(core.state().chat_pagination.error.is_some());
+    }
 }
