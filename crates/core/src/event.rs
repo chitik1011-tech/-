@@ -87,6 +87,10 @@ pub enum CoreEvent {
     },
     /// Poll snapshot for a message. Replaces the stored snapshot with the same poll id.
     PollUpdated(PollSummary),
+    /// The Telegram vote RPC completed successfully. Final choice/results still come from PollUpdated.
+    PollVoteSubmitted { poll_id: i64 },
+    /// The Telegram vote RPC failed without replacing the last server-confirmed poll snapshot.
+    PollVoteFailed { poll_id: i64, error: String },
     MessageSendStateChanged(OutgoingSend),
     /// `generation` must monotonically increase per (chat_id, user_id).
     ChatActivityChanged {
@@ -144,6 +148,8 @@ impl CoreEvent {
             Self::MessageEdited(_) => "message_edited",
             Self::MessagesDeleted { .. } => "messages_deleted",
             Self::PollUpdated(_) => "poll_updated",
+            Self::PollVoteSubmitted { .. } => "poll_vote_submitted",
+            Self::PollVoteFailed { .. } => "poll_vote_failed",
             Self::MessageSendStateChanged(_) => "message_send_state_changed",
             Self::ChatActivityChanged { .. } => "chat_activity_changed",
             Self::ChatActivityEnded { .. } => "chat_activity_ended",
@@ -159,7 +165,9 @@ impl CoreEvent {
     pub const fn is_transient(&self) -> bool {
         matches!(
             self,
-            Self::ChatActivityChanged { .. }
+            Self::PollVoteSubmitted { .. }
+                | Self::PollVoteFailed { .. }
+                | Self::ChatActivityChanged { .. }
                 | Self::ChatActivityEnded { .. }
                 | Self::ChatActivityExpired { .. }
         )
