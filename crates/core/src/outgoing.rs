@@ -122,9 +122,9 @@ impl OutgoingMessageStatus {
 fn validate_client_id(client_id: &str) -> Result<()> {
     let valid = !client_id.is_empty()
         && client_id.len() <= MAX_CLIENT_MESSAGE_ID_LENGTH
-        && client_id.bytes().all(|byte| {
-            byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':')
-        });
+        && client_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':'));
     if valid {
         Ok(())
     } else {
