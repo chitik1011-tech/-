@@ -14,7 +14,7 @@ use jni::{
 };
 use tg_mobile_core::{
     backend::BackendFuture, decode_command, encode_event, encode_state, spawn_core, CoreCommand,
-    CoreError, CoreEvent, CoreHandle, TelegramBackend,
+    ChatCapabilities, ChatKind, CoreError, CoreEvent, CoreHandle, TelegramBackend,
 };
 use tokio::{runtime::Runtime, task::JoinHandle};
 
@@ -480,5 +480,19 @@ mod tests {
         let event = CoreEvent::Error("test".to_owned());
         let encoded = encode_event(&event);
         assert!(matches!(encoded, Ok(payload) if payload.contains("\"type\":\"error\"")));
+    }
+
+    #[test]
+    fn serializes_chat_capabilities_with_the_shared_wire_kind() {
+        let capabilities = ChatCapabilities {
+            chat_id: 42,
+            chat_kind: ChatKind::Channel,
+            ..ChatCapabilities::default()
+        };
+        let event = CoreEvent::ChatCapabilitiesUpdated(capabilities);
+
+        assert_eq!(event_kind(&event), "chat_capabilities_updated");
+        let encoded = encode_event(&event).unwrap();
+        assert!(encoded.contains("\"type\":\"chat_capabilities_updated\""));
     }
 }
