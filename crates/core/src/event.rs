@@ -4,6 +4,7 @@ use crate::{
     connection::ConnectionState,
     connection_machine::{ConnectionToken, LinkEvent},
     model::{AccountState, AuthorizationState, ChatSummary, MessageSummary},
+    search::{MessageSearchPage, SearchMessagesRequest},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -50,6 +51,15 @@ pub enum CoreEvent {
         chat_id: i64,
         max_message_id: i64,
     },
+    MessageSearchStarted(SearchMessagesRequest),
+    MessageSearchCompleted(MessageSearchPage),
+    MessageSearchFailed {
+        request_id: u64,
+        chat_id: i64,
+        query: String,
+        before_message_id: Option<i64>,
+        error: String,
+    },
     MessageAdded(MessageSummary),
     MessageEdited(MessageSummary),
     MessagesDeleted {
@@ -75,6 +85,9 @@ impl CoreEvent {
             Self::MessagesPageLoaded { .. } => "messages_page_loaded",
             Self::MessagesPageLoadFailed { .. } => "messages_page_load_failed",
             Self::ChatRead { .. } => "chat_read",
+            Self::MessageSearchStarted(_) => "message_search_started",
+            Self::MessageSearchCompleted(_) => "message_search_completed",
+            Self::MessageSearchFailed { .. } => "message_search_failed",
             Self::MessageAdded(_) => "message_added",
             Self::MessageEdited(_) => "message_edited",
             Self::MessagesDeleted { .. } => "messages_deleted",

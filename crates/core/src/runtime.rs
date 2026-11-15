@@ -133,6 +133,10 @@ where
                                 && reduced_state.account.authorization
                                     == crate::model::AuthorizationState::Ready
                         });
+                    let search_request = match &command {
+                        CoreCommand::SearchMessages(request) => Some(request.clone()),
+                        _ => None,
+                    };
 
                     if let Some((chat_id, before_message_id)) = page_request {
                         apply_event(
@@ -140,6 +144,15 @@ where
                                 chat_id,
                                 before_message_id,
                             },
+                            &mut reduced_state,
+                            &state_tx,
+                            &event_tx_task,
+                        );
+                        persistence_dirty = true;
+                    }
+                    if let Some(request) = search_request.as_ref() {
+                        apply_event(
+                            CoreEvent::MessageSearchStarted(request.clone()),
                             &mut reduced_state,
                             &state_tx,
                             &event_tx_task,
@@ -166,6 +179,14 @@ where
                                     before_message_id,
                                     error: error.to_string(),
                                 }]
+                            } else if let Some(request) = search_request.as_ref() {
+                                vec![CoreEvent::MessageSearchFailed {
+                                    request_id: request.request_id,
+                                    chat_id: request.chat_id,
+                                    query: request.query.clone(),
+                                    before_message_id: request.before_message_id,
+                                    error: error.to_string(),
+                                }]
                             } else {
                                 vec![CoreEvent::Error(error.to_string())]
                             }
@@ -187,7 +208,6 @@ where
                                 } if *event_chat_id == chat_id && *event_before == before_message_id
                             )
                         });
-
                         if !completed {
                             let error = events
                                 .iter()
@@ -201,6 +221,48 @@ where
                             events.push(CoreEvent::MessagesPageLoadFailed {
                                 chat_id,
                                 before_message_id,
+                                error,
+                            });
+                        }
+                    }
+                    if let Some(request) = search_request.as_ref() {
+                        let completed = events.iter().any(|event| match event {
+                            CoreEvent::MessageSearchCompleted(page) => {
+                                page.request_id == request.request_id
+                                    && page.chat_id == request.chat_id
+                                    && page.query.trim() == request.query.trim()
+                                    && page.requested_before_message_id == request.before_message_id
+                            }
+                            CoreEvent::MessageSearchFailed {
+                                request_id,
+                                chat_id,
+                                query,
+                                before_message_id,
+                                ..
+                            } => {
+                                *request_id == request.request_id
+                                    && *chat_id == request.chat_id
+                                    && query.trim() == request.query.trim()
+                                    && *before_message_id == request.before_message_id
+                            }
+                            _ => false,
+                        });
+
+                        if !completed {
+                            let error = events
+                                .iter()
+                                .find_map(|event| match event {
+                                    CoreEvent::Error(error) => Some(error.clone()),
+                                    _ => None,
+                                })
+                                .unwrap_or_else(|| {
+                                    "backend returned no message search completion".into()
+                                });
+                            events.push(CoreEvent::MessageSearchFailed {
+                                request_id: request.request_id,
+                                chat_id: request.chat_id,
+                                query: request.query.clone(),
+                                before_message_id: request.before_message_id,
                                 error,
                             });
                         }
@@ -408,6 +470,7 @@ async fn restore_state<S: StateStore>(
             state.running = true;
             state.connection_machine.reset_disconnected();
             state.connection_state = crate::connection::ConnectionState::Disconnected;
+            state.message_search = Default::default();
             state.last_error = None;
             for history in state.message_history.values_mut() {
                 history.loading = false;

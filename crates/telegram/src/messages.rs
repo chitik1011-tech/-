@@ -100,6 +100,13 @@ pub(crate) struct MessagePage {
     pub has_more: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SearchMessagePage {
+    pub messages: Vec<MessageSummary>,
+    pub next_before_message_id: Option<i64>,
+    pub has_more: bool,
+}
+
 pub(crate) async fn load_messages_page(
     client: &Client,
     peer: PeerRef,
@@ -150,6 +157,64 @@ fn finalize_message_page(mut messages: Vec<MessageSummary>, limit: usize) -> Mes
         messages,
         next_before_message_id,
         has_more,
+    }
+}
+
+pub(crate) async fn search_messages_page(
+    client: &Client,
+    peer: PeerRef,
+    query: &str,
+    before_message_id: Option<i64>,
+    limit: usize,
+) -> tg_mobile_core::Result<SearchMessagePage> {
+    let query = query.trim();
+    if query.is_empty() {
+        return Err(CoreError::InvalidInput(
+            "message search query must not be empty".into(),
+        ));
+    }
+
+    let offset_id = before_message_id
+        .map(|message_id| {
+            i32::try_from(message_id).map_err(|_| {
+                CoreError::InvalidInput("message search cursor exceeds Telegram range".into())
+            })
+        })
+        .transpose()?;
+
+    let fetch_limit = limit.saturating_add(1);
+    let mut iterator = client.search_messages(peer).query(query).limit(fetch_limit);
+    if let Some(offset_id) = offset_id {
+        iterator = iterator.offset_id(offset_id);
+    }
+
+    let mut messages = Vec::with_capacity(fetch_limit.min(101));
+    while let Some(message) = iterator
+        .next()
+        .await
+        .map_err(|error| api_error("search messages", error))?
+    {
+        messages.push(message_to_summary(&message));
+    }
+
+    Ok(finalize_search_page(messages, limit))
+}
+
+fn finalize_search_page(mut messages: Vec<MessageSummary>, limit: usize) -> SearchMessagePage {
+    let has_extra = messages.len() > limit;
+    if has_extra {
+        messages.truncate(limit);
+    }
+
+    let next_before_message_id = has_extra
+        .then(|| messages.last().map(|message| message.id))
+        .flatten()
+        .filter(|message_id| *message_id > 0);
+
+    SearchMessagePage {
+        messages,
+        next_before_message_id,
+        has_more: next_before_message_id.is_some(),
     }
 }
 
@@ -253,7 +318,8 @@ impl MessageDeduplicator {
 #[cfg(test)]
 mod tests {
     use super::{
-        MessageDeduplicator, MessageFields, finalize_message_page, message_summary_from_fields,
+        MessageDeduplicator, MessageFields, finalize_message_page, finalize_search_page,
+        message_summary_from_fields,
     };
 
     #[test]
@@ -308,6 +374,35 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![1, 2]
         );
+        assert_eq!(final_page.next_before_message_id, None);
+        assert!(!final_page.has_more);
+    }
+
+    #[test]
+    fn search_page_uses_extra_hit_as_continuation_signal() {
+        let hit = |id| {
+            message_summary_from_fields(MessageFields {
+                id,
+                chat_id: 7,
+                sender_id: 42,
+                text: "match",
+                timestamp_unix: id,
+                outgoing: false,
+            })
+        };
+
+        let page = finalize_search_page(vec![hit(50), hit(40), hit(30)], 2);
+        assert_eq!(
+            page.messages
+                .iter()
+                .map(|message| message.id)
+                .collect::<Vec<_>>(),
+            vec![50, 40]
+        );
+        assert_eq!(page.next_before_message_id, Some(40));
+        assert!(page.has_more);
+
+        let final_page = finalize_search_page(vec![hit(20), hit(10)], 2);
         assert_eq!(final_page.next_before_message_id, None);
         assert!(!final_page.has_more);
     }

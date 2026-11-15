@@ -7,6 +7,7 @@ use crate::{
     connection_machine::{ConnectionMachine, LinkEvent, LinkPhase, Outcome},
     event::CoreEvent,
     model::{AccountState, ChatSummary, MessageHistoryState, MessageSummary},
+    search::MessageSearchState,
 };
 
 pub const MAX_CACHED_MESSAGES_PER_CHAT: usize = 512;
@@ -24,6 +25,8 @@ pub struct CoreState {
     pub messages: BTreeMap<i64, Vec<MessageSummary>>,
     #[serde(default)]
     pub message_history: BTreeMap<i64, MessageHistoryState>,
+    #[serde(default)]
+    pub message_search: MessageSearchState,
     pub last_error: Option<String>,
 }
 
@@ -36,6 +39,7 @@ impl Default for CoreState {
             connection_machine: ConnectionMachine::default(),
             messages: BTreeMap::new(),
             message_history: BTreeMap::new(),
+            message_search: MessageSearchState::default(),
             last_error: None,
         }
     }
@@ -166,6 +170,22 @@ impl CoreState {
                     }
                 }
                 self.last_error = None;
+            }
+            CoreEvent::MessageSearchStarted(request) => {
+                self.message_search.begin(request);
+            }
+            CoreEvent::MessageSearchCompleted(page) => {
+                self.message_search.complete(page);
+            }
+            CoreEvent::MessageSearchFailed {
+                request_id,
+                chat_id,
+                query,
+                before_message_id,
+                error,
+            } => {
+                self.message_search
+                    .fail(*request_id, *chat_id, query, *before_message_id, error);
             }
             CoreEvent::MessageAdded(message) => {
                 let inserted = self.upsert_message(message.clone());
