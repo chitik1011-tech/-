@@ -15,11 +15,11 @@ pub use backend::{
     backend_update_channel, BackendFuture, BackendUpdateReceiver, BackendUpdateSender,
     TelegramBackend, DEFAULT_BACKEND_UPDATE_CAPACITY,
 };
-pub use command::{CoreCommand, MAX_CHAT_LOAD_LIMIT};
+pub use command::{CoreCommand, MAX_CHAT_LOAD_LIMIT, MAX_MESSAGE_CURSOR_LENGTH, MAX_MESSAGE_PAGE_SIZE};
 pub use error::{CoreError, Result};
 pub use event::CoreEvent;
 pub use mock::MockTelegramBackend;
-pub use model::{AccountState, AuthorizationState, ChatSummary, MessageSummary};
+pub use model::{AccountState, AuthorizationState, ChatSummary, MessageCursor, MessageHistoryState, MessageSummary};
 pub use runtime::{spawn_core, spawn_core_with_store, CoreHandle, PERSISTENCE_FLUSH_INTERVAL_MS};
 pub use state::{CoreState, MAX_CACHED_MESSAGES_PER_CHAT};
 pub use storage::{JsonFileStateStore, MemoryStateStore, NoopStateStore, StateStore};
