@@ -55,5 +55,14 @@ class MessageTimestampFormatterTest {
                 locale = locale,
             ),
         )
+        assertEquals(
+            "",
+            MessageTimestampFormatter.format(
+                timestampUnixSeconds = 0,
+                now = Instant.EPOCH,
+                zoneId = ZoneId.of("UTC"),
+                locale = locale,
+            ),
+        )
     }
 }

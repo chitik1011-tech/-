@@ -204,6 +204,7 @@ fun ChatListScreen(
         }
     }
 }
+
 @Composable
 private fun ChatListRow(
     chat: ChatListEntry,

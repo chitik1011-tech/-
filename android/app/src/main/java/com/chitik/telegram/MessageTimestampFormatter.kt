@@ -17,15 +17,19 @@ object MessageTimestampFormatter {
         now: Instant = Instant.now(),
         zoneId: ZoneId = ZoneId.systemDefault(),
         locale: Locale = Locale.getDefault(),
-    ): String = runCatching {
-        val timestamp = Instant.ofEpochSecond(timestampUnixSeconds).atZone(zoneId)
-        val today = now.atZone(zoneId).toLocalDate()
-        val messageDate = timestamp.toLocalDate()
+    ): String {
+        if (timestampUnixSeconds <= 0L) return ""
 
-        when {
-            messageDate == today -> DateTimeFormatter.ofPattern("HH:mm", locale).format(timestamp)
-            messageDate.year == today.year -> DateTimeFormatter.ofPattern("d MMM", locale).format(timestamp)
-            else -> DateTimeFormatter.ofPattern("d MMM yyyy", locale).format(timestamp)
-        }
-    }.getOrDefault("")
+        return runCatching {
+            val timestamp = Instant.ofEpochSecond(timestampUnixSeconds).atZone(zoneId)
+            val today = now.atZone(zoneId).toLocalDate()
+            val messageDate = timestamp.toLocalDate()
+
+            when {
+                messageDate == today -> DateTimeFormatter.ofPattern("HH:mm", locale).format(timestamp)
+                messageDate.year == today.year -> DateTimeFormatter.ofPattern("d MMM", locale).format(timestamp)
+                else -> DateTimeFormatter.ofPattern("d MMM yyyy", locale).format(timestamp)
+            }
+        }.getOrDefault("")
+    }
 }
