@@ -6,8 +6,8 @@ use grammers_client::{
     session::{storages::SqliteSession, updates::UpdatesLike},
 };
 use tg_mobile_core::{
-    AuthorizationState, BackendFuture, BackendUpdateReceiver, BackendUpdateSender, CoreCommand,
-    CoreError, CoreEvent, TelegramBackend, backend_update_channel,
+    AuthorizationState, BackendFuture, BackendUpdateReceiver, BackendUpdateSender, ConnectionToken,
+    CoreCommand, CoreError, CoreEvent, TelegramBackend, backend_update_channel,
 };
 use tokio::{
     sync::{broadcast, mpsc, watch},
@@ -41,6 +41,7 @@ pub struct GrammersBackend {
     update_tx: broadcast::Sender<TelegramUpdate>,
     core_update_tx: BackendUpdateSender,
     core_update_rx: Option<BackendUpdateReceiver>,
+    connection_token_tx: watch::Sender<Option<ConnectionToken>>,
     auth: AuthFlow,
     peers: PeerRegistry,
     dedup: Arc<MessageDeduplicator>,
@@ -66,6 +67,7 @@ impl GrammersBackend {
         let pool_task = tokio::spawn(runner.run());
         let (update_tx, _) = broadcast::channel(config.update_channel_capacity);
         let (core_update_tx, core_update_rx) = backend_update_channel();
+        let (connection_token_tx, _) = watch::channel(None);
 
         Ok(Self {
             config,
@@ -78,6 +80,7 @@ impl GrammersBackend {
             update_tx,
             core_update_tx,
             core_update_rx: Some(core_update_rx),
+            connection_token_tx,
             auth: AuthFlow::default(),
             peers: new_peer_registry(),
             dedup: Arc::new(MessageDeduplicator::new(MESSAGE_DEDUP_CAPACITY)),
@@ -128,6 +131,7 @@ impl GrammersBackend {
                 .is_none()
                 .then(|| self.core_update_tx.clone()),
             shutdown: shutdown_rx,
+            connection_token: self.connection_token_tx.subscribe(),
         };
         self.update_shutdown = Some(shutdown_tx);
         self.update_task = Some(tokio::spawn(run_update_worker(input)));
@@ -288,6 +292,10 @@ impl TelegramBackend for GrammersBackend {
 
     fn take_updates(&mut self) -> Option<BackendUpdateReceiver> {
         self.core_update_rx.take()
+    }
+
+    fn set_connection_token(&mut self, token: ConnectionToken) {
+        self.connection_token_tx.send_replace(Some(token));
     }
 }
 

@@ -8,6 +8,7 @@ use tokio::{
 use crate::{
     backend::{BackendUpdateReceiver, TelegramBackend},
     command::CoreCommand,
+    connection_machine::{LinkEvent, LinkPhase},
     error::{CoreError, Result},
     event::CoreEvent,
     state::CoreState,
@@ -85,6 +86,7 @@ where
         let mut persistence_tick = interval_at(Instant::now() + flush_interval, flush_interval);
         persistence_tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
         let mut persistence_dirty = false;
+        let mut reconnect_sync_due = false;
 
         loop {
             let input = next_runtime_input(
@@ -97,7 +99,25 @@ where
 
             match input {
                 RuntimeInput::Command(Some(command)) => {
-                    let shutdown_requested = matches!(command, CoreCommand::Shutdown);
+                    let shutdown_requested = matches!(&command, CoreCommand::Shutdown);
+                    let starting_session = matches!(&command, CoreCommand::Start);
+                    if starting_session {
+                        reduced_state.connection_machine.start_session();
+                        reduced_state.connection_state =
+                            reduced_state.connection_machine.transport_state();
+                        let _ = state_tx.send(reduced_state.clone());
+                        persistence_dirty = true;
+                        backend.set_connection_token(reduced_state.connection_machine.token());
+                    }
+                    if shutdown_requested {
+                        let token = reduced_state.connection_machine.token();
+                        reduced_state.reduce(&CoreEvent::ConnectionLifecycle {
+                            token,
+                            event: LinkEvent::Shutdown,
+                        });
+                        let _ = state_tx.send(reduced_state.clone());
+                        backend.set_connection_token(reduced_state.connection_machine.token());
+                    }
                     let page_request = match &command {
                         CoreCommand::LoadMessagesPage {
                             chat_id,
@@ -106,6 +126,13 @@ where
                         } => Some((*chat_id, *before_message_id)),
                         _ => None,
                     };
+                    let initial_sync_token = matches!(&command, CoreCommand::LoadChats { .. })
+                        .then_some(reduced_state.connection_machine.token())
+                        .filter(|_| {
+                            reduced_state.connection_machine.phase() == LinkPhase::Synchronizing
+                                && reduced_state.account.authorization
+                                    == crate::model::AuthorizationState::Ready
+                        });
 
                     if let Some((chat_id, before_message_id)) = page_request {
                         apply_event(
@@ -123,6 +150,16 @@ where
                     let mut events = match backend.handle(command).await {
                         Ok(events) => events,
                         Err(error) => {
+                            if starting_session {
+                                let token = reduced_state.connection_machine.token();
+                                reduced_state.reduce(&CoreEvent::ConnectionLifecycle {
+                                    token,
+                                    event: LinkEvent::ConnectFailed { retryable: false },
+                                });
+                                let _ = state_tx.send(reduced_state.clone());
+                                backend
+                                    .set_connection_token(reduced_state.connection_machine.token());
+                            }
                             if let Some((chat_id, before_message_id)) = page_request {
                                 vec![CoreEvent::MessagesPageLoadFailed {
                                     chat_id,
@@ -169,12 +206,29 @@ where
                         }
                     }
 
+                    if let Some(token) = initial_sync_token {
+                        let completed = events
+                            .iter()
+                            .any(|event| matches!(event, CoreEvent::ChatsLoaded(_)));
+                        if !completed {
+                            events.push(CoreEvent::ConnectionLifecycle {
+                                token,
+                                event: LinkEvent::ConnectFailed { retryable: false },
+                            });
+                        }
+                    }
+
                     if !events.is_empty() {
                         persistence_dirty = true;
                     }
 
+                    let previous_token = reduced_state.connection_machine.token();
                     let stopped =
                         apply_events(events, &mut reduced_state, &state_tx, &event_tx_task);
+                    let current_token = reduced_state.connection_machine.token();
+                    if current_token != previous_token {
+                        backend.set_connection_token(current_token);
+                    }
 
                     if shutdown_requested || stopped {
                         if !stopped {
@@ -205,8 +259,82 @@ where
                     break;
                 }
                 RuntimeInput::Update(Some(Ok(event))) => {
+                    let Some(event) = unwrap_current_session_update(&reduced_state, event) else {
+                        continue;
+                    };
                     let stopped = event.is_terminal();
+                    let previous_token = reduced_state.connection_machine.token();
+                    let previous_phase = reduced_state.connection_machine.phase();
                     apply_event(event, &mut reduced_state, &state_tx, &event_tx_task);
+                    let current_phase = reduced_state.connection_machine.phase();
+                    if previous_phase != LinkPhase::Reconnecting
+                        && current_phase == LinkPhase::Reconnecting
+                    {
+                        reconnect_sync_due = true;
+                    }
+                    let current_token = reduced_state.connection_machine.token();
+                    if current_token != previous_token {
+                        backend.set_connection_token(current_token);
+                    }
+                    if reconnect_sync_due
+                        && previous_phase != LinkPhase::Synchronizing
+                        && current_phase == LinkPhase::Synchronizing
+                        && reduced_state.account.authorization
+                            == crate::model::AuthorizationState::Ready
+                    {
+                        let sync_token = reduced_state.connection_machine.token();
+                        let sync_result =
+                            backend.handle(CoreCommand::LoadChats { limit: 100 }).await;
+                        let mut dialogs_refreshed = false;
+                        match sync_result {
+                            Ok(sync_events) => {
+                                for sync_event in sync_events {
+                                    dialogs_refreshed |=
+                                        matches!(sync_event, CoreEvent::ChatsLoaded(_));
+                                    let tagged = CoreEvent::SessionUpdate {
+                                        token: sync_token,
+                                        event: Box::new(sync_event),
+                                    };
+                                    if let Some(sync_event) =
+                                        unwrap_current_session_update(&reduced_state, tagged)
+                                    {
+                                        apply_event(
+                                            sync_event,
+                                            &mut reduced_state,
+                                            &state_tx,
+                                            &event_tx_task,
+                                        );
+                                    }
+                                }
+                            }
+                            Err(error) => apply_event(
+                                CoreEvent::Error(error.to_string()),
+                                &mut reduced_state,
+                                &state_tx,
+                                &event_tx_task,
+                            ),
+                        }
+                        if !dialogs_refreshed
+                            && reduced_state.connection_machine.token() == sync_token
+                            && reduced_state.connection_machine.phase() == LinkPhase::Synchronizing
+                        {
+                            let previous_token = reduced_state.connection_machine.token();
+                            apply_event(
+                                CoreEvent::ConnectionLifecycle {
+                                    token: sync_token,
+                                    event: LinkEvent::ConnectFailed { retryable: false },
+                                },
+                                &mut reduced_state,
+                                &state_tx,
+                                &event_tx_task,
+                            );
+                            let current_token = reduced_state.connection_machine.token();
+                            if current_token != previous_token {
+                                backend.set_connection_token(current_token);
+                            }
+                        }
+                        reconnect_sync_due = false;
+                    }
                     persistence_dirty = true;
 
                     if stopped {
@@ -278,6 +406,7 @@ async fn restore_state<S: StateStore>(
     match store.load().await {
         Ok(Some(mut state)) => {
             state.running = true;
+            state.connection_machine.reset_disconnected();
             state.connection_state = crate::connection::ConnectionState::Disconnected;
             state.last_error = None;
             for history in state.message_history.values_mut() {
@@ -321,9 +450,22 @@ fn apply_event(
     state_tx: &watch::Sender<CoreState>,
     event_tx: &broadcast::Sender<CoreEvent>,
 ) {
+    if matches!(event, CoreEvent::ConnectionStateChanged(_)) {
+        return;
+    }
     state.reduce(&event);
     let _ = state_tx.send(state.clone());
     let _ = event_tx.send(event);
+}
+
+fn unwrap_current_session_update(state: &CoreState, event: CoreEvent) -> Option<CoreEvent> {
+    match event {
+        CoreEvent::SessionUpdate { token, event } if token == state.connection_machine.token() => {
+            Some(*event)
+        }
+        CoreEvent::SessionUpdate { .. } => None,
+        event => Some(event),
+    }
 }
 
 async fn persist_state<S: StateStore>(

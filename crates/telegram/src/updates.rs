@@ -5,7 +5,9 @@ use grammers_client::{
     session::updates::UpdatesLike, update::Update,
 };
 pub use tg_mobile_core::ConnectionState;
-use tg_mobile_core::{BackendUpdateSender, CoreError, CoreEvent, MessageSummary};
+use tg_mobile_core::{
+    BackendUpdateSender, ConnectionToken, CoreError, CoreEvent, LinkEvent, MessageSummary,
+};
 use tokio::sync::{broadcast, mpsc, watch};
 use tokio::time::sleep;
 
@@ -41,6 +43,10 @@ pub enum TelegramUpdate {
         active: bool,
     },
     ConnectionStateChanged(ConnectionState),
+    ConnectionLifecycle {
+        token: ConnectionToken,
+        event: LinkEvent,
+    },
     Error(String),
     Unhandled,
 }
@@ -49,7 +55,11 @@ impl TelegramUpdate {
     pub(crate) fn to_core_event(&self) -> Option<CoreEvent> {
         match self {
             Self::MessageAdded(message) => Some(CoreEvent::MessageAdded(message.clone())),
-            Self::ConnectionStateChanged(state) => Some(CoreEvent::ConnectionStateChanged(*state)),
+            Self::ConnectionStateChanged(_) => None,
+            Self::ConnectionLifecycle { token, event } => Some(CoreEvent::ConnectionLifecycle {
+                token: *token,
+                event: *event,
+            }),
             Self::Error(message) => Some(CoreEvent::Error(message.clone())),
             _ => None,
         }
@@ -64,6 +74,7 @@ pub(crate) struct UpdateWorkerInput {
     pub dedup: Arc<MessageDeduplicator>,
     pub events: broadcast::Sender<TelegramUpdate>,
     pub core_updates: Option<BackendUpdateSender>,
+    pub connection_token: watch::Receiver<Option<ConnectionToken>>,
     pub shutdown: watch::Receiver<bool>,
 }
 
@@ -198,10 +209,14 @@ where
 }
 
 pub(crate) async fn run_update_worker(mut input: UpdateWorkerInput) {
+    let handshake_token = *input.connection_token.borrow();
+    let worker_generation = handshake_token.map(|token| token.generation());
+    let mut active_token = handshake_token;
     emit_update(
         &input.events,
         &input.core_updates,
         TelegramUpdate::ConnectionStateChanged(ConnectionState::Connecting),
+        None,
     )
     .await;
 
@@ -222,40 +237,141 @@ pub(crate) async fn run_update_worker(mut input: UpdateWorkerInput) {
                 &input.events,
                 &input.core_updates,
                 format!("create Telegram update stream: {error}"),
+                handshake_token,
             )
             .await;
             emit_update(
                 &input.events,
                 &input.core_updates,
                 TelegramUpdate::ConnectionStateChanged(ConnectionState::Disconnected),
+                None,
             )
             .await;
+            if let Some(token) = handshake_token {
+                emit_lifecycle(
+                    &input.events,
+                    &input.core_updates,
+                    token,
+                    LinkEvent::ConnectFailed { retryable: false },
+                )
+                .await;
+            }
             return;
         }
     };
 
-    emit_update(
-        &input.events,
-        &input.core_updates,
-        TelegramUpdate::ConnectionStateChanged(ConnectionState::Ready),
-    )
-    .await;
+    if worker_generation.is_some_and(|generation| {
+        input
+            .connection_token
+            .borrow()
+            .map(|token| token.generation())
+            != Some(generation)
+    }) {
+        return;
+    }
+
+    if let Some(token) = active_token {
+        active_token = emit_lifecycle(
+            &input.events,
+            &input.core_updates,
+            token,
+            LinkEvent::TransportConnected,
+        )
+        .await;
+        if let Some(token) = active_token {
+            active_token = emit_lifecycle(
+                &input.events,
+                &input.core_updates,
+                token,
+                LinkEvent::SyncStarted,
+            )
+            .await;
+        }
+    }
 
     let mut backoff = RetryBackoff::default();
     loop {
+        let observed_token = match (active_token, worker_generation) {
+            (Some(expected), Some(generation)) => {
+                wait_for_current_attempt(&mut input.connection_token, expected, generation).await
+            }
+            _ => *input.connection_token.borrow(),
+        };
+        if worker_generation.is_some_and(|generation| {
+            observed_token.map(|token| token.generation()) != Some(generation)
+        }) {
+            break;
+        }
+        if observed_token.is_some() {
+            active_token = observed_token;
+        }
+        let operation_token = active_token;
+        let transient_seen = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let transient_flag = Arc::clone(&transient_seen);
         let events = &input.events;
         let core_updates = &input.core_updates;
-        let outcome = next_with_recovery(
-            &mut stream,
-            &mut input.shutdown,
-            &mut backoff,
-            |message| async move { emit_error(events, core_updates, message).await },
-        )
-        .await;
+        let connection_token = &input.connection_token;
+        let outcome =
+            next_with_recovery(&mut stream, &mut input.shutdown, &mut backoff, |message| {
+                let transient_flag = Arc::clone(&transient_flag);
+                async move {
+                    emit_error(events, core_updates, message, operation_token).await;
+                    if let Some(token) = operation_token {
+                        if *connection_token.borrow() == Some(token) {
+                            emit_lifecycle(events, core_updates, token, LinkEvent::TransportLost)
+                                .await;
+                            transient_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+                        }
+                    }
+                }
+            })
+            .await;
+
+        let observed_token = *input.connection_token.borrow();
+        if worker_generation.is_some_and(|generation| {
+            observed_token.map(|token| token.generation()) != Some(generation)
+        }) {
+            break;
+        }
+        if transient_seen.load(std::sync::atomic::Ordering::SeqCst) {
+            active_token = operation_token.map(ConnectionToken::next_epoch);
+        } else if observed_token.is_some() {
+            active_token = observed_token;
+        }
+
         match outcome {
             NextOutcome::Item(update) => {
+                if active_token != operation_token {
+                    if let Some(token) = active_token {
+                        active_token = emit_lifecycle(
+                            &input.events,
+                            &input.core_updates,
+                            token,
+                            LinkEvent::Retry,
+                        )
+                        .await;
+                    }
+                    if let Some(token) = active_token {
+                        active_token = emit_lifecycle(
+                            &input.events,
+                            &input.core_updates,
+                            token,
+                            LinkEvent::TransportConnected,
+                        )
+                        .await;
+                    }
+                    if let Some(token) = active_token {
+                        active_token = emit_lifecycle(
+                            &input.events,
+                            &input.core_updates,
+                            token,
+                            LinkEvent::SyncStarted,
+                        )
+                        .await;
+                    }
+                }
                 if let Some(event) = map_update(update, &input.peers, &input.dedup).await {
-                    emit_update(&input.events, &input.core_updates, event).await;
+                    emit_update(&input.events, &input.core_updates, event, operation_token).await;
                 }
             }
             NextOutcome::Shutdown => break,
@@ -264,8 +380,29 @@ pub(crate) async fn run_update_worker(mut input: UpdateWorkerInput) {
                     &input.events,
                     &input.core_updates,
                     format!("Telegram update stream: {error}"),
+                    operation_token,
                 )
                 .await;
+                if active_token == operation_token {
+                    if let Some(token) = active_token {
+                        active_token = emit_lifecycle(
+                            &input.events,
+                            &input.core_updates,
+                            token,
+                            LinkEvent::TransportLost,
+                        )
+                        .await;
+                    }
+                }
+                if let Some(token) = active_token {
+                    emit_lifecycle(
+                        &input.events,
+                        &input.core_updates,
+                        token,
+                        LinkEvent::ConnectFailed { retryable: false },
+                    )
+                    .await;
+                }
                 break;
             }
         }
@@ -276,6 +413,7 @@ pub(crate) async fn run_update_worker(mut input: UpdateWorkerInput) {
             &input.events,
             &input.core_updates,
             format!("persist Telegram update state: {error}"),
+            active_token,
         )
         .await;
     }
@@ -283,6 +421,7 @@ pub(crate) async fn run_update_worker(mut input: UpdateWorkerInput) {
         &input.events,
         &input.core_updates,
         TelegramUpdate::ConnectionStateChanged(ConnectionState::Disconnected),
+        None,
     )
     .await;
 }
@@ -291,11 +430,81 @@ async fn emit_update(
     native: &broadcast::Sender<TelegramUpdate>,
     core: &Option<BackendUpdateSender>,
     update: TelegramUpdate,
+    token: Option<ConnectionToken>,
 ) {
     let core_event = update.to_core_event();
     let _ = native.send(update);
-    if let (Some(core), Some(event)) = (core.as_ref(), core_event) {
-        let _ = core.send(Ok(event)).await;
+    if let (Some(core), Some(event), Some(token)) = (core.as_ref(), core_event, token) {
+        let _ = core
+            .send(Ok(CoreEvent::SessionUpdate {
+                token,
+                event: Box::new(event),
+            }))
+            .await;
+    }
+}
+
+async fn emit_lifecycle(
+    native: &broadcast::Sender<TelegramUpdate>,
+    core: &Option<BackendUpdateSender>,
+    token: ConnectionToken,
+    event: LinkEvent,
+) -> Option<ConnectionToken> {
+    let state = match event {
+        LinkEvent::TransportConnected | LinkEvent::SyncStarted | LinkEvent::Retry => {
+            Some(ConnectionState::Connecting)
+        }
+        LinkEvent::SyncCompleted => Some(ConnectionState::Ready),
+        LinkEvent::TransportLost | LinkEvent::ConnectFailed { .. } => {
+            Some(ConnectionState::Disconnected)
+        }
+        LinkEvent::Logout | LinkEvent::Shutdown => Some(ConnectionState::Disconnected),
+    };
+    if let Some(state) = state {
+        let _ = native.send(TelegramUpdate::ConnectionStateChanged(state));
+    }
+
+    let update = TelegramUpdate::ConnectionLifecycle { token, event };
+    let _ = native.send(update.clone());
+    if let (Some(core), Some(core_event)) = (core.as_ref(), update.to_core_event()) {
+        let _ = core
+            .send(Ok(CoreEvent::SessionUpdate {
+                token,
+                event: Box::new(core_event),
+            }))
+            .await;
+    }
+    Some(
+        if matches!(
+            event,
+            LinkEvent::TransportLost
+                | LinkEvent::ConnectFailed { .. }
+                | LinkEvent::Logout
+                | LinkEvent::Shutdown
+        ) {
+            token.next_epoch()
+        } else {
+            token
+        },
+    )
+}
+
+async fn wait_for_current_attempt(
+    token_rx: &mut watch::Receiver<Option<ConnectionToken>>,
+    expected: ConnectionToken,
+    generation: tg_mobile_core::SessionGeneration,
+) -> Option<ConnectionToken> {
+    loop {
+        let current = *token_rx.borrow();
+        match current {
+            Some(observed) if observed.generation() != generation => return None,
+            Some(observed) if observed.epoch() >= expected.epoch() => return Some(observed),
+            _ => {
+                if token_rx.changed().await.is_err() {
+                    return None;
+                }
+            }
+        }
     }
 }
 
@@ -303,10 +512,20 @@ async fn emit_error(
     native: &broadcast::Sender<TelegramUpdate>,
     core: &Option<BackendUpdateSender>,
     message: String,
+    token: Option<ConnectionToken>,
 ) {
     let _ = native.send(TelegramUpdate::Error(message.clone()));
     if let Some(core) = core.as_ref() {
-        let _ = core.send(Err(CoreError::Backend(message))).await;
+        let _ = match token {
+            Some(token) => {
+                core.send(Ok(CoreEvent::SessionUpdate {
+                    token,
+                    event: Box::new(CoreEvent::Error(message)),
+                }))
+                .await
+            }
+            None => core.send(Err(CoreError::Backend(message))).await,
+        };
     }
 }
 
@@ -352,9 +571,11 @@ mod tests {
     use super::{ConnectionState, TelegramUpdate};
     use super::{
         NextOutcome, RetryBackoff, UPDATE_RETRY_INITIAL_DELAY, UPDATE_RETRY_MAX_DELAY,
-        UpdateSource, is_transient_update_error, next_with_recovery,
+        UpdateSource, is_transient_update_error, next_with_recovery, wait_for_current_attempt,
     };
-    use tg_mobile_core::{CoreEvent, MessageSummary};
+    use tg_mobile_core::{
+        ConnectionMachine, CoreEvent, LinkEvent, MessageSummary, backend_update_channel,
+    };
 
     struct FakeUpdateSource {
         results: VecDeque<Result<u8, InvocationError>>,
@@ -510,8 +731,161 @@ mod tests {
         ));
         assert_eq!(
             TelegramUpdate::ConnectionStateChanged(ConnectionState::Ready).to_core_event(),
-            Some(CoreEvent::ConnectionStateChanged(ConnectionState::Ready))
+            None
+        );
+        let mut machine = ConnectionMachine::default();
+        machine.start_session();
+        let token = machine.token();
+        assert_eq!(
+            TelegramUpdate::ConnectionLifecycle {
+                token,
+                event: LinkEvent::SyncCompleted,
+            }
+            .to_core_event(),
+            Some(CoreEvent::ConnectionLifecycle {
+                token,
+                event: LinkEvent::SyncCompleted,
+            })
         );
         assert!(TelegramUpdate::Unhandled.to_core_event().is_none());
+    }
+
+    #[tokio::test]
+    async fn session_update_keeps_the_token_captured_for_its_operation() {
+        let mut machine = ConnectionMachine::default();
+        machine.start_session();
+        let operation_token = machine.token();
+        let message = MessageSummary {
+            id: 1,
+            chat_id: 2,
+            sender_id: 3,
+            text: "message".into(),
+            timestamp_unix: 4,
+            outgoing: false,
+            attachments: Vec::new(),
+            forwarded_from: None,
+            edited: false,
+            edit_timestamp_unix: None,
+            service_message: false,
+            media_caption: None,
+            reply_to: None,
+        };
+        let (core_tx, mut core_rx) = backend_update_channel();
+        let (native_tx, _) = tokio::sync::broadcast::channel(1);
+
+        super::emit_update(
+            &native_tx,
+            &Some(core_tx),
+            TelegramUpdate::MessageAdded(message.clone()),
+            Some(operation_token),
+        )
+        .await;
+
+        assert_eq!(
+            core_rx.recv().await.unwrap().unwrap(),
+            CoreEvent::SessionUpdate {
+                token: operation_token,
+                event: Box::new(CoreEvent::MessageAdded(message)),
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn retry_uses_transport_lost_epoch_for_following_lifecycle_events() {
+        let mut machine = ConnectionMachine::default();
+        machine.start_session();
+        let initial = machine.token();
+        for event in [
+            LinkEvent::TransportConnected,
+            LinkEvent::SyncStarted,
+            LinkEvent::SyncCompleted,
+        ] {
+            machine.apply(initial, event).unwrap();
+        }
+
+        let (core_tx, mut core_rx) = backend_update_channel();
+        let (native_tx, _) = tokio::sync::broadcast::channel(8);
+        let after_loss = super::emit_lifecycle(
+            &native_tx,
+            &Some(core_tx.clone()),
+            initial,
+            LinkEvent::TransportLost,
+        )
+        .await
+        .unwrap();
+        let lost = core_rx.recv().await.unwrap().unwrap();
+        assert!(matches!(
+            lost,
+            CoreEvent::SessionUpdate {
+                token,
+                event
+            } if token == initial && matches!(*event, CoreEvent::ConnectionLifecycle {
+                token: event_token,
+                event: LinkEvent::TransportLost
+            } if event_token == initial)
+        ));
+        machine.apply(initial, LinkEvent::TransportLost).unwrap();
+        assert_eq!(after_loss, machine.token());
+
+        let after_retry = super::emit_lifecycle(
+            &native_tx,
+            &Some(core_tx.clone()),
+            after_loss,
+            LinkEvent::Retry,
+        )
+        .await
+        .unwrap();
+        let retry = core_rx.recv().await.unwrap().unwrap();
+        assert!(matches!(
+            retry,
+            CoreEvent::SessionUpdate {
+                token,
+                event
+            } if token == after_loss && matches!(*event, CoreEvent::ConnectionLifecycle {
+                token: event_token,
+                event: LinkEvent::Retry
+            } if event_token == after_loss)
+        ));
+        machine.apply(after_loss, LinkEvent::Retry).unwrap();
+        assert_eq!(after_retry, machine.token());
+
+        for event in [LinkEvent::TransportConnected, LinkEvent::SyncStarted] {
+            let returned =
+                super::emit_lifecycle(&native_tx, &Some(core_tx.clone()), after_retry, event)
+                    .await
+                    .unwrap();
+            let update = core_rx.recv().await.unwrap().unwrap();
+            assert!(matches!(
+                update,
+                CoreEvent::SessionUpdate { token, event: boxed }
+                    if token == after_retry && matches!(
+                        *boxed,
+                        CoreEvent::ConnectionLifecycle { token: event_token, event: lifecycle }
+                            if event_token == after_retry && lifecycle == event
+                    )
+            ));
+            machine.apply(after_retry, event).unwrap();
+            assert_eq!(returned, after_retry);
+            assert_eq!(machine.token(), after_retry);
+        }
+        assert_eq!(machine.phase(), tg_mobile_core::LinkPhase::Synchronizing);
+    }
+
+    #[tokio::test]
+    async fn next_attempt_waits_for_the_actor_owned_token() {
+        let mut machine = ConnectionMachine::default();
+        machine.start_session();
+        let old = machine.token();
+        let expected = old.next_epoch();
+        let (sender, mut receiver) = watch::channel(Some(old));
+        let generation = old.generation();
+
+        let task = tokio::spawn(async move {
+            wait_for_current_attempt(&mut receiver, expected, generation).await
+        });
+        tokio::task::yield_now().await;
+        sender.send_replace(Some(expected));
+
+        assert_eq!(task.await.unwrap(), Some(expected));
     }
 }

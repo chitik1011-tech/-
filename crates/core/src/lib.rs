@@ -3,6 +3,7 @@
 pub mod backend;
 pub mod command;
 pub mod connection;
+pub mod connection_machine;
 pub mod error;
 pub mod event;
 pub mod mock;
@@ -20,6 +21,10 @@ pub use backend::{
 };
 pub use command::{CoreCommand, MAX_CHAT_LOAD_LIMIT, MAX_MESSAGE_LOAD_LIMIT};
 pub use connection::ConnectionState;
+pub use connection_machine::{
+    ConnectionEpoch, ConnectionMachine, ConnectionToken, LinkError, LinkEvent, LinkPhase,
+    Outcome as ConnectionOutcome, SessionGeneration,
+};
 pub use error::{CoreError, Result};
 pub use event::CoreEvent;
 pub use mock::MockTelegramBackend;
