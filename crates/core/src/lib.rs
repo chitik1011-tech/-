@@ -22,7 +22,7 @@ pub use event::CoreEvent;
 pub use mock::MockTelegramBackend;
 pub use model::{
     AccountState, AttachmentDownloadState, AttachmentKind, AttachmentThumbnail, AuthorizationState,
-    ChatSummary, MediaAttachment, MessageSummary,
+    ChatSummary, ForwardedFrom, MediaAttachment, MessageSummary, ReplyMetadata,
 };
 pub use runtime::{spawn_core, spawn_core_with_store, CoreHandle, PERSISTENCE_FLUSH_INTERVAL_MS};
 pub use state::{CoreState, MAX_CACHED_MESSAGES_PER_CHAT};
