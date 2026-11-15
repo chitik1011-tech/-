@@ -1,14 +1,19 @@
 use tg_mobile_core::{
     command::CoreCommand,
     event::CoreEvent,
-    forwarding::{normalize_forward_events, ForwardMessagesRequest, ForwardMessagesResult, ForwardOutcome},
+    forwarding::{
+        normalize_forward_events, ForwardMessagesRequest, ForwardMessagesResult, ForwardOutcome,
+    },
     model::MessageRef,
     CoreState, MockTelegramBackend,
 };
 use tg_mobile_core::{spawn_core, TelegramBackend};
 
 fn source(chat_id: i64, message_id: i64) -> MessageRef {
-    MessageRef { chat_id, message_id }
+    MessageRef {
+        chat_id,
+        message_id,
+    }
 }
 
 fn request() -> ForwardMessagesRequest {
@@ -60,17 +65,43 @@ fn runtime_normalization_orders_deduplicates_and_completes_partial_failures() {
         request_id: req.request_id.clone(),
         destination_chat_id: req.destination_chat_id,
         outcomes: vec![
-            ForwardOutcome::Forwarded { source: source(20, 2), destination_message_id: 202 },
-            ForwardOutcome::Forwarded { source: source(20, 2), destination_message_id: 999 },
-            ForwardOutcome::Failed { source: source(10, 1), error: "restricted".into() },
-            ForwardOutcome::Forwarded { source: source(999, 9), destination_message_id: 909 },
+            ForwardOutcome::Forwarded {
+                source: source(20, 2),
+                destination_message_id: 202,
+            },
+            ForwardOutcome::Forwarded {
+                source: source(20, 2),
+                destination_message_id: 999,
+            },
+            ForwardOutcome::Failed {
+                source: source(10, 1),
+                error: "restricted".into(),
+            },
+            ForwardOutcome::Forwarded {
+                source: source(999, 9),
+                destination_message_id: 909,
+            },
         ],
     });
     let normalized = normalize_forward_events(&req, vec![duplicate]);
-    let CoreEvent::MessagesForwarded(result) = &normalized[0] else { panic!("expected forwarding result") };
+    let CoreEvent::MessagesForwarded(result) = &normalized[0] else {
+        panic!("expected forwarding result")
+    };
     assert_eq!(result.request_id, "request-1");
-    assert_eq!(result.outcomes[0], ForwardOutcome::Failed { source: source(10, 1), error: "restricted".into() });
-    assert_eq!(result.outcomes[1], ForwardOutcome::Forwarded { source: source(20, 2), destination_message_id: 202 });
+    assert_eq!(
+        result.outcomes[0],
+        ForwardOutcome::Failed {
+            source: source(10, 1),
+            error: "restricted".into()
+        }
+    );
+    assert_eq!(
+        result.outcomes[1],
+        ForwardOutcome::Forwarded {
+            source: source(20, 2),
+            destination_message_id: 202
+        }
+    );
 }
 
 #[test]
@@ -79,12 +110,21 @@ fn invalid_backend_success_becomes_failure() {
     let event = CoreEvent::MessagesForwarded(ForwardMessagesResult {
         request_id: req.request_id.clone(),
         destination_chat_id: req.destination_chat_id,
-        outcomes: vec![ForwardOutcome::Forwarded { source: source(10, 1), destination_message_id: 0 }],
+        outcomes: vec![ForwardOutcome::Forwarded {
+            source: source(10, 1),
+            destination_message_id: 0,
+        }],
     });
     let normalized = normalize_forward_events(&req, vec![event]);
-    let CoreEvent::MessagesForwarded(result) = &normalized[0] else { panic!("expected forwarding result") };
-    assert!(matches!(&result.outcomes[0], ForwardOutcome::Failed { source: r, .. } if *r == source(10, 1)));
-    assert!(matches!(&result.outcomes[1], ForwardOutcome::Failed { source: r, .. } if *r == source(20, 2)));
+    let CoreEvent::MessagesForwarded(result) = &normalized[0] else {
+        panic!("expected forwarding result")
+    };
+    assert!(
+        matches!(&result.outcomes[0], ForwardOutcome::Failed { source: r, .. } if *r == source(10, 1))
+    );
+    assert!(
+        matches!(&result.outcomes[1], ForwardOutcome::Failed { source: r, .. } if *r == source(20, 2))
+    );
 }
 
 #[test]
@@ -93,7 +133,10 @@ fn reducer_deduplicates_correlated_results_and_older_snapshots_load() {
     let result = ForwardMessagesResult {
         request_id: req.request_id.clone(),
         destination_chat_id: req.destination_chat_id,
-        outcomes: vec![ForwardOutcome::Failed { source: source(10, 1), error: "restricted".into() }],
+        outcomes: vec![ForwardOutcome::Failed {
+            source: source(10, 1),
+            error: "restricted".into(),
+        }],
     };
     let event = CoreEvent::MessagesForwarded(result.clone());
     let mut state = CoreState::default();
@@ -101,7 +144,10 @@ fn reducer_deduplicates_correlated_results_and_older_snapshots_load() {
     state.reduce(&CoreEvent::MessagesForwarded(ForwardMessagesResult {
         request_id: req.request_id.clone(),
         destination_chat_id: 30,
-        outcomes: vec![ForwardOutcome::Forwarded { source: source(10, 1), destination_message_id: 111 }],
+        outcomes: vec![ForwardOutcome::Forwarded {
+            source: source(10, 1),
+            destination_message_id: 111,
+        }],
     }));
     assert_eq!(state.forwarding.get("request-1"), Some(&result));
 
@@ -114,12 +160,20 @@ fn reducer_deduplicates_correlated_results_and_older_snapshots_load() {
 #[tokio::test]
 async fn unsupported_mock_backend_returns_an_error_instead_of_forward_success() {
     let mut backend = MockTelegramBackend::default();
-    let result = backend.handle(CoreCommand::ForwardMessages(request())).await;
+    let result = backend
+        .handle(CoreCommand::ForwardMessages(request()))
+        .await;
     assert!(result.is_err());
 
     let runtime = spawn_core(MockTelegramBackend::default());
     let mut events = runtime.subscribe();
-    runtime.send(CoreCommand::ForwardMessages(request())).await.unwrap();
-    let event = tokio::time::timeout(std::time::Duration::from_secs(1), events.recv()).await.unwrap().unwrap();
+    runtime
+        .send(CoreCommand::ForwardMessages(request()))
+        .await
+        .unwrap();
+    let event = tokio::time::timeout(std::time::Duration::from_secs(1), events.recv())
+        .await
+        .unwrap()
+        .unwrap();
     assert!(matches!(event, CoreEvent::Error(_)));
 }
