@@ -278,7 +278,7 @@ impl GrammersBackend {
                 events
             }
             Err(error) => {
-                let retryable = matches!(error, CoreError::Backend(_));
+                let retryable = matches!(&error, CoreError::Backend(_));
                 vec![
                     sending,
                     CoreEvent::MessageSendStateChanged(OutgoingSend::failed(
