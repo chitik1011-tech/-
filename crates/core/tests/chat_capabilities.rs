@@ -86,7 +86,7 @@ fn capabilities_and_events_round_trip_through_json() {
 fn old_state_json_defaults_the_new_capability_map() {
     let old_state = json!({
         "running": true,
-        "account": { "authorization": "closed", "chats": [] },
+        "account": { "authorization": "Closed", "chats": [] },
         "messages": {},
         "last_error": null
     });

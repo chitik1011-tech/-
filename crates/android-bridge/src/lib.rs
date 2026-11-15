@@ -14,9 +14,12 @@ use jni::{
 };
 use tg_mobile_core::{
     backend::BackendFuture, decode_command, encode_event, encode_state, spawn_core,
-    ChatCapabilities, ChatKind, CoreCommand, CoreError, CoreEvent, CoreHandle, TelegramBackend,
+    CoreCommand, CoreError, CoreEvent, CoreHandle, TelegramBackend,
 };
 use tokio::{runtime::Runtime, task::JoinHandle};
+
+#[cfg(test)]
+use tg_mobile_core::{ChatCapabilities, ChatKind};
 
 const CALLBACK_METHOD: &str = "onNativeEvent";
 const CALLBACK_SIGNATURE: &str = "(Ljava/lang/String;Ljava/lang/String;)V";
