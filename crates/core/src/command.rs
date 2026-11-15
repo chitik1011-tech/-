@@ -15,16 +15,19 @@ pub enum CoreCommand {
     SubmitPassword(String),
     LoadChats { limit: usize },
     SendText { chat_id: i64, text: String },
+    /// Sends text as a reply to a message in the same chat.
     ReplyMessage {
         chat_id: i64,
         reply_to_message_id: i64,
         text: String,
     },
+    /// Replaces the text of an existing message in the specified chat.
     EditMessage {
         chat_id: i64,
         message_id: i64,
         text: String,
     },
+    /// Deletes an existing message in the specified chat.
     DeleteMessage { chat_id: i64, message_id: i64 },
     Shutdown,
 }
