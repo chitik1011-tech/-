@@ -45,6 +45,13 @@ pub(crate) fn api_error(context: &'static str, error: impl std::fmt::Display) ->
     TelegramBackendError::Api(format!("{context}: {error}")).into()
 }
 
+pub(crate) fn auth_api_error(
+    context: &'static str,
+    _error: impl std::fmt::Display,
+) -> CoreError {
+    TelegramBackendError::Authorization(format!("{context}: Telegram request failed")).into()
+}
+
 pub(crate) fn session_error(context: &'static str, error: impl std::fmt::Display) -> CoreError {
     TelegramBackendError::Session(format!("{context}: {error}")).into()
 }
@@ -64,5 +71,23 @@ mod tests {
     fn api_failure_maps_to_core_backend_error() {
         let error: CoreError = TelegramBackendError::Api("network down".into()).into();
         assert!(matches!(error, CoreError::Backend(message) if message.contains("network down")));
+    }
+
+    #[test]
+    fn authorization_api_errors_do_not_expose_upstream_details() {
+        let error = super::auth_api_error(
+            "sign in with code",
+            "PHONE=+15551234567 CODE=12345 PASSWORD=secret",
+        );
+
+        match error {
+            CoreError::Backend(message) => {
+                assert!(message.contains("sign in with code"));
+                assert!(!message.contains("+15551234567"));
+                assert!(!message.contains("12345"));
+                assert!(!message.contains("secret"));
+            }
+            other => panic!("expected backend error, got {other:?}"),
+        }
     }
 }
