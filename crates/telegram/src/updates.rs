@@ -19,9 +19,9 @@ use crate::{
 
 /// Backend-native update model.
 ///
-/// It is intentionally richer than `CoreEvent`; message edits/deletes and
-/// several chat-level updates remain backend-native, while connection state
-/// and supported message/error updates cross the core boundary.
+/// It remains richer than `CoreEvent`; supported message mutations, backend
+/// errors, and connection state cross the core boundary, while chat/unread and
+/// typing updates remain backend-native until their core models are added.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TelegramUpdate {
     MessageAdded(MessageSummary),
@@ -55,6 +55,14 @@ impl TelegramUpdate {
     pub(crate) fn to_core_event(&self) -> Option<CoreEvent> {
         match self {
             Self::MessageAdded(message) => Some(CoreEvent::MessageAdded(message.clone())),
+            Self::MessageEdited(message) => Some(CoreEvent::MessageEdited(message.clone())),
+            Self::MessagesDeleted {
+                chat_id,
+                message_ids,
+            } => Some(CoreEvent::MessagesDeleted {
+                chat_id: *chat_id,
+                message_ids: message_ids.clone(),
+            }),
             Self::ConnectionStateChanged(_) => None,
             Self::ConnectionLifecycle { token, event } => Some(CoreEvent::ConnectionLifecycle {
                 token: *token,
@@ -726,9 +734,24 @@ mod tests {
             reply_to: None,
         };
         assert!(matches!(
-            TelegramUpdate::MessageAdded(message).to_core_event(),
+            TelegramUpdate::MessageAdded(message.clone()).to_core_event(),
             Some(CoreEvent::MessageAdded(_))
         ));
+        assert_eq!(
+            TelegramUpdate::MessageEdited(message.clone()).to_core_event(),
+            Some(CoreEvent::MessageEdited(message))
+        );
+        assert_eq!(
+            TelegramUpdate::MessagesDeleted {
+                chat_id: Some(2),
+                message_ids: vec![1, 2],
+            }
+            .to_core_event(),
+            Some(CoreEvent::MessagesDeleted {
+                chat_id: Some(2),
+                message_ids: vec![1, 2],
+            })
+        );
         assert_eq!(
             TelegramUpdate::ConnectionStateChanged(ConnectionState::Ready).to_core_event(),
             None
