@@ -135,7 +135,6 @@ fn state_query_helpers_return_chat_messages_and_unread_total() {
     assert_eq!(state.total_unread_count(), 7);
 }
 
-
 #[test]
 fn service_message_metadata_round_trips_through_event_and_persisted_state() {
     let mut message = message(81, 123);
