@@ -128,7 +128,12 @@ fn live_messages_survive_next_page_and_stale_page_summaries() {
         vec![
             summary(10, "ten", 1, Some(message(1, 10, 100, "stale"))),
             summary(20, "twenty", 0, None),
-            summary(30, "thirty", 0, Some(message(2, 30, 140, "stale chat data"))),
+            summary(
+                30,
+                "thirty",
+                0,
+                Some(message(2, 30, 140, "stale chat data")),
+            ),
         ],
         None,
     ));
@@ -159,11 +164,7 @@ fn live_message_received_before_first_page_is_preserved() {
     let live_message = message(9, 90, 900, "arrived early");
 
     state.reduce(&CoreEvent::MessageAdded(live_message.clone()));
-    state.reduce(&page(
-        None,
-        vec![summary(1, "server chat", 0, None)],
-        None,
-    ));
+    state.reduce(&page(None, vec![summary(1, "server chat", 0, None)], None));
 
     assert_eq!(
         state
@@ -174,20 +175,35 @@ fn live_message_received_before_first_page_is_preserved() {
             .collect::<Vec<_>>(),
         vec![1, 90]
     );
-    assert_eq!(state.chat(90).unwrap().last_message.as_ref(), Some(&live_message));
+    assert_eq!(
+        state.chat(90).unwrap().last_message.as_ref(),
+        Some(&live_message)
+    );
 }
 
 #[test]
 fn stale_or_repeated_page_cursor_is_ignored_and_loops_stop() {
     let mut state = CoreState::default();
-    state.reduce(&page(None, vec![summary(1, "one", 0, None)], Some("cursor-2")));
+    state.reduce(&page(
+        None,
+        vec![summary(1, "one", 0, None)],
+        Some("cursor-2"),
+    ));
 
     state.reduce(&page(
         Some("wrong-cursor"),
         vec![summary(2, "stale", 0, None)],
         None,
     ));
-    assert_eq!(state.account.chats.iter().map(|chat| chat.id).collect::<Vec<_>>(), vec![1]);
+    assert_eq!(
+        state
+            .account
+            .chats
+            .iter()
+            .map(|chat| chat.id)
+            .collect::<Vec<_>>(),
+        vec![1]
+    );
     assert_eq!(
         state.chat_pagination.next_cursor.as_deref(),
         Some("cursor-2")
