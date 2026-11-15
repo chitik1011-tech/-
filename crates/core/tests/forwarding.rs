@@ -153,6 +153,7 @@ fn reducer_deduplicates_correlated_results_and_older_snapshots_load() {
 
     let mut old = serde_json::to_value(CoreState::default()).unwrap();
     old.as_object_mut().unwrap().remove("forwarding");
+    old.as_object_mut().unwrap().remove("forwarding_order");
     let restored: CoreState = serde_json::from_value(old).unwrap();
     assert!(restored.forwarding.is_empty());
 }
@@ -247,4 +248,21 @@ async fn runtime_uses_typed_forward_contract_and_emits_ordered_partial_results()
             },
         ]
     );
+}
+
+#[test]
+fn reducer_evicts_forward_results_in_fifo_order() {
+    let mut state = CoreState::default();
+    for index in 0..=tg_mobile_core::MAX_CACHED_FORWARD_REQUESTS {
+        let request_id = format!("request-{index:04}");
+        state.reduce(&CoreEvent::MessagesForwarded(ForwardMessagesResult {
+            request_id,
+            destination_chat_id: 30,
+            outcomes: vec![],
+        }));
+    }
+    assert_eq!(state.forwarding.len(), tg_mobile_core::MAX_CACHED_FORWARD_REQUESTS);
+    assert!(!state.forwarding.contains_key("request-0000"));
+    assert!(state.forwarding.contains_key("request-0001"));
+    assert!(state.forwarding.contains_key("request-0256"));
 }
