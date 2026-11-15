@@ -112,6 +112,7 @@ private fun TelegramRustApp(viewModel: NativeSessionViewModel = viewModel()) {
                 onCode = viewModel::submitCode,
                 onPassword = viewModel::submitPassword,
                 onRefreshChats = viewModel::loadChats,
+                onLoadMessages = viewModel::loadMessages,
                 onSendText = viewModel::sendText,
             )
         }
@@ -162,6 +163,7 @@ private fun MainShell(
     onCode: (String) -> Unit,
     onPassword: (String) -> Unit,
     onRefreshChats: () -> Unit,
+    onLoadMessages: (Long, Int) -> Unit,
     onSendText: (Long, String) -> Unit,
 ) {
     Scaffold(
@@ -193,6 +195,7 @@ private fun MainShell(
                 state = state,
                 padding = padding,
                 onRefresh = onRefreshChats,
+                onLoadMessages = onLoadMessages,
                 onSendText = onSendText,
             )
         }
@@ -420,6 +423,7 @@ private fun ChatListScreen(
     state: NativeUiState,
     padding: PaddingValues,
     onRefresh: () -> Unit,
+    onLoadMessages: (Long, Int) -> Unit,
     onSendText: (Long, String) -> Unit,
 ) {
     var selectedChatId by rememberSaveable { mutableLongStateOf(0L) }
@@ -471,7 +475,10 @@ private fun ChatListScreen(
                 ChatRow(
                     chat = chat,
                     selected = chat.id == selectedChatId,
-                    onClick = { selectedChatId = chat.id },
+                    onClick = {
+                        selectedChatId = chat.id
+                        onLoadMessages(chat.id, 100)
+                    },
                 )
             }
         }
