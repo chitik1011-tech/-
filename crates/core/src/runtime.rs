@@ -6,6 +6,7 @@ use crate::{
     error::{CoreError, Result},
     event::CoreEvent,
     state::CoreState,
+    wire::{decode_command, encode_state},
 };
 
 #[derive(Clone)]
@@ -23,12 +24,20 @@ impl CoreHandle {
             .map_err(|_| CoreError::CommandChannelClosed)
     }
 
+    pub async fn send_json(&self, input: &str) -> Result<()> {
+        self.send(decode_command(input)?).await
+    }
+
     pub fn subscribe(&self) -> broadcast::Receiver<CoreEvent> {
         self.events.subscribe()
     }
 
     pub fn state(&self) -> CoreState {
         self.state.borrow().clone()
+    }
+
+    pub fn state_json(&self) -> Result<String> {
+        encode_state(&self.state())
     }
 
     pub fn subscribe_state(&self) -> watch::Receiver<CoreState> {
