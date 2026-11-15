@@ -10,16 +10,17 @@ use crate::{
     command::CoreCommand,
     error::{CoreError, Result},
     event::CoreEvent,
+    outgoing::{OutgoingMessage, OutgoingMessageCommand, OutgoingMessageStatus},
     state::CoreState,
     storage::{NoopStateStore, StateStore},
-    wire::{decode_command, encode_state},
+    wire::{decode_command, decode_outgoing_command, encode_state},
 };
 
 pub const PERSISTENCE_FLUSH_INTERVAL_MS: u64 = 250;
 
 #[derive(Clone)]
 pub struct CoreHandle {
-    commands: mpsc::Sender<CoreCommand>,
+    commands: mpsc::Sender<RuntimeCommand>,
     events: broadcast::Sender<CoreEvent>,
     state: watch::Receiver<CoreState>,
 }
@@ -29,13 +30,28 @@ impl CoreHandle {
         command.validate()?;
 
         self.commands
-            .send(command)
+            .send(RuntimeCommand::Backend(command))
             .await
             .map_err(|_| CoreError::CommandChannelClosed)
     }
 
     pub async fn send_json(&self, input: &str) -> Result<()> {
         self.send(decode_command(input)?).await
+    }
+
+    /// Queue a text send under a stable caller-generated ID. Reuse the exact ID and payload
+    /// to retry after a failed result; duplicate sending/sent requests are idempotent.
+    pub async fn send_outgoing(&self, command: OutgoingMessageCommand) -> Result<()> {
+        command.validate()?;
+        self.commands
+            .send(RuntimeCommand::SendOutgoing(command))
+            .await
+            .map_err(|_| CoreError::CommandChannelClosed)
+    }
+
+    /// Decode and queue the stable-ID text send wire command.
+    pub async fn send_outgoing_json(&self, input: &str) -> Result<()> {
+        self.send_outgoing(decode_outgoing_command(input)?).await
     }
 
     pub async fn shutdown(&self) -> Result<()> {
@@ -72,7 +88,7 @@ where
     B: TelegramBackend,
     S: StateStore,
 {
-    let (command_tx, mut command_rx) = mpsc::channel::<CoreCommand>(128);
+    let (command_tx, mut command_rx) = mpsc::channel::<RuntimeCommand>(128);
     let (event_tx, _) = broadcast::channel::<CoreEvent>(256);
     let event_tx_task = event_tx.clone();
     let (state_tx, state_rx) = watch::channel(CoreState::default());
@@ -96,7 +112,7 @@ where
             .await;
 
             match input {
-                RuntimeInput::Command(Some(command)) => {
+                RuntimeInput::Command(Some(RuntimeCommand::Backend(command))) => {
                     let shutdown_requested = matches!(command, CoreCommand::Shutdown);
                     let events = match backend.handle(command).await {
                         Ok(events) => events,
@@ -127,6 +143,17 @@ where
                         }
                         break;
                     }
+                }
+                RuntimeInput::Command(Some(RuntimeCommand::SendOutgoing(command))) => {
+                    persistence_dirty |= process_outgoing_message(
+                        command,
+                        &mut backend,
+                        &store,
+                        &mut reduced_state,
+                        &state_tx,
+                        &event_tx_task,
+                    )
+                    .await;
                 }
                 RuntimeInput::Command(None) => {
                     apply_event(
@@ -175,14 +202,19 @@ where
     }
 }
 
+enum RuntimeCommand {
+    Backend(CoreCommand),
+    SendOutgoing(OutgoingMessageCommand),
+}
+
 enum RuntimeInput {
-    Command(Option<CoreCommand>),
+    Command(Option<RuntimeCommand>),
     Update(Option<Result<CoreEvent>>),
     Persist,
 }
 
 async fn next_runtime_input(
-    commands: &mut mpsc::Receiver<CoreCommand>,
+    commands: &mut mpsc::Receiver<RuntimeCommand>,
     updates: &mut Option<BackendUpdateReceiver>,
     persistence_tick: &mut Interval,
     persistence_dirty: bool,
@@ -226,6 +258,131 @@ async fn restore_state<S: StateStore>(
             state
         }
     }
+}
+
+async fn process_outgoing_message<B, S>(
+    command: OutgoingMessageCommand,
+    backend: &mut B,
+    store: &S,
+    state: &mut CoreState,
+    state_tx: &watch::Sender<CoreState>,
+    event_tx: &broadcast::Sender<CoreEvent>,
+) -> bool
+where
+    B: TelegramBackend,
+    S: StateStore,
+{
+    let request = match command.into_request() {
+        Ok(request) => request,
+        Err(error) => {
+            apply_event(
+                CoreEvent::Error(error.to_string()),
+                state,
+                state_tx,
+                event_tx,
+            );
+            return true;
+        }
+    };
+
+    if let Some(existing) = state.outgoing_message(&request.client_id) {
+        if existing.chat_id != request.chat_id || existing.text != request.text {
+            apply_event(
+                CoreEvent::Error(format!(
+                    "client message ID {} was already used for a different payload",
+                    request.client_id
+                )),
+                state,
+                state_tx,
+                event_tx,
+            );
+            return true;
+        }
+
+        match existing.status {
+            OutgoingMessageStatus::Sending | OutgoingMessageStatus::Sent => return false,
+            OutgoingMessageStatus::Draft | OutgoingMessageStatus::Failed => {}
+        }
+    } else {
+        apply_event(
+            CoreEvent::OutgoingMessageChanged(request.clone()),
+            state,
+            state_tx,
+            event_tx,
+        );
+    }
+
+    let mut sending = request.clone();
+    sending.status = OutgoingMessageStatus::Sending;
+    sending.server_message_id = None;
+    sending.error = None;
+    apply_event(
+        CoreEvent::OutgoingMessageChanged(sending.clone()),
+        state,
+        state_tx,
+        event_tx,
+    );
+
+    // Persist the retryable ID before any network request. On process restart, a stranded
+    // Sending state is converted to Failed and can be retried with the same client ID.
+    persist_state(store, state, state_tx, event_tx).await;
+
+    let result = backend
+        .handle(CoreCommand::SendText {
+            chat_id: request.chat_id,
+            text: request.text.clone(),
+        })
+        .await;
+
+    match result {
+        Ok(events) => {
+            let server_message_id = events.iter().find_map(|event| match event {
+                CoreEvent::MessageAdded(message)
+                    if message.chat_id == request.chat_id
+                        && message.outgoing
+                        && message.text.trim() == request.text.trim() =>
+                {
+                    Some(message.id)
+                }
+                _ => None,
+            });
+            let backend_error = events.iter().find_map(|event| match event {
+                CoreEvent::Error(message) => Some(message.clone()),
+                _ => None,
+            });
+
+            apply_events(events, state, state_tx, event_tx);
+
+            let mut final_state = sending;
+            if let Some(message) = backend_error {
+                final_state.status = OutgoingMessageStatus::Failed;
+                final_state.error = Some(message);
+            } else {
+                final_state.status = OutgoingMessageStatus::Sent;
+                final_state.server_message_id = server_message_id;
+            }
+            apply_event(
+                CoreEvent::OutgoingMessageChanged(final_state),
+                state,
+                state_tx,
+                event_tx,
+            );
+        }
+        Err(error) => {
+            let mut failed = sending;
+            failed.status = OutgoingMessageStatus::Failed;
+            failed.error = Some(error.to_string());
+            apply_event(
+                CoreEvent::OutgoingMessageChanged(failed),
+                state,
+                state_tx,
+                event_tx,
+            );
+        }
+    }
+
+    persist_state(store, state, state_tx, event_tx).await;
+    true
 }
 
 fn apply_events(
