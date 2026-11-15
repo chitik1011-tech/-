@@ -1,0 +1,43 @@
+name: Android JNI validation
+
+on:
+  push:
+    branches:
+      - agent/android-jni
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/28.2.13676358
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install Android SDK 37 and NDK
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-37" "build-tools;36.0.0" "ndk;28.2.13676358"
+
+      - name: Prepare Rust
+        shell: bash
+        run: |
+          rustup target add aarch64-linux-android
+          cargo install cargo-ndk --locked
+
+      - name: Check Rust workspace
+        run: cargo check --workspace
+
+      - name: Build Android debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug --stacktrace
