@@ -88,7 +88,7 @@ private fun TelegramRustApp(viewModel: NativeSessionViewModel = viewModel()) {
             selectedChatId = null,
             isLoading = state.busy,
             error = state.error,
-            onRefresh = viewModel::loadChats,
+            onRefresh = { viewModel.loadChats() },
             onChatSelected = { chatId ->
                 selectedChatId = chatId
                 viewModel.loadMessages(chatId)
