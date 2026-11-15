@@ -1,9 +1,10 @@
 use std::collections::{HashSet, VecDeque};
 
 use grammers_client::{
+    Client,
     message::Message,
     session::types::{PeerKind, PeerRef},
-    tl, Client,
+    tl,
 };
 use tg_mobile_core::{CoreError, MessageSummary};
 use tokio::sync::Mutex;
