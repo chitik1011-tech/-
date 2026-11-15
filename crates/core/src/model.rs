@@ -32,6 +32,53 @@ pub struct MessageSummary {
     /// are treated as an empty list.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<MediaAttachment>,
+    /// Original source metadata when Telegram marks the message as forwarded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forwarded_from: Option<ForwardedFrom>,
+    /// Whether Telegram reports that this message has been edited.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub edited: bool,
+    /// Unix timestamp of the most recent edit, when supplied by Telegram.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edit_timestamp_unix: Option<i64>,
+    /// Whether this message represents a Telegram service action.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub service_message: bool,
+    /// Caption attached to media, kept separate from ordinary message text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media_caption: Option<String>,
+    /// Target metadata when this message replies to another message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_to: Option<ReplyMetadata>,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ForwardedFrom {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sender_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chat_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timestamp_unix: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sender_display_name: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReplyMetadata {
+    pub message_id: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chat_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sender_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sender_display_name: Option<String>,
 }
 
 /// Telegram media categories represented independently of the UI or downloader.

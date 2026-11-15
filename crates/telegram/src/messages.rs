@@ -6,20 +6,44 @@ use grammers_client::{
     session::types::{PeerKind, PeerRef},
     tl,
 };
-use tg_mobile_core::{CoreError, MessageSummary};
+use tg_mobile_core::{CoreError, ForwardedFrom, MessageSummary, ReplyMetadata};
 use tokio::sync::Mutex;
 
 use crate::{error::api_error, ids::peer_id_to_core};
 
 pub(crate) fn message_to_summary(message: &Message) -> MessageSummary {
-    message_summary_from_fields(MessageFields {
+    let chat_id = peer_id_to_core(message.peer_id());
+    let text = message.text();
+    let edit_timestamp_unix = message.edit_date().map(|date| date.as_second());
+
+    let mut summary = message_summary_from_fields(MessageFields {
         id: i64::from(message.id()),
-        chat_id: peer_id_to_core(message.peer_id()),
+        chat_id,
         sender_id: message.sender_id().map(peer_id_to_core).unwrap_or(0),
-        text: message.text(),
+        text,
         timestamp_unix: message.date().as_second(),
         outgoing: message.outgoing(),
-    })
+    });
+
+    summary.forwarded_from = message
+        .forward_header()
+        .is_some()
+        .then(ForwardedFrom::default);
+    summary.edited = edit_timestamp_unix.is_some();
+    summary.edit_timestamp_unix = edit_timestamp_unix;
+    summary.service_message = message.action().is_some();
+    summary.media_caption =
+        (message.media().is_some() && !text.is_empty()).then(|| text.to_owned());
+    summary.reply_to = message
+        .reply_to_message_id()
+        .map(|message_id| ReplyMetadata {
+            message_id: i64::from(message_id),
+            chat_id: Some(chat_id),
+            sender_id: None,
+            sender_display_name: None,
+        });
+
+    summary
 }
 
 struct MessageFields<'a> {
@@ -40,6 +64,12 @@ fn message_summary_from_fields(fields: MessageFields<'_>) -> MessageSummary {
         timestamp_unix: fields.timestamp_unix,
         outgoing: fields.outgoing,
         attachments: Vec::new(),
+        forwarded_from: None,
+        edited: false,
+        edit_timestamp_unix: None,
+        service_message: false,
+        media_caption: None,
+        reply_to: None,
     }
 }
 
