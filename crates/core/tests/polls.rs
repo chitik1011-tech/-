@@ -1,5 +1,5 @@
 use tg_mobile_core::{
-    CoreEvent, CoreState, PollOption, PollSummary, MAX_CACHED_POLLS, MAX_POLL_OPTIONS,
+    CoreCommand, CoreEvent, CoreState, PollOption, PollSummary, MAX_CACHED_POLLS, MAX_POLL_OPTIONS,
 };
 
 const CHAT_ID: i64 = 42;
@@ -342,4 +342,22 @@ fn legacy_poll_without_option_ids_and_explanation_still_deserializes() {
     assert!(restored
         .validate_vote_selection(&[b"Pizza".to_vec()])
         .is_err());
+}
+
+
+#[test]
+fn poll_vote_command_has_stable_wire_kind_and_round_trips() {
+    let command = CoreCommand::VotePoll {
+        poll_id: 99,
+        chat_id: CHAT_ID,
+        message_id: 10,
+        option_ids: vec![b"Pizza".to_vec()],
+    };
+
+    assert_eq!(command.kind(), "vote_poll");
+    let json = serde_json::to_value(&command).unwrap();
+    assert_eq!(json["type"], "vote_poll");
+    assert_eq!(json["payload"]["poll_id"], 99);
+    let decoded: CoreCommand = serde_json::from_value(json).unwrap();
+    assert_eq!(decoded, command);
 }
