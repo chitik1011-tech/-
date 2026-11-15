@@ -96,7 +96,10 @@ async fn file_persistence_drops_phone_but_keeps_other_profile_fields() {
     let restored_profile = restored.profile(73).expect("profile exists");
     assert_eq!(restored_profile.phone, None);
     assert_eq!(restored_profile.username.as_deref(), Some("member"));
-    assert_eq!(restored_profile.bio.as_deref(), Some("Telegram supplied bio"));
+    assert_eq!(
+        restored_profile.bio.as_deref(),
+        Some("Telegram supplied bio")
+    );
     let _ = std::fs::remove_file(store.path());
 }
 
