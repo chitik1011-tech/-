@@ -14,7 +14,7 @@ pub mod wire;
 
 pub use backend::{
     backend_update_channel, BackendFuture, BackendUpdateReceiver, BackendUpdateSender,
-    TelegramBackend, DEFAULT_BACKEND_UPDATE_CAPACITY,
+    ForwardMessagesFuture, TelegramBackend, DEFAULT_BACKEND_UPDATE_CAPACITY,
 };
 pub use command::{CoreCommand, MAX_CHAT_LOAD_LIMIT};
 pub use error::{CoreError, Result};
