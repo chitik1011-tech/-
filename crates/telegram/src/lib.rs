@@ -11,6 +11,7 @@ mod downloads;
 mod error;
 mod ids;
 mod messages;
+mod polls;
 mod updates;
 
 pub use backend::GrammersBackend;
