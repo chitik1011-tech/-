@@ -557,6 +557,22 @@ mod tests {
     }
 
     #[test]
+    fn accepts_poll_vote_over_existing_json_jni_contract() {
+        let parsed = decode_command(
+            r#"{"type":"vote_poll","payload":{"poll_id":99,"chat_id":42,"message_id":7,"option_ids":[[97]]}}"#,
+        );
+        assert!(matches!(
+            parsed,
+            Ok(CoreCommand::VotePoll {
+                poll_id: 99,
+                chat_id: 42,
+                message_id: 7,
+                option_ids,
+            }) if option_ids == vec![vec![97]]
+        ));
+    }
+
+    #[test]
     fn rejects_noncanonical_command_payload() {
         let parsed = decode_command(r#"{"type":"set_phone_number","phone_number":"123"}"#);
         assert!(parsed.is_err());
