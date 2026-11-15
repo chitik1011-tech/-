@@ -1,4 +1,7 @@
-use std::{collections::BTreeMap, time::{Duration, Instant}};
+use std::{
+    collections::BTreeMap,
+    time::{Duration, Instant},
+};
 
 use crate::{event::CoreEvent, model::ChatActivityKind};
 
@@ -33,13 +36,21 @@ impl ChatActivityTracker {
     /// Apply a transient activity event using a monotonic clock supplied by the caller.
     pub fn apply(&mut self, event: &CoreEvent, now: Instant) {
         match event {
-            CoreEvent::ChatActivityChanged { chat_id, user_id, activity, ttl_ms } => {
+            CoreEvent::ChatActivityChanged {
+                chat_id,
+                user_id,
+                activity,
+                ttl_ms,
+            } => {
                 if *chat_id == 0 || *user_id == 0 {
                     return;
                 }
                 let ttl = (*ttl_ms).clamp(1, MAX_CHAT_ACTIVITY_TTL_MS);
                 self.active.insert(
-                    ActivityKey { chat_id: *chat_id, user_id: *user_id },
+                    ActivityKey {
+                        chat_id: *chat_id,
+                        user_id: *user_id,
+                    },
                     ActiveActivity {
                         kind: *activity,
                         expires_at: now + Duration::from_millis(ttl),
@@ -48,7 +59,10 @@ impl ChatActivityTracker {
             }
             CoreEvent::ChatActivityEnded { chat_id, user_id }
             | CoreEvent::ChatActivityExpired { chat_id, user_id } => {
-                self.active.remove(&ActivityKey { chat_id: *chat_id, user_id: *user_id });
+                self.active.remove(&ActivityKey {
+                    chat_id: *chat_id,
+                    user_id: *user_id,
+                });
             }
             _ => {}
         }
@@ -91,19 +105,37 @@ mod tests {
     use super::{ChatActivityTracker, DEFAULT_CHAT_ACTIVITY_TTL_MS, MAX_CHAT_ACTIVITY_TTL_MS};
 
     fn changed(chat_id: i64, user_id: i64, activity: ChatActivityKind, ttl_ms: u64) -> CoreEvent {
-        CoreEvent::ChatActivityChanged { chat_id, user_id, activity, ttl_ms }
+        CoreEvent::ChatActivityChanged {
+            chat_id,
+            user_id,
+            activity,
+            ttl_ms,
+        }
     }
 
     #[test]
     fn activity_expires_after_default_ttl_and_emits_scoped_event() {
         let now = Instant::now();
         let mut tracker = ChatActivityTracker::default();
-        tracker.apply(&changed(10, 20, ChatActivityKind::Typing, DEFAULT_CHAT_ACTIVITY_TTL_MS), now);
+        tracker.apply(
+            &changed(
+                10,
+                20,
+                ChatActivityKind::Typing,
+                DEFAULT_CHAT_ACTIVITY_TTL_MS,
+            ),
+            now,
+        );
 
-        assert!(tracker.expire(now + Duration::from_millis(DEFAULT_CHAT_ACTIVITY_TTL_MS - 1)).is_empty());
+        assert!(tracker
+            .expire(now + Duration::from_millis(DEFAULT_CHAT_ACTIVITY_TTL_MS - 1))
+            .is_empty());
         assert_eq!(
             tracker.expire(now + Duration::from_millis(DEFAULT_CHAT_ACTIVITY_TTL_MS)),
-            vec![CoreEvent::ChatActivityExpired { chat_id: 10, user_id: 20 }]
+            vec![CoreEvent::ChatActivityExpired {
+                chat_id: 10,
+                user_id: 20
+            }]
         );
         assert!(!tracker.has_active());
     }
@@ -116,10 +148,22 @@ mod tests {
         tracker.apply(&changed(1, 8, ChatActivityKind::RecordingVoice, 100), now);
         tracker.apply(&changed(2, 7, ChatActivityKind::UploadingMedia, 150), now);
 
-        tracker.apply(&CoreEvent::ChatActivityEnded { chat_id: 1, user_id: 7 }, now);
+        tracker.apply(
+            &CoreEvent::ChatActivityEnded {
+                chat_id: 1,
+                user_id: 7,
+            },
+            now,
+        );
         assert_eq!(tracker.activity(1, 7), None);
-        assert_eq!(tracker.activity(1, 8), Some(ChatActivityKind::RecordingVoice));
-        assert_eq!(tracker.activity(2, 7), Some(ChatActivityKind::UploadingMedia));
+        assert_eq!(
+            tracker.activity(1, 8),
+            Some(ChatActivityKind::RecordingVoice)
+        );
+        assert_eq!(
+            tracker.activity(2, 7),
+            Some(ChatActivityKind::UploadingMedia)
+        );
     }
 
     #[test]
@@ -128,11 +172,23 @@ mod tests {
         let mut tracker = ChatActivityTracker::default();
         tracker.apply(&changed(3, 4, ChatActivityKind::Typing, 20), now);
         tracker.apply(&changed(3, 5, ChatActivityKind::Typing, 50), now);
-        tracker.apply(&changed(3, 4, ChatActivityKind::UploadingMedia, 100), now + Duration::from_millis(10));
+        tracker.apply(
+            &changed(3, 4, ChatActivityKind::UploadingMedia, 100),
+            now + Duration::from_millis(10),
+        );
 
         let expired = tracker.expire(now + Duration::from_millis(21));
-        assert_eq!(expired, vec![CoreEvent::ChatActivityExpired { chat_id: 3, user_id: 5 }]);
-        assert_eq!(tracker.activity(3, 4), Some(ChatActivityKind::UploadingMedia));
+        assert_eq!(
+            expired,
+            vec![CoreEvent::ChatActivityExpired {
+                chat_id: 3,
+                user_id: 5
+            }]
+        );
+        assert_eq!(
+            tracker.activity(3, 4),
+            Some(ChatActivityKind::UploadingMedia)
+        );
     }
 
     #[test]
@@ -143,11 +199,16 @@ mod tests {
         tracker.apply(&changed(5, 0, ChatActivityKind::Typing, 20), now);
         tracker.apply(&changed(5, 6, ChatActivityKind::Typing, u64::MAX), now);
 
-        assert!(tracker.expire(now + Duration::from_millis(MAX_CHAT_ACTIVITY_TTL_MS - 1)).is_empty());
+        assert!(tracker
+            .expire(now + Duration::from_millis(MAX_CHAT_ACTIVITY_TTL_MS - 1))
+            .is_empty());
         assert!(tracker.has_active());
         assert_eq!(
             tracker.expire(now + Duration::from_millis(MAX_CHAT_ACTIVITY_TTL_MS)),
-            vec![CoreEvent::ChatActivityExpired { chat_id: 5, user_id: 6 }]
+            vec![CoreEvent::ChatActivityExpired {
+                chat_id: 5,
+                user_id: 6
+            }]
         );
     }
 
@@ -156,7 +217,10 @@ mod tests {
         let mut state = CoreState::default();
         let baseline = state.clone();
         state.reduce(&changed(1, 2, ChatActivityKind::Typing, 100));
-        state.reduce(&CoreEvent::ChatActivityEnded { chat_id: 1, user_id: 2 });
+        state.reduce(&CoreEvent::ChatActivityEnded {
+            chat_id: 1,
+            user_id: 2,
+        });
 
         assert_eq!(state, baseline);
         let json = serde_json::to_value(state).expect("CoreState serializes");
