@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use crate::model::{AccountState, AuthorizationState, ChatSummary, MessageSummary};
+use crate::{
+    model::{AccountState, AuthorizationState, ChatSummary, MessageSummary},
+    send::OutgoingSend,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
@@ -17,6 +20,7 @@ pub enum CoreEvent {
         max_message_id: i64,
     },
     MessageAdded(MessageSummary),
+    MessageSendStateChanged(OutgoingSend),
     Error(String),
     Stopped,
 }
@@ -30,6 +34,7 @@ impl CoreEvent {
             Self::MessagesLoaded { .. } => "messages_loaded",
             Self::ChatRead { .. } => "chat_read",
             Self::MessageAdded(_) => "message_added",
+            Self::MessageSendStateChanged(_) => "message_send_state_changed",
             Self::Error(_) => "error",
             Self::Stopped => "stopped",
         }
