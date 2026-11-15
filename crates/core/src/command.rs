@@ -44,11 +44,14 @@ impl CoreCommand {
                     Ok(())
                 }
             }
-            Self::LoadChats { limit } | Self::LoadChatsPage { limit, .. } => {
-                validate_chat_load_limit(*limit)
-            }
-            Self::LoadChatsPage { cursor: Some(cursor), .. } if cursor.trim().is_empty() => {
-                Err(CoreError::InvalidInput("chat page cursor is empty".into()))
+            Self::LoadChats { limit } => validate_chat_load_limit(*limit),
+            Self::LoadChatsPage { cursor, limit } => {
+                validate_chat_load_limit(*limit)?;
+                if cursor.as_ref().is_some_and(|cursor| cursor.trim().is_empty()) {
+                    Err(CoreError::InvalidInput("chat page cursor is empty".into()))
+                } else {
+                    Ok(())
+                }
             }
             Self::SendText { chat_id, text } => {
                 if *chat_id == 0 {
