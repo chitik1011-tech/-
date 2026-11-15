@@ -4,8 +4,8 @@ use std::{
 };
 
 use tg_mobile_core::{
-    AuthorizationState, ChatSummary, CoreEvent, CoreState, JsonFileStateStore, MessageSummary,
-    StateStore, MAX_CACHED_MESSAGES_PER_CHAT,
+    AuthorizationState, ChatSummary, CoreEvent, CoreState, Draft, JsonFileStateStore,
+    MessageSummary, StateStore, MAX_CACHED_MESSAGES_PER_CHAT,
 };
 
 fn message(id: i64, timestamp_unix: i64) -> MessageSummary {
@@ -166,16 +166,28 @@ async fn file_store_writes_versioned_envelope() {
     let store = JsonFileStateStore::new(&path);
     let mut state = CoreState::default();
     state.account.authorization = AuthorizationState::Ready;
+    state.drafts.insert(
+        77,
+        Draft {
+            chat_id: 77,
+            text: "persisted draft".into(),
+            reply_to_message_id: Some(3),
+            edit_message_id: None,
+            updated_at_unix: 42,
+        },
+    );
 
     store.save(&state).await.unwrap();
 
     let value: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
-    assert_eq!(value["schema_version"], 1);
+    assert_eq!(value["schema_version"], 2);
     assert!(value.get("state").is_some());
 
     let loaded = store.load().await.unwrap().unwrap();
     assert_eq!(loaded, state);
+    assert_eq!(loaded.drafts.get(&77), state.drafts.get(&77));
+    assert_eq!(loaded.drafts[&77].text, "persisted draft");
 
     let _ = fs::remove_file(path);
 }

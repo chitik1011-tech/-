@@ -13,7 +13,7 @@ use crate::{
     state::CoreState,
 };
 
-const STATE_SCHEMA_VERSION: u32 = 1;
+const STATE_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct StoredState {
@@ -145,19 +145,17 @@ impl StateStore for JsonFileStateStore {
 
 fn decode_stored_state(content: &str) -> Result<CoreState> {
     match serde_json::from_str::<StoredState>(content) {
-        Ok(stored) => {
-            if stored.schema_version != STATE_SCHEMA_VERSION {
-                return Err(CoreError::Storage(format!(
-                    "unsupported state schema version: {}",
-                    stored.schema_version
-                )));
-            }
+        Ok(stored) if (1..=STATE_SCHEMA_VERSION).contains(&stored.schema_version) => {
             stored
                 .state
                 .validate()
                 .map_err(|error| CoreError::Storage(error.to_string()))?;
             Ok(stored.state)
         }
+        Ok(stored) => Err(CoreError::Storage(format!(
+            "unsupported state schema version: {}",
+            stored.schema_version
+        ))),
         Err(versioned_error) => {
             let state = serde_json::from_str::<CoreState>(content).map_err(|legacy_error| {
                 CoreError::Serialization(format!(
@@ -187,6 +185,14 @@ mod tests {
         let stored = format!(r#"{{"schema_version":1,"state":{old_state}}}"#);
         let state = decode_stored_state(&stored).unwrap();
         assert!(state.folders.is_empty());
+        assert!(state.drafts.is_empty());
+    }
+
+    #[test]
+    fn unversioned_legacy_state_migrates_without_drafts() {
+        let old = r#"{"running":true,"account":{"authorization":"Closed","chats":[]},"messages":{},"last_error":null}"#;
+        let state = decode_stored_state(old).unwrap();
+        assert!(state.drafts.is_empty());
     }
 
     #[test]

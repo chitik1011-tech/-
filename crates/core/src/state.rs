@@ -6,7 +6,7 @@ use crate::{
     connection::ConnectionState,
     connection_machine::{ConnectionMachine, LinkEvent, LinkPhase, Outcome},
     event::CoreEvent,
-    model::{AccountState, ChatFolder, ChatSummary, MessageHistoryState, MessageSummary},
+    model::{AccountState, ChatFolder, ChatSummary, Draft, MessageHistoryState, MessageSummary},
     poll::PollSummary,
     search::MessageSearchState,
     send::{OutgoingSend, OutgoingSendState},
@@ -47,6 +47,9 @@ pub struct CoreState {
     /// their original position so high-traffic polls cannot evict newer polls.
     #[serde(default)]
     pub poll_order: VecDeque<i64>,
+    /// Per-chat drafts survive navigation and restart.
+    #[serde(default)]
+    pub drafts: BTreeMap<i64, Draft>,
     pub last_error: Option<String>,
     #[serde(default)]
     pub folders: Vec<ChatFolder>,
@@ -66,6 +69,7 @@ impl Default for CoreState {
             send_ledger: BTreeMap::new(),
             polls: BTreeMap::new(),
             poll_order: VecDeque::new(),
+            drafts: BTreeMap::new(),
             last_error: None,
             folders: Vec::new(),
         }
@@ -116,6 +120,14 @@ impl CoreState {
                 ));
             }
             poll.validate()?;
+        }
+        for (chat_id, draft) in &self.drafts {
+            if *chat_id != draft.chat_id {
+                return Err(CoreError::InvalidInput(
+                    "draft map key must match draft chat id".into(),
+                ));
+            }
+            draft.validate()?;
         }
         Ok(())
     }
@@ -465,6 +477,32 @@ impl CoreState {
             CoreEvent::ChatActivityChanged { .. }
             | CoreEvent::ChatActivityEnded { .. }
             | CoreEvent::ChatActivityExpired { .. } => {}
+            CoreEvent::DraftUpdated(draft) => {
+                if let Err(error) = draft.validate() {
+                    self.last_error = Some(error.to_string());
+                } else if self.drafts.get(&draft.chat_id) != Some(draft) {
+                    self.drafts.insert(draft.chat_id, draft.clone());
+                    self.last_error = None;
+                }
+            }
+            CoreEvent::DraftCleared {
+                chat_id,
+                expected_updated_at_unix,
+                expected_draft,
+            } => {
+                let should_clear = self.drafts.get(chat_id).is_some_and(|draft| {
+                    expected_updated_at_unix.is_none() && expected_draft.is_none()
+                        || expected_draft.as_ref().is_some_and(|expected| {
+                            expected.chat_id == *chat_id
+                                && expected == draft
+                                && expected_updated_at_unix
+                                    .is_none_or(|timestamp| draft.updated_at_unix == timestamp)
+                        })
+                });
+                if should_clear {
+                    self.drafts.remove(chat_id);
+                }
+            }
             CoreEvent::Error(error) => {
                 self.last_error = Some(error.clone());
             }
