@@ -280,21 +280,21 @@ mod tests {
             next_cursor: Some(MessageCursor::new("512")),
             has_more: true,
         });
-        let older: Vec<_> = (0..100).map(|id| message(id, "older")).collect();
+        let older: Vec<_> = (412..512).map(|id| message(id, "older")).collect();
         state.reduce(&CoreEvent::MessagesLoaded {
             chat_id: 7,
             cursor: Some(MessageCursor::new("512")),
             messages: older,
-            next_cursor: Some(MessageCursor::new("0")),
+            next_cursor: Some(MessageCursor::new("412")),
             has_more: true,
         });
 
         let messages = state.messages_for_chat(7);
         assert_eq!(messages.len(), MAX_CACHED_MESSAGES_PER_CHAT);
-        assert_eq!(messages.first().map(|item| item.id), Some(0));
+        assert_eq!(messages.first().map(|item| item.id), Some(412));
         assert_eq!(
             messages.last().map(|item| item.id),
-            Some(MAX_CACHED_MESSAGES_PER_CHAT as i64 - 1)
+            Some(923)
         );
         assert!(messages
             .windows(2)
