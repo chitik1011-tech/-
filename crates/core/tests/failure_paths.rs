@@ -101,6 +101,12 @@ fn message(id: i64, chat_id: i64, timestamp_unix: i64, text: &str) -> MessageSum
         timestamp_unix,
         outgoing: false,
         attachments: Vec::new(),
+        forwarded_from: None,
+        edited: false,
+        edit_timestamp_unix: None,
+        service_message: false,
+        media_caption: None,
+        reply_to: None,
     }
 }
 
