@@ -87,7 +87,10 @@ impl CoreState {
 
                 self.last_error = None;
             }
-            CoreEvent::MessageDeleted { chat_id, message_id } => {
+            CoreEvent::MessageDeleted {
+                chat_id,
+                message_id,
+            } => {
                 let remove_chat_messages = if let Some(messages) = self.messages.get_mut(chat_id) {
                     messages.retain(|message| message.id != *message_id);
                     messages.is_empty()
