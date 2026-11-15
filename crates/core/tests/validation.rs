@@ -25,8 +25,15 @@ fn command_validation_accepts_supported_inputs() {
     }
     .validate()
     .is_ok());
-    assert!(CoreCommand::LoadPinnedMessage { chat_id: 1 }.validate().is_ok());
-    assert!(CoreCommand::PinMessage { chat_id: 1, message_id: 2 }.validate().is_ok());
+    assert!(CoreCommand::LoadPinnedMessage { chat_id: 1 }
+        .validate()
+        .is_ok());
+    assert!(CoreCommand::PinMessage {
+        chat_id: 1,
+        message_id: 2
+    }
+    .validate()
+    .is_ok());
     assert!(CoreCommand::UnpinMessage { chat_id: 1 }.validate().is_ok());
     assert!(CoreCommand::Shutdown.validate().is_ok());
 }
@@ -50,8 +57,14 @@ fn command_validation_rejects_invalid_inputs() {
             text: "   ".into(),
         },
         CoreCommand::LoadPinnedMessage { chat_id: 0 },
-        CoreCommand::PinMessage { chat_id: 0, message_id: 2 },
-        CoreCommand::PinMessage { chat_id: 1, message_id: 0 },
+        CoreCommand::PinMessage {
+            chat_id: 0,
+            message_id: 2,
+        },
+        CoreCommand::PinMessage {
+            chat_id: 1,
+            message_id: 0,
+        },
         CoreCommand::UnpinMessage { chat_id: 0 },
     ];
 

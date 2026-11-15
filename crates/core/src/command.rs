@@ -11,14 +11,26 @@ pub enum CoreCommand {
     SetPhoneNumber(String),
     SubmitCode(String),
     SubmitPassword(String),
-    LoadChats { limit: usize },
+    LoadChats {
+        limit: usize,
+    },
     /// Fetches the chat's current pinned message, if any.
-    LoadPinnedMessage { chat_id: i64 },
+    LoadPinnedMessage {
+        chat_id: i64,
+    },
     /// Pins a message in its chat.
-    PinMessage { chat_id: i64, message_id: i64 },
+    PinMessage {
+        chat_id: i64,
+        message_id: i64,
+    },
     /// Removes the current pinned message from its chat.
-    UnpinMessage { chat_id: i64 },
-    SendText { chat_id: i64, text: String },
+    UnpinMessage {
+        chat_id: i64,
+    },
+    SendText {
+        chat_id: i64,
+        text: String,
+    },
     Shutdown,
 }
 
@@ -68,7 +80,9 @@ impl CoreCommand {
             } => {
                 require_non_zero_chat_id(*chat_id)?;
                 if *message_id <= 0 {
-                    return Err(CoreError::InvalidInput("message id must be positive".into()));
+                    return Err(CoreError::InvalidInput(
+                        "message id must be positive".into(),
+                    ));
                 }
                 Ok(())
             }

@@ -106,7 +106,10 @@ impl MockTelegramBackend {
                     message: chat.pinned_message.clone(),
                 }])
             }
-            CoreCommand::PinMessage { chat_id, message_id } => {
+            CoreCommand::PinMessage {
+                chat_id,
+                message_id,
+            } => {
                 let chat = self
                     .chats
                     .iter_mut()

@@ -110,8 +110,14 @@ async fn mock_backend_loads_pins_and_supports_pin_unpin() {
         .await
         .unwrap();
     assert!(matches!(
-        timeout(Duration::from_secs(1), events.recv()).await.unwrap().unwrap(),
-        CoreEvent::PinnedMessageUpdated { chat_id: 2, message: None }
+        timeout(Duration::from_secs(1), events.recv())
+            .await
+            .unwrap()
+            .unwrap(),
+        CoreEvent::PinnedMessageUpdated {
+            chat_id: 2,
+            message: None
+        }
     ));
     assert_eq!(core.state().chat(2).unwrap().pinned_message, None);
 
