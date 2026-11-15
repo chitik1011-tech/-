@@ -10,6 +10,7 @@ use crate::{
     command::CoreCommand,
     error::{CoreError, Result},
     event::CoreEvent,
+    model::ReactionOperation,
     state::CoreState,
     storage::{NoopStateStore, StateStore},
     wire::{decode_command, encode_state},
@@ -98,9 +99,20 @@ where
             match input {
                 RuntimeInput::Command(Some(command)) => {
                     let shutdown_requested = matches!(command, CoreCommand::Shutdown);
+                    let failure_context = reaction_failure_context(&command);
                     let events = match backend.handle(command).await {
                         Ok(events) => events,
-                        Err(error) => vec![CoreEvent::Error(error.to_string())],
+                        Err(error) => vec![failure_context
+                            .map(|(chat_id, message_id, emoji, operation)| {
+                                CoreEvent::ReactionOperationFailed {
+                                    chat_id,
+                                    message_id,
+                                    emoji,
+                                    operation,
+                                    error: error.to_string(),
+                                }
+                            })
+                            .unwrap_or_else(|| CoreEvent::Error(error.to_string()))],
                     };
 
                     if !events.is_empty() {
@@ -172,6 +184,20 @@ where
         commands: command_tx,
         events: event_tx,
         state: state_rx,
+    }
+}
+
+fn reaction_failure_context(
+    command: &CoreCommand,
+) -> Option<(i64, i64, String, ReactionOperation)> {
+    match command {
+        CoreCommand::AddReaction { chat_id, message_id, emoji } => {
+            Some((*chat_id, *message_id, emoji.clone(), ReactionOperation::Add))
+        }
+        CoreCommand::RemoveReaction { chat_id, message_id, emoji } => {
+            Some((*chat_id, *message_id, emoji.clone(), ReactionOperation::Remove))
+        }
+        _ => None,
     }
 }
 
@@ -266,5 +292,37 @@ async fn persist_state<S: StateStore>(
         state.last_error = Some(message.clone());
         let _ = state_tx.send(state.clone());
         let _ = event_tx.send(CoreEvent::Error(message));
+    }
+}
+
+#[cfg(test)]
+mod reaction_failure_tests {
+    use super::*;
+    use crate::error::CoreError;
+
+    #[test]
+    fn reaction_backend_failures_keep_operation_context() {
+        let add = reaction_failure_context(&CoreCommand::AddReaction {
+            chat_id: -4,
+            message_id: 9,
+            emoji: "👍".into(),
+        });
+        assert_eq!(add, Some((-4, 9, "👍".into(), ReactionOperation::Add)));
+
+        let remove = reaction_failure_context(&CoreCommand::RemoveReaction {
+            chat_id: 3,
+            message_id: 12,
+            emoji: "🫶".into(),
+        });
+        assert_eq!(remove, Some((3, 12, "🫶".into(), ReactionOperation::Remove)));
+        assert!(reaction_failure_context(&CoreCommand::Start).is_none());
+
+        let event = add.map(|(chat_id, message_id, emoji, operation)| {
+            CoreEvent::ReactionOperationFailed {
+                chat_id, message_id, emoji, operation,
+                error: CoreError::Backend("offline".into()).to_string(),
+            }
+        });
+        assert!(matches!(event, Some(CoreEvent::ReactionOperationFailed { operation: ReactionOperation::Add, .. })));
     }
 }

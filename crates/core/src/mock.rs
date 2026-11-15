@@ -36,6 +36,7 @@ impl Default for MockTelegramBackend {
                         text: "Core online".into(),
                         timestamp_unix: unix_timestamp(),
                         outgoing: false,
+                        reactions: Vec::new(),
                     }),
                 },
             ],
@@ -110,6 +111,7 @@ impl MockTelegramBackend {
                     text,
                     timestamp_unix: unix_timestamp(),
                     outgoing: true,
+                    reactions: Vec::new(),
                 };
                 self.next_message_id += 1;
 
@@ -119,6 +121,9 @@ impl MockTelegramBackend {
 
                 Ok(vec![CoreEvent::MessageAdded(message)])
             }
+            CoreCommand::AddReaction { .. } | CoreCommand::RemoveReaction { .. } => Err(
+                CoreError::Backend("mock backend does not implement message reactions".into()),
+            ),
             CoreCommand::Shutdown => Ok(Vec::new()),
         }
     }

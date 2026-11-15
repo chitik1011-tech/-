@@ -26,6 +26,25 @@ pub struct MessageSummary {
     pub text: String,
     pub timestamp_unix: i64,
     pub outgoing: bool,
+    /// Current absolute reaction totals. Older saved messages default to no reactions.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reactions: Vec<MessageReaction>,
+}
+
+/// The aggregate count and current user's choice for one reaction emoji.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MessageReaction {
+    pub emoji: String,
+    pub count: u32,
+    pub chosen_by_current_user: bool,
+}
+
+/// The operation a user requested for a message reaction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReactionOperation {
+    Add,
+    Remove,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
