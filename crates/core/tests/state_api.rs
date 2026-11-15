@@ -169,7 +169,23 @@ fn pinned_message_events_update_chat_level_state() {
 async fn file_store_reads_old_chat_state_without_pinned_message() {
     let path = temporary_path("old-pinned-chat");
     let store = JsonFileStateStore::new(&path);
-    let old_state = r#"{"schema_version":1,"state":{"running":true,"account":{"authorization":"Ready","chats":[{"id":77,"title":"legacy","unread_count":3,"last_message":null}]},"messages":{},"last_error":null}}"#;
+    let old_state = r#"{
+        "schema_version": 1,
+        "state": {
+            "running": true,
+            "account": {
+                "authorization": "Ready",
+                "chats": [{
+                    "id": 77,
+                    "title": "legacy",
+                    "unread_count": 3,
+                    "last_message": null
+                }]
+            },
+            "messages": {},
+            "last_error": null
+        }
+    }"#;
     fs::write(&path, old_state).unwrap();
 
     let loaded = store.load().await.unwrap().unwrap();
@@ -184,6 +200,13 @@ async fn file_store_writes_versioned_envelope() {
     let store = JsonFileStateStore::new(&path);
     let mut state = CoreState::default();
     state.account.authorization = AuthorizationState::Ready;
+    state.account.chats.push(ChatSummary {
+        id: 77,
+        title: "pinned persistence".into(),
+        unread_count: 0,
+        last_message: None,
+        pinned_message: Some(message(19, 500)),
+    });
 
     store.save(&state).await.unwrap();
 
