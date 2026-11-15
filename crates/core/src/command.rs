@@ -123,7 +123,12 @@ fn require_non_zero(field: &str, value: i64) -> Result<()> {
 
 fn require_message_ids(chat_id: i64, message_id: i64) -> Result<()> {
     require_non_zero("chat id", chat_id)?;
-    require_non_zero("message id", message_id)
+    if message_id <= 0 {
+        return Err(CoreError::InvalidInput(
+            "message id must be positive".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_message_text(field: &str, value: &str) -> Result<()> {
