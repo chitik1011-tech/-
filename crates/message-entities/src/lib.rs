@@ -72,6 +72,103 @@ impl TextEntity {
         })
     }
 
+    /// Creates an entity from a UTF-8 byte range in `text`.
+    ///
+    /// Telegram serializes offsets in UTF-16 code units. This helper accepts
+    /// Rust's byte ranges, validates that both endpoints are Unicode scalar
+    /// boundaries, and converts them to Telegram's representation.
+    pub fn from_byte_range(
+        text: &str,
+        range: Range<usize>,
+        kind: EntityKind,
+    ) -> Result<Self, EntityError> {
+        if range.start > range.end {
+            return Err(EntityError::InvalidByteRange {
+                start: range.start,
+                end: range.end,
+            });
+        }
+        if range.start == range.end {
+            return Err(EntityError::EmptyRange);
+        }
+        if range.end > text.len() {
+            return Err(EntityError::ByteRangeOutOfBounds {
+                start: range.start,
+                end: range.end,
+                text_byte_length: text.len(),
+            });
+        }
+        if !text.is_char_boundary(range.start) {
+            return Err(EntityError::ByteOffsetSplitsUnicodeScalar {
+                offset: range.start,
+            });
+        }
+        if !text.is_char_boundary(range.end) {
+            return Err(EntityError::ByteOffsetSplitsUnicodeScalar { offset: range.end });
+        }
+
+        let offset = u32::try_from(text[..range.start].encode_utf16().count())
+            .map_err(|_| EntityError::OffsetOverflow)?;
+        let length = u32::try_from(text[range.clone()].encode_utf16().count())
+            .map_err(|_| EntityError::OffsetOverflow)?;
+        Self::new(offset, length, kind)
+    }
+
+    /// Creates a bold entity from a UTF-8 byte range.
+    pub fn bold(text: &str, range: Range<usize>) -> Result<Self, EntityError> {
+        Self::from_byte_range(text, range, EntityKind::Bold)
+    }
+
+    /// Creates an italic entity from a UTF-8 byte range.
+    pub fn italic(text: &str, range: Range<usize>) -> Result<Self, EntityError> {
+        Self::from_byte_range(text, range, EntityKind::Italic)
+    }
+
+    /// Creates an underline entity from a UTF-8 byte range.
+    pub fn underline(text: &str, range: Range<usize>) -> Result<Self, EntityError> {
+        Self::from_byte_range(text, range, EntityKind::Underline)
+    }
+
+    /// Creates a strikethrough entity from a UTF-8 byte range.
+    pub fn strikethrough(text: &str, range: Range<usize>) -> Result<Self, EntityError> {
+        Self::from_byte_range(text, range, EntityKind::Strikethrough)
+    }
+
+    /// Creates a spoiler entity from a UTF-8 byte range.
+    pub fn spoiler(text: &str, range: Range<usize>) -> Result<Self, EntityError> {
+        Self::from_byte_range(text, range, EntityKind::Spoiler)
+    }
+
+    /// Creates a code entity from a UTF-8 byte range.
+    pub fn code(text: &str, range: Range<usize>) -> Result<Self, EntityError> {
+        Self::from_byte_range(text, range, EntityKind::Code)
+    }
+
+    /// Creates a preformatted entity from a UTF-8 byte range and language.
+    pub fn pre(
+        text: &str,
+        range: Range<usize>,
+        language: impl Into<String>,
+    ) -> Result<Self, EntityError> {
+        Self::from_byte_range(
+            text,
+            range,
+            EntityKind::Pre {
+                language: language.into(),
+            },
+        )
+    }
+
+    /// Creates a URL entity from a UTF-8 byte range.
+    pub fn url(text: &str, range: Range<usize>) -> Result<Self, EntityError> {
+        Self::from_byte_range(text, range, EntityKind::Url)
+    }
+
+    /// Creates a mention entity from a UTF-8 byte range.
+    pub fn mention(text: &str, range: Range<usize>) -> Result<Self, EntityError> {
+        Self::from_byte_range(text, range, EntityKind::Mention)
+    }
+
     /// Returns the UTF-16 code-unit offset from the start of the text.
     pub fn offset(&self) -> u32 {
         self.offset
@@ -177,6 +274,16 @@ pub enum EntityError {
     EmptyRange,
     #[error("entity UTF-16 offset plus length overflows u32")]
     OffsetOverflow,
+    #[error("byte range start {start} is greater than end {end}")]
+    InvalidByteRange { start: usize, end: usize },
+    #[error("byte range {start}..{end} exceeds text byte length {text_byte_length}")]
+    ByteRangeOutOfBounds {
+        start: usize,
+        end: usize,
+        text_byte_length: usize,
+    },
+    #[error("byte offset {offset} falls inside a UTF-8 encoded Unicode scalar value")]
+    ByteOffsetSplitsUnicodeScalar { offset: usize },
     #[error("entity at UTF-16 offset {offset} with length {length} exceeds text length {text_utf16_length}")]
     OutOfBounds {
         offset: u32,
@@ -344,6 +451,65 @@ mod tests {
                     "length": 4,
                     "url": "https://example.test"
                 }]
+            })
+        );
+    }
+
+    #[test]
+    fn named_helpers_convert_utf8_ranges_to_telegram_utf16_offsets() {
+        let text = "😀 bold italic underline strike spoiler code rust https://example.test @user";
+        let byte_range = |needle: &str| {
+            let start = text.find(needle).expect("test substring exists");
+            start..start + needle.len()
+        };
+
+        let entities = vec![
+            TextEntity::bold(text, byte_range("bold")).expect("bold range is valid"),
+            TextEntity::italic(text, byte_range("italic")).expect("italic range is valid"),
+            TextEntity::underline(text, byte_range("underline")).expect("underline range is valid"),
+            TextEntity::strikethrough(text, byte_range("strike"))
+                .expect("strikethrough range is valid"),
+            TextEntity::spoiler(text, byte_range("spoiler")).expect("spoiler range is valid"),
+            TextEntity::code(text, byte_range("code")).expect("code range is valid"),
+            TextEntity::pre(text, byte_range("rust"), "rust").expect("pre range is valid"),
+            TextEntity::url(text, byte_range("https://example.test")).expect("URL range is valid"),
+            TextEntity::mention(text, byte_range("@user")).expect("mention range is valid"),
+        ];
+
+        assert!(matches!(entities[0].kind(), EntityKind::Bold));
+        assert!(matches!(entities[1].kind(), EntityKind::Italic));
+        assert!(matches!(entities[2].kind(), EntityKind::Underline));
+        assert!(matches!(entities[3].kind(), EntityKind::Strikethrough));
+        assert!(matches!(entities[4].kind(), EntityKind::Spoiler));
+        assert!(matches!(entities[5].kind(), EntityKind::Code));
+        assert!(matches!(entities[6].kind(), EntityKind::Pre { language } if language == "rust"));
+        assert!(matches!(entities[7].kind(), EntityKind::Url));
+        assert!(matches!(entities[8].kind(), EntityKind::Mention));
+
+        let bold_byte_start = text.find("bold").expect("test substring exists");
+        let expected_utf16_offset = text[..bold_byte_start].encode_utf16().count() as u32;
+        assert_eq!(entities[0].offset(), expected_utf16_offset);
+        assert_eq!(entities[0].length(), 4);
+    }
+
+    #[test]
+    fn byte_range_helpers_reject_malformed_and_non_boundary_ranges() {
+        let text = "A😀B";
+        assert_eq!(
+            TextEntity::bold(text, 3..2),
+            Err(EntityError::InvalidByteRange { start: 3, end: 2 })
+        );
+        assert_eq!(TextEntity::italic(text, 1..1), Err(EntityError::EmptyRange));
+        assert_eq!(
+            TextEntity::code(text, 2..3),
+            Err(EntityError::ByteOffsetSplitsUnicodeScalar { offset: 2 })
+        );
+        assert_eq!(
+            TextEntity::mention(text, 1..7),
+            Err(EntityError::ByteRangeOutOfBounds {
+                start: 1,
+                end: 7,
+                text_byte_length: 6,
             })
         );
     }
