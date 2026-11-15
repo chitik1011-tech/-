@@ -183,7 +183,12 @@ fn live_message_received_before_first_page_is_preserved() {
     let live_message = message(9, 90, 900, "arrived early");
 
     state.reduce(&CoreEvent::MessageAdded(live_message.clone()));
-    apply_page(&mut state, None, vec![summary(1, "server chat", 0, None)], None);
+    apply_page(
+        &mut state,
+        None,
+        vec![summary(1, "server chat", 0, None)],
+        None,
+    );
 
     assert_eq!(
         state
@@ -341,7 +346,12 @@ fn failed_page_keeps_cursor_retryable_and_clears_error_on_success() {
 #[test]
 fn stale_first_page_cannot_replace_chats_during_next_page_request() {
     let mut state = CoreState::default();
-    apply_page(&mut state, None, vec![summary(1, "one", 0, None)], Some("next"));
+    apply_page(
+        &mut state,
+        None,
+        vec![summary(1, "one", 0, None)],
+        Some("next"),
+    );
     state.reduce(&CoreEvent::ChatsPageLoading {
         cursor: Some("next".into()),
     });
@@ -367,7 +377,12 @@ fn stale_first_page_cannot_replace_chats_during_next_page_request() {
         Some("next")
     );
 
-    apply_page(&mut state, Some("next"), vec![summary(2, "two", 0, None)], None);
+    apply_page(
+        &mut state,
+        Some("next"),
+        vec![summary(2, "two", 0, None)],
+        None,
+    );
     assert_eq!(
         state
             .account
