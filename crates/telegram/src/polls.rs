@@ -139,6 +139,7 @@ pub(crate) async fn poll_from_update(
         )));
     }
 
+    let existing_closed = existing.as_ref().is_some_and(|poll| poll.closed);
     let results = poll_results(&update.results);
     let mut summary = if let Some(raw_poll) = update.poll.as_ref().map(raw_poll) {
         if raw_poll.id != update.poll_id {
@@ -153,9 +154,8 @@ pub(crate) async fn poll_from_update(
         return Ok(None);
     };
 
-    let was_closed = summary.closed;
     apply_results(&mut summary, results, true)?;
-    summary.closed |= was_closed;
+    summary.closed |= existing_closed;
     summary.validate()?;
     remember_poll(registry, summary.clone()).await;
     Ok(Some(summary))
