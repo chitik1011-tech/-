@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     event::CoreEvent,
-    model::{AccountState, ChatSummary, MessageSummary},
+    model::{AccountState, ChatSummary, MessageCursor, MessageHistoryState, MessageSummary},
 };
 
 pub const MAX_CACHED_MESSAGES_PER_CHAT: usize = 512;
@@ -14,6 +14,8 @@ pub struct CoreState {
     pub running: bool,
     pub account: AccountState,
     pub messages: BTreeMap<i64, Vec<MessageSummary>>,
+    #[serde(default)]
+    pub message_history: BTreeMap<i64, MessageHistoryState>,
     pub last_error: Option<String>,
 }
 
@@ -23,6 +25,7 @@ impl Default for CoreState {
             running: true,
             account: AccountState::default(),
             messages: BTreeMap::new(),
+            message_history: BTreeMap::new(),
             last_error: None,
         }
     }
@@ -42,6 +45,39 @@ impl CoreState {
             CoreEvent::ChatsLoaded(chats) => {
                 self.account.chats = chats.clone();
                 self.last_error = None;
+            }
+            CoreEvent::MessagesLoading { chat_id, .. } => {
+                let history = self.message_history.entry(*chat_id).or_default();
+                history.loading = true;
+                history.error = None;
+            }
+            CoreEvent::MessagesLoaded {
+                chat_id,
+                cursor,
+                messages,
+                next_cursor,
+                has_more,
+            } => {
+                self.merge_message_page(*chat_id, cursor.as_ref(), messages);
+
+                let page_has_messages = messages.iter().any(|message| message.chat_id == *chat_id);
+                let cursor_advanced = next_cursor.as_ref() != cursor.as_ref();
+                let has_more = *has_more
+                    && page_has_messages
+                    && cursor_advanced
+                    && next_cursor.is_some();
+                let history = self.message_history.entry(*chat_id).or_default();
+                history.loading = false;
+                history.has_more = has_more;
+                history.next_cursor = if has_more { next_cursor.clone() } else { None };
+                history.error = None;
+                self.last_error = None;
+            }
+            CoreEvent::MessageHistoryLoadFailed { chat_id, error, .. } => {
+                let history = self.message_history.entry(*chat_id).or_default();
+                history.loading = false;
+                history.error = Some(error.clone());
+                self.last_error = Some(error.clone());
             }
             CoreEvent::MessageAdded(message) => {
                 let inserted = self.upsert_message(message.clone());
@@ -87,12 +123,47 @@ impl CoreState {
             .unwrap_or(&[])
     }
 
+    pub fn message_history_for_chat(&self, chat_id: i64) -> MessageHistoryState {
+        self.message_history.get(&chat_id).cloned().unwrap_or_default()
+    }
+
     pub fn total_unread_count(&self) -> u64 {
         self.account
             .chats
             .iter()
             .map(|chat| u64::from(chat.unread_count))
             .sum()
+    }
+
+    fn merge_message_page(
+        &mut self,
+        chat_id: i64,
+        cursor: Option<&MessageCursor>,
+        incoming: &[MessageSummary],
+    ) {
+        let mut by_id = BTreeMap::<i64, MessageSummary>::new();
+        if let Some(existing) = self.messages.get(&chat_id) {
+            for message in existing.iter().filter(|message| message.chat_id == chat_id) {
+                by_id.insert(message.id, message.clone());
+            }
+        }
+        for message in incoming.iter().filter(|message| message.chat_id == chat_id) {
+            by_id.insert(message.id, message.clone());
+        }
+
+        let mut merged: Vec<_> = by_id.into_values().collect();
+        merged.sort_by_key(|message| (message.timestamp_unix, message.id));
+        if merged.len() > MAX_CACHED_MESSAGES_PER_CHAT {
+            let excess = merged.len() - MAX_CACHED_MESSAGES_PER_CHAT;
+            if cursor.is_some() {
+                // Older pages are prepended; preserve that visible history window.
+                merged.truncate(MAX_CACHED_MESSAGES_PER_CHAT);
+            } else {
+                // The first page is newest-first from the backend; retain recent messages.
+                merged.drain(..excess);
+            }
+        }
+        self.messages.insert(chat_id, merged);
     }
 
     fn upsert_message(&mut self, message: MessageSummary) -> bool {
