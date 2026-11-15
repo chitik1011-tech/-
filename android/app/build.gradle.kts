@@ -9,6 +9,18 @@ val repoRoot = rootProject.projectDir.parentFile
 val rustBuildScript = rootProject.file("build-rust.sh")
 val rustLibrary = layout.projectDirectory.file("src/main/jniLibs/arm64-v8a/libtg_android_bridge.so")
 
+val telegramApiId = (
+    providers.gradleProperty("TELEGRAM_API_ID").orNull
+        ?: System.getenv("TELEGRAM_API_ID")
+        ?: "0"
+).toIntOrNull() ?: 0
+
+val telegramApiHash = (
+    providers.gradleProperty("TELEGRAM_API_HASH").orNull
+        ?: System.getenv("TELEGRAM_API_HASH")
+        ?: ""
+).replace("\\", "\\\\").replace("\"", "\\\"")
+
 val buildRustArm64 by tasks.registering(Exec::class) {
     group = "build"
     description = "Builds the Rust JNI bridge for arm64-v8a using cargo-ndk."
@@ -20,6 +32,9 @@ val buildRustArm64 by tasks.registering(Exec::class) {
             include("Cargo.toml", "src/**/*.rs")
         },
         fileTree(repoRoot.resolve("crates/core")) {
+            include("Cargo.toml", "src/**/*.rs")
+        },
+        fileTree(repoRoot.resolve("crates/telegram")) {
             include("Cargo.toml", "src/**/*.rs")
         },
         repoRoot.resolve("Cargo.toml"),
@@ -38,6 +53,9 @@ android {
         versionCode = 1
         versionName = "0.1.0"
 
+        buildConfigField("int", "TELEGRAM_API_ID", telegramApiId.toString())
+        buildConfigField("String", "TELEGRAM_API_HASH", "\"$telegramApiHash\"")
+
         ndk {
             abiFilters += "arm64-v8a"
         }
@@ -45,6 +63,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     compileOptions {
@@ -78,6 +97,7 @@ dependencies {
 
     implementation("androidx.activity:activity-compose:1.13.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.11.0")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.11.0")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
