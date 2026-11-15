@@ -40,6 +40,12 @@ fn reducer_deduplicates_message_updates() {
         timestamp_unix: 100,
         outgoing: true,
         attachments: Vec::new(),
+        forwarded_from: None,
+        edited: false,
+        edit_timestamp_unix: None,
+        service_message: false,
+        media_caption: None,
+        reply_to: None,
     };
 
     state.reduce(&CoreEvent::MessageAdded(original.clone()));
