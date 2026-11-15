@@ -224,13 +224,13 @@ async fn failed_page_emits_chat_scoped_error_and_can_be_retried() {
             chat_id: 77,
             cursor: failed_cursor,
             error: message,
-        } if failed_cursor.as_ref() == Some(&cursor) && message == "offline"
+        } if failed_cursor.as_ref() == Some(&cursor) && message == "backend error: offline"
     ));
     let history = core.state().message_history_for_chat(77);
     assert!(!history.loading);
     assert!(history.has_more);
     assert_eq!(history.next_cursor, Some(cursor));
-    assert_eq!(history.error.as_deref(), Some("offline"));
+    assert_eq!(history.error.as_deref(), Some("backend error: offline"));
 
     core.shutdown().await.unwrap();
 }
