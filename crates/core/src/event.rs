@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     connection::ConnectionState,
     connection_machine::{ConnectionToken, LinkEvent},
-    model::{AccountState, AuthorizationState, ChatSummary, MessageSummary},
+    model::{AccountState, AuthorizationState, ChatActivityKind, ChatSummary, MessageSummary},
     search::{MessageSearchPage, SearchMessagesRequest},
     send::OutgoingSend,
 };
@@ -68,6 +68,24 @@ pub enum CoreEvent {
         message_ids: Vec<i64>,
     },
     MessageSendStateChanged(OutgoingSend),
+    /// `generation` must monotonically increase per (chat_id, user_id).
+    ChatActivityChanged {
+        chat_id: i64,
+        user_id: i64,
+        generation: u64,
+        activity: ChatActivityKind,
+        ttl_ms: u64,
+    },
+    ChatActivityEnded {
+        chat_id: i64,
+        user_id: i64,
+        generation: u64,
+    },
+    ChatActivityExpired {
+        chat_id: i64,
+        user_id: i64,
+        generation: u64,
+    },
     Error(String),
     Stopped,
 }
@@ -94,9 +112,21 @@ impl CoreEvent {
             Self::MessageEdited(_) => "message_edited",
             Self::MessagesDeleted { .. } => "messages_deleted",
             Self::MessageSendStateChanged(_) => "message_send_state_changed",
+            Self::ChatActivityChanged { .. } => "chat_activity_changed",
+            Self::ChatActivityEnded { .. } => "chat_activity_ended",
+            Self::ChatActivityExpired { .. } => "chat_activity_expired",
             Self::Error(_) => "error",
             Self::Stopped => "stopped",
         }
+    }
+
+    pub const fn is_transient(&self) -> bool {
+        matches!(
+            self,
+            Self::ChatActivityChanged { .. }
+                | Self::ChatActivityEnded { .. }
+                | Self::ChatActivityExpired { .. }
+        )
     }
 
     pub const fn is_terminal(&self) -> bool {
