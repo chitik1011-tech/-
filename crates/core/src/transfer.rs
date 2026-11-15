@@ -261,6 +261,13 @@ impl TransferManager {
             if record.state.is_terminal() {
                 return Err(invalid(record));
             }
+            // Invalidate callbacks that were already in flight when cancellation
+            // was requested. A late progress/failure callback must not replace
+            // the terminal Cancelled state.
+            record.generation = record
+                .generation
+                .checked_add(1)
+                .ok_or(TransferError::IdExhausted)?;
             record.state = match record.key.direction {
                 TransferDirection::Download => TransferState::Download(DownloadState::Cancelled),
                 TransferDirection::Upload => TransferState::Upload(UploadState::Cancelled),
@@ -546,6 +553,31 @@ mod tests {
         );
         assert_eq!(snapshot.bytes_transferred, 0);
         assert_eq!(restarted.generation, completed.generation + 1);
+    }
+
+    #[test]
+    fn cancelling_invalidates_in_flight_transfer_tokens() {
+        let manager = TransferManager::new();
+        let remote = manager
+            .request(TransferDirection::Download, "cancel-race", Some(8))
+            .unwrap();
+        let queued = manager.queue_download(remote.token).unwrap();
+        let active = manager.start_download(queued).unwrap();
+
+        let cancelled = manager.cancel(active).unwrap();
+        assert_eq!(cancelled.generation, active.generation + 1);
+        assert_eq!(
+            manager.get(cancelled).unwrap().state,
+            TransferState::Download(DownloadState::Cancelled)
+        );
+        assert!(matches!(
+            manager.report_progress(active, 1),
+            Err(TransferError::StaleToken)
+        ));
+        assert!(matches!(
+            manager.fail(active),
+            Err(TransferError::StaleToken)
+        ));
     }
 
     #[test]
