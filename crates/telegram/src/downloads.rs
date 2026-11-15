@@ -103,6 +103,7 @@ async fn run_download(
 
     emit_snapshot(updates, target, transfers, active).await;
 
+    // CacheWriter keeps partial bytes in a hidden temporary entry until atomic commit.
     let mut writer = cache
         .begin_write(&target.reference)
         .map_err(|_| "could not prepare private media cache".to_owned())?;
