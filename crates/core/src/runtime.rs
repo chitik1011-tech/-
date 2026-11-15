@@ -102,9 +102,17 @@ where
                         CoreCommand::ForwardMessages(request) => Some(request.clone()),
                         _ => None,
                     };
-                    let events = match backend.handle(command).await {
-                        Ok(events) => events,
-                        Err(error) => vec![CoreEvent::Error(error.to_string())],
+                    let events = match command {
+                        CoreCommand::ForwardMessages(request) => {
+                            match backend.forward_messages(request).await {
+                                Ok(events) => events,
+                                Err(error) => vec![CoreEvent::Error(error.to_string())],
+                            }
+                        }
+                        command => match backend.handle(command).await {
+                            Ok(events) => events,
+                            Err(error) => vec![CoreEvent::Error(error.to_string())],
+                        },
                     };
                     let events = match forward_request {
                         Some(request) => {
