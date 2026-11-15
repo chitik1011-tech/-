@@ -105,7 +105,7 @@ where
                     let events = match command {
                         CoreCommand::ForwardMessages(request) => {
                             match backend.forward_messages(request).await {
-                                Ok(events) => events,
+                                Ok(result) => vec![CoreEvent::MessagesForwarded(result)],
                                 Err(error) => vec![CoreEvent::Error(error.to_string())],
                             }
                         }
