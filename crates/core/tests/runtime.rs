@@ -74,6 +74,29 @@ fn wire_protocol_round_trips_commands_events_and_state() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn core_handle_accepts_json_commands_and_exports_state() {
+    let core = spawn_core(MockTelegramBackend::default());
+    let mut events = core.subscribe();
+
+    core.send_json(r#"{"type":"start"}"#).await.unwrap();
+
+    assert!(matches!(
+        timeout(Duration::from_secs(1), events.recv())
+            .await
+            .unwrap()
+            .unwrap(),
+        CoreEvent::AuthorizationChanged(AuthorizationState::WaitingForPhoneNumber)
+    ));
+
+    let state_json = core.state_json().unwrap();
+    let state: CoreState = serde_json::from_str(&state_json).unwrap();
+    assert_eq!(
+        state.account.authorization,
+        AuthorizationState::WaitingForPhoneNumber
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn mock_backend_can_authorize_load_chats_and_send() {
     let core = spawn_core(MockTelegramBackend::default());
     let mut events = core.subscribe();
