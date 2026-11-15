@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::service_message::ServiceMessage;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AuthorizationState {
     WaitingForPhoneNumber,
@@ -26,6 +28,9 @@ pub struct MessageSummary {
     pub text: String,
     pub timestamp_unix: i64,
     pub outgoing: bool,
+    /// Structured Telegram service-event metadata, when this message is a service event.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service: Option<ServiceMessage>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
