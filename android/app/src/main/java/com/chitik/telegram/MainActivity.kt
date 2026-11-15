@@ -114,7 +114,17 @@ private fun TelegramRustApp(
 
         else -> {
             val chat = state.chats.firstOrNull { it.id == selectedChatId }
-            val messages = state.messages[selectedChatId].orEmpty()
+            val messages = state.messages[selectedChatId].orEmpty().map { message ->
+                val pollId = message.poll?.id
+                if (pollId == null) {
+                    message
+                } else {
+                    message.copy(
+                        pollVoting = pollId in state.votingPollIds,
+                        pollError = state.pollVoteErrors[pollId],
+                    )
+                }
+            }
 
             ConversationScreen(
                 state = ConversationScreenState(
@@ -137,6 +147,7 @@ private fun TelegramRustApp(
                         draft = ""
                     }
                 },
+                onPollVote = viewModel::votePoll,
                 onRetry = { viewModel.loadMessages(selectedChatId) },
                 onDownloadMedia = { messageId, attachmentIndex, retry ->
                     viewModel.downloadMedia(
@@ -154,7 +165,7 @@ private fun TelegramRustApp(
                     )
                 },
                 onOpenDocument = { attachment ->
-                    when (val result = MediaFileOpener.open(context, attachment)) {
+                    when (MediaFileOpener.open(context, attachment)) {
                         OpenMediaResult.Opened -> Unit
                         OpenMediaResult.MissingFile -> Toast.makeText(
                             context,
