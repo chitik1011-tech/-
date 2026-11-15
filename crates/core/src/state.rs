@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     event::CoreEvent,
     model::{AccountState, ChatSummary, MessageSummary},
+    search::{MessageSearchState, SearchMessagesRequest},
 };
 
 pub const MAX_CACHED_MESSAGES_PER_CHAT: usize = 512;
@@ -15,6 +16,8 @@ pub struct CoreState {
     pub account: AccountState,
     pub messages: BTreeMap<i64, Vec<MessageSummary>>,
     pub last_error: Option<String>,
+    #[serde(default)]
+    pub message_search: MessageSearchState,
 }
 
 impl Default for CoreState {
@@ -24,6 +27,7 @@ impl Default for CoreState {
             account: AccountState::default(),
             messages: BTreeMap::new(),
             last_error: None,
+            message_search: MessageSearchState::default(),
         }
     }
 }
@@ -66,6 +70,12 @@ impl CoreState {
                 }
 
                 self.last_error = None;
+            }
+            CoreEvent::SearchStarted(request) => {
+                self.message_search.begin(request);
+            }
+            CoreEvent::MessagesSearchCompleted(page) => {
+                self.message_search.complete(page);
             }
             CoreEvent::Error(error) => {
                 self.last_error = Some(error.clone());

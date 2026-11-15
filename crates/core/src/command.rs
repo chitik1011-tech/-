@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::error::{CoreError, Result};
+use crate::{error::{CoreError, Result}, search::SearchMessagesRequest};
 
 pub const MAX_CHAT_LOAD_LIMIT: usize = 500;
 
@@ -13,6 +13,7 @@ pub enum CoreCommand {
     SubmitPassword(String),
     LoadChats { limit: usize },
     SendText { chat_id: i64, text: String },
+    SearchMessages(SearchMessagesRequest),
     Shutdown,
 }
 
@@ -25,6 +26,7 @@ impl CoreCommand {
             Self::SubmitPassword(_) => "submit_password",
             Self::LoadChats { .. } => "load_chats",
             Self::SendText { .. } => "send_text",
+            Self::SearchMessages(_) => "search_messages",
             Self::Shutdown => "shutdown",
         }
     }
@@ -50,6 +52,7 @@ impl CoreCommand {
                     )))
                 }
             }
+            Self::SearchMessages(request) => request.validate(),
             Self::SendText { chat_id, text } => {
                 if *chat_id == 0 {
                     return Err(CoreError::InvalidInput("chat id must be non-zero".into()));

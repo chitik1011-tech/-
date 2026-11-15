@@ -98,6 +98,14 @@ where
             match input {
                 RuntimeInput::Command(Some(command)) => {
                     let shutdown_requested = matches!(command, CoreCommand::Shutdown);
+                    if let CoreCommand::SearchMessages(request) = &command {
+                        apply_event(
+                            CoreEvent::SearchStarted(request.clone()),
+                            &mut reduced_state,
+                            &state_tx,
+                            &event_tx_task,
+                        );
+                    }
                     let events = match backend.handle(command).await {
                         Ok(events) => events,
                         Err(error) => vec![CoreEvent::Error(error.to_string())],
