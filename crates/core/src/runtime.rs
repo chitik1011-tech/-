@@ -10,7 +10,7 @@ use crate::{
     command::CoreCommand,
     error::{CoreError, Result},
     event::CoreEvent,
-    outgoing::{OutgoingMessage, OutgoingMessageCommand, OutgoingMessageStatus},
+    outgoing::{OutgoingMessageCommand, OutgoingMessageStatus},
     state::CoreState,
     storage::{NoopStateStore, StateStore},
     wire::{decode_command, decode_outgoing_command, encode_state},
