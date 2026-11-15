@@ -102,6 +102,7 @@ fn event_kind(event: &CoreEvent) -> &'static str {
     match event {
         CoreEvent::State(_) => "account_state",
         CoreEvent::AuthorizationChanged(_) => "authorization_changed",
+        CoreEvent::ConnectionChanged(_) => "connection_changed",
         CoreEvent::ChatsLoaded(_) => "chats_loaded",
         CoreEvent::MessageAdded(_) => "message_added",
         CoreEvent::Error(_) => "error",
