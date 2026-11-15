@@ -99,14 +99,7 @@ fn with_registry<T>(
 }
 
 fn event_kind(event: &CoreEvent) -> &'static str {
-    match event {
-        CoreEvent::State(_) => "account_state",
-        CoreEvent::AuthorizationChanged(_) => "authorization_changed",
-        CoreEvent::ChatsLoaded(_) => "chats_loaded",
-        CoreEvent::MessageAdded(_) => "message_added",
-        CoreEvent::Error(_) => "error",
-        CoreEvent::Stopped => "stopped",
-    }
+    event.kind()
 }
 
 fn error_payload(message: &str) -> String {
