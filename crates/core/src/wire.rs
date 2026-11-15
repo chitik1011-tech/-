@@ -18,11 +18,10 @@ pub fn encode_state(state: &CoreState) -> Result<String> {
     serde_json::to_string(state).map_err(|error| CoreError::Serialization(error.to_string()))
 }
 
-
 /// Decode a stable-ID message send request for the core-owned outbox.
 pub fn decode_outgoing_command(input: &str) -> Result<OutgoingMessageCommand> {
-    let command: OutgoingMessageCommand = serde_json::from_str(input)
-        .map_err(|error| CoreError::Serialization(error.to_string()))?;
+    let command: OutgoingMessageCommand =
+        serde_json::from_str(input).map_err(|error| CoreError::Serialization(error.to_string()))?;
     command.validate()?;
     Ok(command)
 }
@@ -30,7 +29,10 @@ pub fn decode_outgoing_command(input: &str) -> Result<OutgoingMessageCommand> {
 #[cfg(test)]
 mod tests {
     use super::{decode_outgoing_command, encode_event};
-    use crate::{event::CoreEvent, outgoing::{OutgoingMessage, OutgoingMessageStatus}};
+    use crate::{
+        event::CoreEvent,
+        outgoing::{OutgoingMessage, OutgoingMessageStatus},
+    };
 
     #[test]
     fn decodes_send_text_with_stable_client_id() {
@@ -57,7 +59,8 @@ mod tests {
             server_message_id: None,
             error: None,
         });
-        let value: serde_json::Value = serde_json::from_str(&encode_event(&event).unwrap()).unwrap();
+        let value: serde_json::Value =
+            serde_json::from_str(&encode_event(&event).unwrap()).unwrap();
         assert_eq!(value["type"], "outgoing_message_changed");
         assert_eq!(value["payload"]["client_id"], "pending-1");
         assert_eq!(value["payload"]["status"], "sending");
