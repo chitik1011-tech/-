@@ -180,7 +180,17 @@ mod tests {
 
     #[test]
     fn current_schema_round_trips_contacts() {
-        let state = CoreState::default();
+        let mut state = CoreState::default();
+        state
+            .contacts
+            .upsert(crate::contacts::Contact {
+                user_id: 42,
+                display_name: "A Person".into(),
+                username: Some("a_person".into()),
+                is_imported: true,
+                is_contact: true,
+            })
+            .unwrap();
         let stored = StoredState {
             schema_version: STATE_SCHEMA_VERSION,
             state: state.clone(),
