@@ -25,17 +25,23 @@ pub(crate) fn message_to_summary(message: &Message) -> MessageSummary {
         outgoing: message.outgoing(),
     });
 
-    summary.forwarded_from = message.forward_header().is_some().then(ForwardedFrom::default);
+    summary.forwarded_from = message
+        .forward_header()
+        .is_some()
+        .then(ForwardedFrom::default);
     summary.edited = edit_timestamp_unix.is_some();
     summary.edit_timestamp_unix = edit_timestamp_unix;
     summary.service_message = message.action().is_some();
-    summary.media_caption = (message.media().is_some() && !text.is_empty()).then(|| text.to_owned());
-    summary.reply_to = message.reply_to_message_id().map(|message_id| ReplyMetadata {
-        message_id: i64::from(message_id),
-        chat_id: Some(chat_id),
-        sender_id: None,
-        sender_display_name: None,
-    });
+    summary.media_caption =
+        (message.media().is_some() && !text.is_empty()).then(|| text.to_owned());
+    summary.reply_to = message
+        .reply_to_message_id()
+        .map(|message_id| ReplyMetadata {
+            message_id: i64::from(message_id),
+            chat_id: Some(chat_id),
+            sender_id: None,
+            sender_display_name: None,
+        });
 
     summary
 }
