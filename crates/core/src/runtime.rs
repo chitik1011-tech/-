@@ -98,9 +98,17 @@ where
             match input {
                 RuntimeInput::Command(Some(command)) => {
                     let shutdown_requested = matches!(command, CoreCommand::Shutdown);
+                    let forward_request = match &command {
+                        CoreCommand::ForwardMessages(request) => Some(request.clone()),
+                        _ => None,
+                    };
                     let events = match backend.handle(command).await {
                         Ok(events) => events,
                         Err(error) => vec![CoreEvent::Error(error.to_string())],
+                    };
+                    let events = match forward_request {
+                        Some(request) => crate::forwarding::normalize_forward_events(&request, events),
+                        None => events,
                     };
 
                     if !events.is_empty() {
