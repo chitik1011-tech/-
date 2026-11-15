@@ -1,6 +1,8 @@
+use std::collections::{HashMap, HashSet};
+
 use serde::{Deserialize, Serialize};
 
-use crate::{error::{CoreError, Result}, model::MessageRef};
+use crate::{error::{CoreError, Result}, event::CoreEvent, model::MessageRef};
 
 pub const MAX_FORWARD_MESSAGES: usize = 100;
 
@@ -25,7 +27,7 @@ impl ForwardMessagesRequest {
         if self.request_id.trim().is_empty() {
             return Err(CoreError::InvalidInput("forward request id is empty".into()));
         }
-        let mut seen = std::collections::HashSet::new();
+        let mut seen = HashSet::new();
         for source in &self.sources {
             if source.chat_id == 0 || source.message_id <= 0 {
                 return Err(CoreError::InvalidInput("source chat id must be non-zero and message id positive".into()));
@@ -38,8 +40,8 @@ impl ForwardMessagesRequest {
     }
 }
 
-/// Per-source outcome. Successful IDs identify the newly forwarded Telegram
-/// message; message text is deliberately absent because forwarding is not copying.
+/// Per-source outcome. Successful IDs identify newly forwarded Telegram messages;
+/// message text is absent because forwarding must preserve source attribution.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum ForwardOutcome {
@@ -56,8 +58,46 @@ impl ForwardOutcome {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ForwardMessagesResult {
     pub request_id: String,
-    pub source_chat_id: i64,
     pub destination_chat_id: i64,
     /// One outcome per requested source, in request order; partial failures are explicit.
     pub outcomes: Vec<ForwardOutcome>,
+}
+
+/// Enforces request correlation, source membership, order, and one outcome per source.
+pub fn normalize_forward_events(request: &ForwardMessagesRequest, events: Vec<CoreEvent>) -> Vec<CoreEvent> {
+    let mut others = Vec::new();
+    let mut first: HashMap<MessageRef, ForwardOutcome> = HashMap::new();
+    for event in events {
+        if let CoreEvent::MessagesForwarded(result) = event {
+            if result.request_id == request.request_id && result.destination_chat_id == request.destination_chat_id {
+                for outcome in result.outcomes {
+                    let source = outcome.source();
+                    if request.sources.contains(source) && !first.contains_key(source) {
+                        let normalized = match outcome {
+                            ForwardOutcome::Forwarded { source, destination_message_id } if destination_message_id > 0 =>
+                                ForwardOutcome::Forwarded { source, destination_message_id },
+                            ForwardOutcome::Forwarded { source, .. } =>
+                                ForwardOutcome::Failed { source, error: "backend returned an invalid destination message id".into() },
+                            failed => failed,
+                        };
+                        first.insert(source.clone(), normalized);
+                    }
+                }
+            }
+        } else {
+            others.push(event);
+        }
+    }
+    let outcomes = request.sources.iter().map(|source| {
+        first.remove(source).unwrap_or_else(|| ForwardOutcome::Failed {
+            source: source.clone(),
+            error: "backend did not report an outcome".into(),
+        })
+    }).collect();
+    others.push(CoreEvent::MessagesForwarded(ForwardMessagesResult {
+        request_id: request.request_id.clone(),
+        destination_chat_id: request.destination_chat_id,
+        outcomes,
+    }));
+    others
 }
