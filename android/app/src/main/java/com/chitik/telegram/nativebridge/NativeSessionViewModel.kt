@@ -35,6 +35,7 @@ data class NativeUiState(
     val votingPollIds: Set<Long> = emptySet(),
     val pollVoteErrors: Map<Long, String> = emptyMap(),
     val forwardError: String? = null,
+    val forwardSuccessCount: Long = 0,
     val busy: Boolean = false,
     val lastEventType: String = "none",
     val lastEventPayload: String = "",
@@ -620,7 +621,8 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                         busy = false,
                         lastEventType = type,
                         lastEventPayload = payload,
-                        forwardError = if (failed == 0) null else "Переслано $succeeded, не удалось: $failed${firstError?.let { detail -> " — $detail" }.orEmpty()}",
+                        forwardError = if (failed == 0 && succeeded > 0) null else "Переслано $succeeded, не удалось: $failed${firstError?.let { detail -> " — $detail" }.orEmpty()}",
+                        forwardSuccessCount = if (failed == 0 && succeeded > 0) it.forwardSuccessCount + 1 else it.forwardSuccessCount,
                     )
                 }
             }
