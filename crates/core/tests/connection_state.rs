@@ -1,7 +1,5 @@
 use serde_json::json;
-use tg_mobile_core::{
-    encode_event, ConnectionState, ConnectionStateMachine, CoreEvent, CoreState,
-};
+use tg_mobile_core::{encode_event, ConnectionState, ConnectionStateMachine, CoreEvent, CoreState};
 
 #[test]
 fn connection_state_machine_accepts_connection_and_recovery_transitions() {
@@ -31,6 +29,24 @@ fn connection_state_machine_accepts_connection_and_recovery_transitions() {
 }
 
 #[test]
+fn direct_recovery_to_connected_is_valid() {
+    let mut machine = ConnectionStateMachine::default();
+
+    assert_eq!(
+        machine.transition(ConnectionState::Connected),
+        Some(ConnectionState::Connected)
+    );
+    assert_eq!(
+        machine.transition(ConnectionState::Failed),
+        Some(ConnectionState::Failed)
+    );
+    assert_eq!(
+        machine.transition(ConnectionState::Connected),
+        Some(ConnectionState::Connected)
+    );
+}
+
+#[test]
 fn duplicate_and_invalid_transitions_are_ignored() {
     let mut machine = ConnectionStateMachine::new(ConnectionState::Connected);
 
@@ -56,7 +72,10 @@ fn connection_event_uses_stable_json_wire_shape() {
         serde_json::from_str(&encoded).expect("wire event should be valid JSON");
 
     assert_eq!(event.kind(), "connection_changed");
-    assert_eq!(value, json!({"type": "connection_changed", "payload": "reconnecting"}));
+    assert_eq!(
+        value,
+        json!({"type": "connection_changed", "payload": "reconnecting"})
+    );
 }
 
 #[test]
