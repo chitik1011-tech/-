@@ -299,6 +299,9 @@ impl CoreState {
                     }
                 }
             }
+            CoreEvent::ChatActivityChanged { .. }
+            | CoreEvent::ChatActivityEnded { .. }
+            | CoreEvent::ChatActivityExpired { .. } => {}
             CoreEvent::Error(error) => {
                 self.last_error = Some(error.clone());
             }
