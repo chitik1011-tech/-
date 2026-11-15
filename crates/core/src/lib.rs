@@ -7,6 +7,7 @@ pub mod event;
 pub mod mock;
 pub mod model;
 pub mod runtime;
+pub mod send;
 pub mod state;
 pub mod storage;
 pub mod transfer;
@@ -25,6 +26,7 @@ pub use model::{
     ChatSummary, ForwardedFrom, MediaAttachment, MessageSummary, ReplyMetadata,
 };
 pub use runtime::{spawn_core, spawn_core_with_store, CoreHandle, PERSISTENCE_FLUSH_INTERVAL_MS};
+pub use send::{ClientMessageId, OutgoingSend, OutgoingSendState};
 pub use state::{CoreState, MAX_CACHED_MESSAGES_PER_CHAT};
 pub use storage::{JsonFileStateStore, MemoryStateStore, NoopStateStore, StateStore};
 pub use transfer::{
