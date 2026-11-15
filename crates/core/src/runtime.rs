@@ -1,4 +1,9 @@
-use tokio::sync::{broadcast, mpsc, watch};
+use std::time::Duration;
+
+use tokio::{
+    sync::{broadcast, mpsc, watch},
+    time::{interval_at, Instant, Interval, MissedTickBehavior},
+};
 
 use crate::{
     backend::{BackendUpdateReceiver, TelegramBackend},
@@ -9,6 +14,8 @@ use crate::{
     storage::{NoopStateStore, StateStore},
     wire::{decode_command, encode_state},
 };
+
+pub const PERSISTENCE_FLUSH_INTERVAL_MS: u64 = 250;
 
 #[derive(Clone)]
 pub struct CoreHandle {
@@ -74,9 +81,19 @@ where
 
     tokio::spawn(async move {
         let mut reduced_state = restore_state(&store, &state_tx, &event_tx_task).await;
+        let flush_interval = Duration::from_millis(PERSISTENCE_FLUSH_INTERVAL_MS);
+        let mut persistence_tick = interval_at(Instant::now() + flush_interval, flush_interval);
+        persistence_tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        let mut persistence_dirty = false;
 
         loop {
-            let input = next_runtime_input(&mut command_rx, &mut backend_updates).await;
+            let input = next_runtime_input(
+                &mut command_rx,
+                &mut backend_updates,
+                &mut persistence_tick,
+                persistence_dirty,
+            )
+            .await;
 
             match input {
                 RuntimeInput::Command(Some(command)) => {
@@ -86,25 +103,27 @@ where
                         Err(error) => vec![CoreEvent::Error(error.to_string())],
                     };
 
-                    let stopped = apply_events(
-                        events,
-                        &store,
-                        &mut reduced_state,
-                        &state_tx,
-                        &event_tx_task,
-                    )
-                    .await;
+                    if !events.is_empty() {
+                        persistence_dirty = true;
+                    }
+
+                    let stopped =
+                        apply_events(events, &mut reduced_state, &state_tx, &event_tx_task);
 
                     if shutdown_requested || stopped {
                         if !stopped {
                             apply_event(
                                 CoreEvent::Stopped,
-                                &store,
                                 &mut reduced_state,
                                 &state_tx,
                                 &event_tx_task,
-                            )
-                            .await;
+                            );
+                            persistence_dirty = true;
+                        }
+
+                        if persistence_dirty {
+                            persist_state(&store, &mut reduced_state, &state_tx, &event_tx_task)
+                                .await;
                         }
                         break;
                     }
@@ -112,34 +131,38 @@ where
                 RuntimeInput::Command(None) => {
                     apply_event(
                         CoreEvent::Stopped,
-                        &store,
                         &mut reduced_state,
                         &state_tx,
                         &event_tx_task,
-                    )
-                    .await;
+                    );
+                    persist_state(&store, &mut reduced_state, &state_tx, &event_tx_task).await;
                     break;
                 }
                 RuntimeInput::Update(Some(Ok(event))) => {
                     let stopped = event.is_terminal();
-                    apply_event(event, &store, &mut reduced_state, &state_tx, &event_tx_task).await;
+                    apply_event(event, &mut reduced_state, &state_tx, &event_tx_task);
+                    persistence_dirty = true;
 
                     if stopped {
+                        persist_state(&store, &mut reduced_state, &state_tx, &event_tx_task).await;
                         break;
                     }
                 }
                 RuntimeInput::Update(Some(Err(error))) => {
                     apply_event(
                         CoreEvent::Error(error.to_string()),
-                        &store,
                         &mut reduced_state,
                         &state_tx,
                         &event_tx_task,
-                    )
-                    .await;
+                    );
+                    persistence_dirty = true;
                 }
                 RuntimeInput::Update(None) => {
                     backend_updates = None;
+                }
+                RuntimeInput::Persist => {
+                    persist_state(&store, &mut reduced_state, &state_tx, &event_tx_task).await;
+                    persistence_dirty = false;
                 }
             }
         }
@@ -155,20 +178,29 @@ where
 enum RuntimeInput {
     Command(Option<CoreCommand>),
     Update(Option<Result<CoreEvent>>),
+    Persist,
 }
 
 async fn next_runtime_input(
     commands: &mut mpsc::Receiver<CoreCommand>,
     updates: &mut Option<BackendUpdateReceiver>,
+    persistence_tick: &mut Interval,
+    persistence_dirty: bool,
 ) -> RuntimeInput {
     match updates.as_mut() {
         Some(updates) => {
             tokio::select! {
                 command = commands.recv() => RuntimeInput::Command(command),
                 update = updates.recv() => RuntimeInput::Update(update),
+                _ = persistence_tick.tick(), if persistence_dirty => RuntimeInput::Persist,
             }
         }
-        None => RuntimeInput::Command(commands.recv().await),
+        None => {
+            tokio::select! {
+                command = commands.recv() => RuntimeInput::Command(command),
+                _ = persistence_tick.tick(), if persistence_dirty => RuntimeInput::Persist,
+            }
+        }
     }
 }
 
@@ -196,9 +228,8 @@ async fn restore_state<S: StateStore>(
     }
 }
 
-async fn apply_events<S: StateStore>(
+fn apply_events(
     events: Vec<CoreEvent>,
-    store: &S,
     state: &mut CoreState,
     state_tx: &watch::Sender<CoreState>,
     event_tx: &broadcast::Sender<CoreEvent>,
@@ -207,15 +238,14 @@ async fn apply_events<S: StateStore>(
 
     for event in events {
         stopped |= event.is_terminal();
-        apply_event(event, store, state, state_tx, event_tx).await;
+        apply_event(event, state, state_tx, event_tx);
     }
 
     stopped
 }
 
-async fn apply_event<S: StateStore>(
+fn apply_event(
     event: CoreEvent,
-    store: &S,
     state: &mut CoreState,
     state_tx: &watch::Sender<CoreState>,
     event_tx: &broadcast::Sender<CoreEvent>,
@@ -223,7 +253,6 @@ async fn apply_event<S: StateStore>(
     state.reduce(&event);
     let _ = state_tx.send(state.clone());
     let _ = event_tx.send(event);
-    persist_state(store, state, state_tx, event_tx).await;
 }
 
 async fn persist_state<S: StateStore>(
