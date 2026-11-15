@@ -16,7 +16,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Badge
-import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -66,6 +65,8 @@ fun ChatListScreen(
     onChatSelected: (Long) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val contentMode = resolveAsyncContentMode(isLoading, chats.isEmpty(), error != null)
+
     Column(
         modifier = modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -110,83 +111,37 @@ fun ChatListScreen(
             }
         }
 
-        if (error != null) {
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.errorContainer,
-                ),
-                shape = RoundedCornerShape(16.dp),
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text(
-                        text = "Couldn’t load chats",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onErrorContainer,
-                    )
-                    Text(
-                        text = error,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onErrorContainer,
-                    )
-                    Button(
-                        onClick = onRefresh,
-                        enabled = !isLoading,
-                    ) {
-                        Text("Try again")
-                    }
-                }
-            }
+        if (error != null && contentMode != AsyncContentMode.Loading) {
+            ErrorRetryState(
+                title = "Couldn’t load chats",
+                message = error,
+                retryLabel = "Try again",
+                retryEnabled = !isLoading,
+                onRetry = onRefresh,
+            )
         }
 
-        when {
-            chats.isEmpty() && isLoading -> {
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                        .padding(24.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    CircularProgressIndicator()
-                }
+        when (contentMode) {
+            AsyncContentMode.Loading -> {
+                LoadingState(
+                    message = "Loading chats…",
+                    modifier = Modifier.weight(1f).fillMaxWidth().padding(24.dp),
+                )
             }
 
-            chats.isEmpty() && error == null -> {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(24.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        Text(
-                            text = "No conversations yet",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                        Text(
-                            text = "When Telegram returns your chats, they’ll appear here.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        OutlinedButton(onClick = onRefresh, enabled = !isLoading) {
-                            Text("Refresh chats")
-                        }
-                    }
-                }
+            AsyncContentMode.Empty -> {
+                EmptyState(
+                    title = "No conversations yet",
+                    description = "When Telegram returns your chats, they’ll appear here.",
+                    actionLabel = "Refresh chats",
+                    onAction = onRefresh,
+                    modifier = Modifier.weight(1f).fillMaxWidth().padding(24.dp),
+                )
             }
 
-            chats.isNotEmpty() -> {
+            AsyncContentMode.Error -> Unit
+
+            AsyncContentMode.Content -> {
                 LazyColumn(
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(6.dp),

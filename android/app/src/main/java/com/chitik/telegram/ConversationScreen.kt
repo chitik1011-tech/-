@@ -1,7 +1,6 @@
 package com.chitik.telegram
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -80,6 +79,11 @@ fun ConversationScreen(
     modifier: Modifier = Modifier,
 ) {
     val listState = rememberLazyListState()
+    val contentMode = resolveAsyncContentMode(
+        isLoading = state.loading,
+        isEmpty = state.messages.isEmpty(),
+        hasError = state.error != null,
+    )
     val latestMessageId = state.messages.lastOrNull()?.id
     val submitMessage = remember(state.chatId, state.draft, state.sending, onSend) {
         {
@@ -137,58 +141,59 @@ fun ConversationScreen(
                 .fillMaxSize()
                 .padding(innerPadding),
         ) {
-            state.error?.let { message ->
-                ErrorBanner(message = message, onRetry = onRetry)
+            state.error?.takeIf { contentMode != AsyncContentMode.Loading }?.let { message ->
+                ErrorRetryState(
+                    title = "Не удалось загрузить сообщения",
+                    message = message,
+                    retryLabel = "Повторить",
+                    retryEnabled = !state.loading,
+                    onRetry = onRetry,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                )
             }
 
-            if (state.loading && state.messages.isEmpty()) {
-                Box(
+            when (contentMode) {
+                AsyncContentMode.Loading -> LoadingState(
+                    message = "Загрузка сообщений…",
                     modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    CircularProgressIndicator()
-                }
-            } else if (!state.loading && state.messages.isEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(24.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        text = "Сообщений пока нет",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            } else {
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .weight(1f),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    items(
-                        items = state.messages,
-                        key = { message -> "${message.chatId}:${message.id}" },
-                    ) { message ->
-                        MessageBubble(message = message)
-                    }
+                )
 
-                    if (state.loading) {
-                        item(key = "history-loading") {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 8.dp),
-                                horizontalArrangement = Arrangement.Center,
-                            ) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.width(20.dp),
-                                    strokeWidth = 2.dp,
-                                )
+                AsyncContentMode.Empty -> EmptyState(
+                    title = "Сообщений пока нет",
+                    modifier = Modifier.fillMaxSize().padding(24.dp),
+                )
+
+                AsyncContentMode.Error -> Unit
+
+                AsyncContentMode.Content -> {
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .weight(1f),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        items(
+                            items = state.messages,
+                            key = { message -> "${message.chatId}:${message.id}" },
+                        ) { message ->
+                            MessageBubble(message = message)
+                        }
+
+                        if (state.loading) {
+                            item(key = "history-loading") {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 8.dp),
+                                    horizontalArrangement = Arrangement.Center,
+                                ) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.width(20.dp),
+                                        strokeWidth = 2.dp,
+                                    )
+                                }
                             }
                         }
                     }
@@ -289,33 +294,6 @@ private fun ComposerBar(
                 ) {
                     Text(if (sending) "…" else "Отправить")
                 }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ErrorBanner(message: String, onRetry: () -> Unit) {
-    Surface(
-        color = MaterialTheme.colorScheme.errorContainer,
-        contentColor = MaterialTheme.colorScheme.onErrorContainer,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        shape = RoundedCornerShape(14.dp),
-    ) {
-        Row(
-            modifier = Modifier.padding(start = 14.dp, end = 6.dp, top = 10.dp, bottom = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Text(
-                text = message,
-                modifier = Modifier.weight(1f),
-                style = MaterialTheme.typography.bodySmall,
-            )
-            TextButton(onClick = onRetry) {
-                Text("Повторить")
             }
         }
     }
