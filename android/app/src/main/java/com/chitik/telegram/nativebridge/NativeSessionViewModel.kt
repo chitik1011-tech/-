@@ -166,6 +166,7 @@ class NativeSessionViewModel : ViewModel(), NativeEventCallback {
                 cleared = true
                 val existing = handle
                 handle = 0L
+                _state.update { it.copy(nativeHandle = 0L) }
                 existing
             }
         }
