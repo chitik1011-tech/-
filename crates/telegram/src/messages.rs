@@ -94,8 +94,7 @@ fn document_attachment(
         .and_then(|(width, height)| positive_dimensions(width, height))
         .unwrap_or((None, None));
     let duration_ms = document.duration().and_then(|seconds| {
-        (seconds.is_finite() && seconds >= 0.0)
-            .then(|| (seconds * 1000.0).round() as u64)
+        (seconds.is_finite() && seconds >= 0.0).then(|| (seconds * 1000.0).round() as u64)
     });
     let thumbnail = best_thumbnail(document);
     MediaAttachment {
