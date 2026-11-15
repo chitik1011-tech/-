@@ -282,7 +282,10 @@ fn failed_page_keeps_cursor_retryable_and_clears_error_on_success() {
     });
 
     assert!(!state.chat_pagination.loading);
-    assert_eq!(state.chat_pagination.error.as_deref(), Some("temporary network failure"));
+    assert_eq!(
+        state.chat_pagination.error.as_deref(),
+        Some("temporary network failure")
+    );
     assert_eq!(
         state.chat_pagination.next_cursor.as_deref(),
         Some("cursor-2")
