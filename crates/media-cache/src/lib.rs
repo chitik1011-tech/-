@@ -212,7 +212,7 @@ impl MediaCache {
             let a_access = state.last_access.get(&a.key);
             let b_access = state.last_access.get(&b.key);
             match (a_access, b_access) {
-                (Some(a), Some(b)) => a.cmp(b).then_with(|| a.key.cmp(&b.key)),
+                (Some(a_access), Some(b_access)) => a_access.cmp(b_access).then_with(|| a.key.cmp(&b.key)),
                 (Some(_), None) => std::cmp::Ordering::Greater,
                 (None, Some(_)) => std::cmp::Ordering::Less,
                 (None, None) => a.modified.cmp(&b.modified).then_with(|| a.key.cmp(&b.key)),
