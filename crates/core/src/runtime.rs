@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::time::Duration;
 
 use tokio::{
@@ -81,14 +82,51 @@ where
     let (state_tx, state_rx) = watch::channel(CoreState::default());
 
     let mut backend_updates = backend.take_updates();
+    let (worker_tx, mut worker_rx) = mpsc::channel::<WorkerRequest>(32);
+    let (result_tx, result_rx) = mpsc::channel::<BackendResult>(32);
+    let worker = tokio::spawn(async move {
+        while let Some(request) = worker_rx.recv().await {
+            match request {
+                WorkerRequest::SetToken(token) => backend.set_connection_token(token),
+                WorkerRequest::Execute {
+                    op_id,
+                    generation,
+                    sync_required,
+                    command,
+                } => {
+                    // Reapply the operation's generation immediately before its RPC. This
+                    // keeps the backend token contract intact even if a token update could
+                    // not be queued while the bounded operation channel was full.
+                    backend.set_connection_token(generation);
+                    let result = backend.handle(command.clone()).await;
+                    if result_tx
+                        .send(BackendResult {
+                            op_id,
+                            generation,
+                            sync_required,
+                            command,
+                            result,
+                        })
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            }
+        }
+    });
 
     tokio::spawn(async move {
+        let mut result_rx = Some(result_rx);
         let mut reduced_state = restore_state(&store, &state_tx, &event_tx_task).await;
         let flush_interval = Duration::from_millis(PERSISTENCE_FLUSH_INTERVAL_MS);
         let mut persistence_tick = interval_at(Instant::now() + flush_interval, flush_interval);
         persistence_tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
         let mut persistence_dirty = false;
         let mut reconnect_sync_due = false;
+        let mut next_op_id = 1_u64;
+        let mut live_ops = HashMap::new();
         let mut activity_tracker = ChatActivityTracker::default();
         let activity_interval = Duration::from_millis(CHAT_ACTIVITY_EXPIRY_CHECK_INTERVAL_MS);
         let mut activity_tick = interval_at(Instant::now() + activity_interval, activity_interval);
@@ -98,6 +136,7 @@ where
             let input = next_runtime_input(
                 &mut command_rx,
                 &mut backend_updates,
+                &mut result_rx,
                 &mut persistence_tick,
                 persistence_dirty,
                 activity_tracker.has_active(),
@@ -106,25 +145,154 @@ where
             .await;
 
             match input {
+                RuntimeInput::BackendResult(Some(result)) => {
+                    if live_ops.remove(&result.op_id).is_none() {
+                        continue;
+                    }
+                    let current_generation = reduced_state.connection_machine.token();
+                    if result.generation != current_generation {
+                        continue;
+                    }
+                    let command = result.command;
+                    let mut events = match result.result {
+                        Ok(events) => events,
+                        Err(error) if matches!(command, CoreCommand::Start) => vec![
+                            CoreEvent::Error(error.to_string()),
+                            CoreEvent::ConnectionLifecycle {
+                                token: current_generation,
+                                event: LinkEvent::ConnectFailed { retryable: false },
+                            },
+                        ],
+                        Err(error) => operation_error_events(&command, error),
+                    };
+                    complete_operation_events(&command, &mut events);
+                    let initial_sync = result.sync_required
+                        && reduced_state.connection_machine.phase() == LinkPhase::Synchronizing
+                        && reduced_state.account.authorization
+                            == crate::model::AuthorizationState::Ready;
+                    if initial_sync
+                        && !events
+                            .iter()
+                            .any(|event| matches!(event, CoreEvent::ChatsLoaded(_)))
+                    {
+                        events.push(CoreEvent::ConnectionLifecycle {
+                            token: current_generation,
+                            event: LinkEvent::ConnectFailed { retryable: false },
+                        });
+                    }
+                    persistence_dirty |= events.iter().any(|event| !event.is_transient());
+                    let previous_token = reduced_state.connection_machine.token();
+                    apply_events(
+                        events,
+                        &mut reduced_state,
+                        &state_tx,
+                        &event_tx_task,
+                        &mut activity_tracker,
+                    );
+                    let current_token = reduced_state.connection_machine.token();
+                    invalidate_stale_operations(
+                        &mut live_ops,
+                        current_token,
+                        &mut reduced_state,
+                        &state_tx,
+                        &event_tx_task,
+                        &mut activity_tracker,
+                    );
+                    if current_token != previous_token {
+                        let _ = worker_tx.try_send(WorkerRequest::SetToken(current_token));
+                    }
+                }
+                RuntimeInput::BackendResult(None) => {
+                    result_rx = None;
+                    for (_, (_, command)) in live_ops.drain() {
+                        recover_interrupted_operation(
+                            &command,
+                            &mut reduced_state,
+                            &state_tx,
+                            &event_tx_task,
+                            &mut activity_tracker,
+                        );
+                    }
+                    persistence_dirty = true;
+                }
                 RuntimeInput::Command(Some(command)) => {
                     let shutdown_requested = matches!(&command, CoreCommand::Shutdown);
                     let starting_session = matches!(&command, CoreCommand::Start);
-                    if starting_session {
-                        reduced_state.connection_machine.start_session();
-                        reduced_state.connection_state =
-                            reduced_state.connection_machine.transport_state();
-                        let _ = state_tx.send(reduced_state.clone());
-                        persistence_dirty = true;
-                        backend.set_connection_token(reduced_state.connection_machine.token());
-                    }
                     if shutdown_requested {
                         let token = reduced_state.connection_machine.token();
                         reduced_state.reduce(&CoreEvent::ConnectionLifecycle {
                             token,
                             event: LinkEvent::Shutdown,
                         });
+                        let pending = reduced_state.outbox.values().cloned().collect::<Vec<_>>();
+                        for send in pending {
+                            if matches!(send.state, OutgoingSendState::Sending) {
+                                apply_event(CoreEvent::MessageSendStateChanged(OutgoingSend::awaiting_confirmation(
+                                    send.client_id, send.chat_id, send.text,
+                                    "shutdown interrupted the backend request; delivery is unknown",
+                                )), &mut reduced_state, &state_tx, &event_tx_task, &mut activity_tracker);
+                            }
+                        }
+                        for history in reduced_state.message_history.values_mut() {
+                            if history.loading {
+                                history.loading = false;
+                                history.requested_before_message_id = None;
+                                history.error = Some("shutdown interrupted message loading".into());
+                            }
+                        }
+                        let active_searches = reduced_state
+                            .message_search
+                            .chats
+                            .iter()
+                            .filter_map(|(chat_id, search)| {
+                                search
+                                    .active
+                                    .as_ref()
+                                    .map(|request| (*chat_id, request.clone()))
+                            })
+                            .collect::<Vec<_>>();
+                        for (chat_id, request) in active_searches {
+                            reduced_state.message_search.fail(
+                                request.request_id,
+                                chat_id,
+                                &request.query,
+                                request.before_message_id,
+                                "shutdown interrupted message search",
+                            );
+                        }
                         let _ = state_tx.send(reduced_state.clone());
-                        backend.set_connection_token(reduced_state.connection_machine.token());
+                        apply_event(
+                            CoreEvent::Stopped,
+                            &mut reduced_state,
+                            &state_tx,
+                            &event_tx_task,
+                            &mut activity_tracker,
+                        );
+                        persist_state(&store, &mut reduced_state, &state_tx, &event_tx_task).await;
+                        worker.abort();
+                        break;
+                    }
+                    if starting_session {
+                        let previous_token = reduced_state.connection_machine.token();
+                        reduced_state.connection_machine.start_session();
+                        reduced_state.connection_state =
+                            reduced_state.connection_machine.transport_state();
+                        let current_token = reduced_state.connection_machine.token();
+                        if current_token != previous_token {
+                            invalidate_stale_operations(
+                                &mut live_ops,
+                                current_token,
+                                &mut reduced_state,
+                                &state_tx,
+                                &event_tx_task,
+                                &mut activity_tracker,
+                            );
+                        }
+                        let _ = state_tx.send(reduced_state.clone());
+                        persistence_dirty = true;
+                        let _ = worker_tx.try_send(WorkerRequest::SetToken(
+                            reduced_state.connection_machine.token(),
+                        ));
                     }
                     let page_request = match &command {
                         CoreCommand::LoadMessagesPage {
@@ -134,13 +302,6 @@ where
                         } => Some((*chat_id, *before_message_id)),
                         _ => None,
                     };
-                    let initial_sync_token = matches!(&command, CoreCommand::LoadChats { .. })
-                        .then_some(reduced_state.connection_machine.token())
-                        .filter(|_| {
-                            reduced_state.connection_machine.phase() == LinkPhase::Synchronizing
-                                && reduced_state.account.authorization
-                                    == crate::model::AuthorizationState::Ready
-                        });
                     let search_request = match &command {
                         CoreCommand::SearchMessages(request) => Some(request.clone()),
                         _ => None,
@@ -241,205 +402,48 @@ where
                         persistence_dirty = true;
                     }
 
-                    let mut events = if skip_backend {
-                        Vec::new()
-                    } else {
-                        match backend.handle(command.clone()).await {
-                            Ok(events) => events,
-                            Err(error) => {
-                                if starting_session {
-                                    let token = reduced_state.connection_machine.token();
-                                    reduced_state.reduce(&CoreEvent::ConnectionLifecycle {
-                                        token,
-                                        event: LinkEvent::ConnectFailed { retryable: false },
-                                    });
-                                    let _ = state_tx.send(reduced_state.clone());
-                                    backend.set_connection_token(
-                                        reduced_state.connection_machine.token(),
-                                    );
-                                }
-                                if let Some((chat_id, before_message_id)) = page_request {
-                                    vec![CoreEvent::MessagesPageLoadFailed {
-                                        chat_id,
-                                        before_message_id,
-                                        error: error.to_string(),
-                                    }]
-                                } else if let Some(request) = search_request.as_ref() {
-                                    vec![CoreEvent::MessageSearchFailed {
-                                        request_id: request.request_id,
-                                        chat_id: request.chat_id,
-                                        query: request.query.clone(),
-                                        before_message_id: request.before_message_id,
-                                        error: error.to_string(),
-                                    }]
-                                } else if let CoreCommand::SendTextReliable {
-                                    client_id,
-                                    chat_id,
-                                    text,
-                                } = &command
-                                {
-                                    vec![CoreEvent::MessageSendStateChanged(send_error_state(
-                                        *client_id,
-                                        *chat_id,
-                                        text.clone(),
-                                        error,
-                                    ))]
-                                } else {
-                                    vec![CoreEvent::Error(error.to_string())]
-                                }
-                            }
-                        }
-                    };
-
-                    if let Some((chat_id, before_message_id)) = page_request {
-                        let completed = events.iter().any(|event| {
-                            matches!(
-                                event,
-                                CoreEvent::MessagesPageLoaded {
-                                    chat_id: event_chat_id,
-                                    before_message_id: event_before,
-                                    ..
-                                } | CoreEvent::MessagesPageLoadFailed {
-                                    chat_id: event_chat_id,
-                                    before_message_id: event_before,
-                                    ..
-                                } if *event_chat_id == chat_id && *event_before == before_message_id
-                            )
-                        });
-                        if !completed {
-                            let error = events
-                                .iter()
-                                .find_map(|event| match event {
-                                    CoreEvent::Error(error) => Some(error.clone()),
-                                    _ => None,
-                                })
-                                .unwrap_or_else(|| {
-                                    "backend returned no message page completion".into()
-                                });
-                            events.push(CoreEvent::MessagesPageLoadFailed {
-                                chat_id,
-                                before_message_id,
-                                error,
-                            });
-                        }
+                    if skip_backend {
+                        continue;
                     }
-                    if let Some(request) = search_request.as_ref() {
-                        let completed = events.iter().any(|event| match event {
-                            CoreEvent::MessageSearchCompleted(page) => {
-                                page.request_id == request.request_id
-                                    && page.chat_id == request.chat_id
-                                    && page.query.trim() == request.query.trim()
-                                    && page.requested_before_message_id == request.before_message_id
-                            }
-                            CoreEvent::MessageSearchFailed {
-                                request_id,
-                                chat_id,
-                                query,
-                                before_message_id,
-                                ..
-                            } => {
-                                *request_id == request.request_id
-                                    && *chat_id == request.chat_id
-                                    && query.trim() == request.query.trim()
-                                    && *before_message_id == request.before_message_id
-                            }
-                            _ => false,
-                        });
-
-                        if !completed {
-                            let error = events
-                                .iter()
-                                .find_map(|event| match event {
-                                    CoreEvent::Error(error) => Some(error.clone()),
-                                    _ => None,
-                                })
-                                .unwrap_or_else(|| {
-                                    "backend returned no message search completion".into()
-                                });
-                            events.push(CoreEvent::MessageSearchFailed {
-                                request_id: request.request_id,
-                                chat_id: request.chat_id,
-                                query: request.query.clone(),
-                                before_message_id: request.before_message_id,
-                                error,
-                            });
-                        }
-                    }
-
-                    if !skip_backend {
-                        if let CoreCommand::SendTextReliable {
-                            client_id,
-                            chat_id,
-                            text,
-                        } = &command
-                        {
-                            let has_send_completion = events.iter().any(|event| {
-                                matches!(
-                                    event,
-                                    CoreEvent::MessageSendStateChanged(send)
-                                        if send.client_id == *client_id
-                                            && send.same_request(*chat_id, text)
-                                            && !matches!(&send.state, OutgoingSendState::Sending)
-                                )
-                            });
-                            if !has_send_completion {
-                                events.push(CoreEvent::MessageSendStateChanged(
-                                    OutgoingSend::awaiting_confirmation(
-                                        *client_id,
-                                        *chat_id,
-                                        text.clone(),
-                                        "backend returned without confirming the send outcome",
-                                    ),
-                                ));
-                            }
-                        }
-                    }
-
-                    if let Some(token) = initial_sync_token {
-                        let completed = events
-                            .iter()
-                            .any(|event| matches!(event, CoreEvent::ChatsLoaded(_)));
-                        if !completed {
+                    let op_id = next_op_id;
+                    next_op_id = next_op_id.wrapping_add(1).max(1);
+                    let generation = reduced_state.connection_machine.token();
+                    live_ops.insert(op_id, (generation, command.clone()));
+                    let sync_required = matches!(&command, CoreCommand::LoadChats { .. })
+                        && reduced_state.connection_machine.phase() == LinkPhase::Synchronizing
+                        && reduced_state.account.authorization
+                            == crate::model::AuthorizationState::Ready;
+                    if worker_tx
+                        .try_send(WorkerRequest::Execute {
+                            op_id,
+                            generation,
+                            sync_required,
+                            command: command.clone(),
+                        })
+                        .is_err()
+                    {
+                        live_ops.remove(&op_id);
+                        let mut events = operation_error_events(
+                            &command,
+                            CoreError::TransientTransport("backend queue is full".into()),
+                        );
+                        if starting_session {
                             events.push(CoreEvent::ConnectionLifecycle {
-                                token,
+                                token: generation,
                                 event: LinkEvent::ConnectFailed { retryable: false },
                             });
                         }
+                        complete_operation_events(&command, &mut events);
+                        apply_events(
+                            events,
+                            &mut reduced_state,
+                            &state_tx,
+                            &event_tx_task,
+                            &mut activity_tracker,
+                        );
+                        persistence_dirty = true;
                     }
-
-                    persistence_dirty |= events.iter().any(|event| !event.is_transient());
-
-                    let previous_token = reduced_state.connection_machine.token();
-                    let stopped = apply_events(
-                        events,
-                        &mut reduced_state,
-                        &state_tx,
-                        &event_tx_task,
-                        &mut activity_tracker,
-                    );
-                    let current_token = reduced_state.connection_machine.token();
-                    if current_token != previous_token {
-                        backend.set_connection_token(current_token);
-                    }
-
-                    if shutdown_requested || stopped {
-                        if !stopped {
-                            apply_event(
-                                CoreEvent::Stopped,
-                                &mut reduced_state,
-                                &state_tx,
-                                &event_tx_task,
-                                &mut activity_tracker,
-                            );
-                            persistence_dirty = true;
-                        }
-
-                        if persistence_dirty {
-                            persist_state(&store, &mut reduced_state, &state_tx, &event_tx_task)
-                                .await;
-                        }
-                        break;
-                    }
+                    continue;
                 }
                 RuntimeInput::Command(None) => {
                     apply_event(
@@ -450,6 +454,7 @@ where
                         &mut activity_tracker,
                     );
                     persist_state(&store, &mut reduced_state, &state_tx, &event_tx_task).await;
+                    worker.abort();
                     break;
                 }
                 RuntimeInput::Update(Some(Ok(event))) => {
@@ -474,8 +479,16 @@ where
                         reconnect_sync_due = true;
                     }
                     let current_token = reduced_state.connection_machine.token();
+                    invalidate_stale_operations(
+                        &mut live_ops,
+                        current_token,
+                        &mut reduced_state,
+                        &state_tx,
+                        &event_tx_task,
+                        &mut activity_tracker,
+                    );
                     if current_token != previous_token {
-                        backend.set_connection_token(current_token);
+                        let _ = worker_tx.try_send(WorkerRequest::SetToken(current_token));
                     }
                     if reconnect_sync_due
                         && previous_phase != LinkPhase::Synchronizing
@@ -484,57 +497,42 @@ where
                             == crate::model::AuthorizationState::Ready
                     {
                         let sync_token = reduced_state.connection_machine.token();
-                        let sync_result =
-                            backend.handle(CoreCommand::LoadChats { limit: 100 }).await;
-                        let mut dialogs_refreshed = false;
-                        match sync_result {
-                            Ok(sync_events) => {
-                                for sync_event in sync_events {
-                                    dialogs_refreshed |=
-                                        matches!(sync_event, CoreEvent::ChatsLoaded(_));
-                                    let tagged = CoreEvent::SessionUpdate {
-                                        token: sync_token,
-                                        event: Box::new(sync_event),
-                                    };
-                                    if let Some(sync_event) =
-                                        unwrap_current_session_update(&reduced_state, tagged)
-                                    {
-                                        apply_event(
-                                            sync_event,
-                                            &mut reduced_state,
-                                            &state_tx,
-                                            &event_tx_task,
-                                            &mut activity_tracker,
-                                        );
-                                    }
-                                }
-                            }
-                            Err(error) => apply_event(
-                                CoreEvent::Error(error.to_string()),
-                                &mut reduced_state,
-                                &state_tx,
-                                &event_tx_task,
-                                &mut activity_tracker,
-                            ),
-                        }
-                        if !dialogs_refreshed
-                            && reduced_state.connection_machine.token() == sync_token
-                            && reduced_state.connection_machine.phase() == LinkPhase::Synchronizing
+                        let op_id = next_op_id;
+                        next_op_id = next_op_id.wrapping_add(1).max(1);
+                        live_ops.insert(op_id, (sync_token, CoreCommand::LoadChats { limit: 100 }));
+                        if worker_tx
+                            .try_send(WorkerRequest::Execute {
+                                op_id,
+                                generation: sync_token,
+                                sync_required: true,
+                                command: CoreCommand::LoadChats { limit: 100 },
+                            })
+                            .is_err()
                         {
-                            let previous_token = reduced_state.connection_machine.token();
+                            live_ops.remove(&op_id);
                             apply_event(
-                                CoreEvent::ConnectionLifecycle {
-                                    token: sync_token,
-                                    event: LinkEvent::ConnectFailed { retryable: false },
-                                },
+                                CoreEvent::Error(
+                                    "backend queue is full during reconnect sync".into(),
+                                ),
                                 &mut reduced_state,
                                 &state_tx,
                                 &event_tx_task,
                                 &mut activity_tracker,
                             );
-                            let current_token = reduced_state.connection_machine.token();
-                            if current_token != previous_token {
-                                backend.set_connection_token(current_token);
+                            if reduced_state.connection_machine.token() == sync_token
+                                && reduced_state.connection_machine.phase()
+                                    == LinkPhase::Synchronizing
+                            {
+                                apply_event(
+                                    CoreEvent::ConnectionLifecycle {
+                                        token: sync_token,
+                                        event: LinkEvent::ConnectFailed { retryable: false },
+                                    },
+                                    &mut reduced_state,
+                                    &state_tx,
+                                    &event_tx_task,
+                                    &mut activity_tracker,
+                                );
                             }
                         }
                         reconnect_sync_due = false;
@@ -543,6 +541,7 @@ where
 
                     if stopped {
                         persist_state(&store, &mut reduced_state, &state_tx, &event_tx_task).await;
+                        worker.abort();
                         break;
                     }
                 }
@@ -588,20 +587,203 @@ where
 enum RuntimeInput {
     Command(Option<CoreCommand>),
     Update(Option<Result<CoreEvent>>),
+    BackendResult(Option<BackendResult>),
     Persist,
     ExpireActivities,
+}
+
+enum WorkerRequest {
+    SetToken(crate::connection_machine::ConnectionToken),
+    Execute {
+        op_id: u64,
+        generation: crate::connection_machine::ConnectionToken,
+        sync_required: bool,
+        command: CoreCommand,
+    },
+}
+
+struct BackendResult {
+    op_id: u64,
+    generation: crate::connection_machine::ConnectionToken,
+    sync_required: bool,
+    command: CoreCommand,
+    result: Result<Vec<CoreEvent>>,
+}
+
+fn operation_error_events(command: &CoreCommand, error: CoreError) -> Vec<CoreEvent> {
+    match command {
+        CoreCommand::LoadMessagesPage {
+            chat_id,
+            before_message_id,
+            ..
+        } => vec![CoreEvent::MessagesPageLoadFailed {
+            chat_id: *chat_id,
+            before_message_id: *before_message_id,
+            error: error.to_string(),
+        }],
+        CoreCommand::SearchMessages(request) => vec![CoreEvent::MessageSearchFailed {
+            request_id: request.request_id,
+            chat_id: request.chat_id,
+            query: request.query.clone(),
+            before_message_id: request.before_message_id,
+            error: error.to_string(),
+        }],
+        CoreCommand::SendTextReliable {
+            client_id,
+            chat_id,
+            text,
+        } => vec![CoreEvent::MessageSendStateChanged(send_error_state(
+            *client_id,
+            *chat_id,
+            text.clone(),
+            error,
+        ))],
+        _ => vec![CoreEvent::Error(error.to_string())],
+    }
+}
+
+fn complete_operation_events(command: &CoreCommand, events: &mut Vec<CoreEvent>) {
+    if let CoreCommand::LoadMessagesPage {
+        chat_id,
+        before_message_id,
+        ..
+    } = command
+    {
+        if !events.iter().any(|event| matches!(event, CoreEvent::MessagesPageLoaded { chat_id: id, before_message_id: cursor, .. } | CoreEvent::MessagesPageLoadFailed { chat_id: id, before_message_id: cursor, .. } if id == chat_id && cursor == before_message_id)) {
+            events.push(CoreEvent::MessagesPageLoadFailed { chat_id: *chat_id, before_message_id: *before_message_id, error: "backend returned no message page completion".into() });
+        }
+    }
+    if let CoreCommand::SearchMessages(request) = command {
+        let complete = events.iter().any(|event| matches!(event,
+            CoreEvent::MessageSearchCompleted(page) if page.request_id == request.request_id && page.chat_id == request.chat_id && page.query.trim() == request.query.trim() && page.requested_before_message_id == request.before_message_id
+        ) || matches!(event, CoreEvent::MessageSearchFailed { request_id, chat_id, query, before_message_id, .. } if *request_id == request.request_id && *chat_id == request.chat_id && query.trim() == request.query.trim() && *before_message_id == request.before_message_id));
+        if !complete {
+            events.push(CoreEvent::MessageSearchFailed {
+                request_id: request.request_id,
+                chat_id: request.chat_id,
+                query: request.query.clone(),
+                before_message_id: request.before_message_id,
+                error: "backend returned no message search completion".into(),
+            });
+        }
+    }
+    if let CoreCommand::SendTextReliable {
+        client_id,
+        chat_id,
+        text,
+    } = command
+    {
+        if !events.iter().any(|event| matches!(event, CoreEvent::MessageSendStateChanged(send) if send.client_id == *client_id && send.same_request(*chat_id, text) && !matches!(send.state, OutgoingSendState::Sending))) {
+            events.push(CoreEvent::MessageSendStateChanged(OutgoingSend::awaiting_confirmation(*client_id, *chat_id, text.clone(), "backend returned without confirming the send outcome")));
+        }
+    }
+}
+
+fn recover_interrupted_operation(
+    command: &CoreCommand,
+    state: &mut CoreState,
+    state_tx: &watch::Sender<CoreState>,
+    event_tx: &broadcast::Sender<CoreEvent>,
+    activity_tracker: &mut ChatActivityTracker,
+) {
+    match command {
+        CoreCommand::LoadMessagesPage {
+            chat_id,
+            before_message_id,
+            ..
+        } => apply_event(
+            CoreEvent::MessagesPageLoadFailed {
+                chat_id: *chat_id,
+                before_message_id: *before_message_id,
+                error: "connection generation changed while loading messages".into(),
+            },
+            state,
+            state_tx,
+            event_tx,
+            activity_tracker,
+        ),
+        CoreCommand::SearchMessages(request) => apply_event(
+            CoreEvent::MessageSearchFailed {
+                request_id: request.request_id,
+                chat_id: request.chat_id,
+                query: request.query.clone(),
+                before_message_id: request.before_message_id,
+                error: "connection generation changed while searching messages".into(),
+            },
+            state,
+            state_tx,
+            event_tx,
+            activity_tracker,
+        ),
+        CoreCommand::SendTextReliable {
+            client_id,
+            chat_id,
+            text,
+        } => apply_event(
+            CoreEvent::MessageSendStateChanged(OutgoingSend::awaiting_confirmation(
+                *client_id,
+                *chat_id,
+                text.clone(),
+                "connection changed while send outcome was unknown",
+            )),
+            state,
+            state_tx,
+            event_tx,
+            activity_tracker,
+        ),
+        _ => {}
+    }
+}
+
+fn invalidate_stale_operations(
+    operations: &mut HashMap<u64, (crate::connection_machine::ConnectionToken, CoreCommand)>,
+    current_generation: crate::connection_machine::ConnectionToken,
+    state: &mut CoreState,
+    state_tx: &watch::Sender<CoreState>,
+    event_tx: &broadcast::Sender<CoreEvent>,
+    activity_tracker: &mut ChatActivityTracker,
+) {
+    let stale_ids = operations
+        .iter()
+        .filter_map(|(op_id, (generation, _))| {
+            (*generation != current_generation).then_some(*op_id)
+        })
+        .collect::<Vec<_>>();
+    for op_id in stale_ids {
+        if let Some((_, command)) = operations.remove(&op_id) {
+            recover_interrupted_operation(&command, state, state_tx, event_tx, activity_tracker);
+        }
+    }
 }
 
 async fn next_runtime_input(
     commands: &mut mpsc::Receiver<CoreCommand>,
     updates: &mut Option<BackendUpdateReceiver>,
+    results: &mut Option<mpsc::Receiver<BackendResult>>,
     persistence_tick: &mut Interval,
     persistence_dirty: bool,
     activity_active: bool,
     activity_tick: &mut Interval,
 ) -> RuntimeInput {
-    match updates.as_mut() {
-        Some(updates) => {
+    match (updates.as_mut(), results.as_mut()) {
+        (Some(updates), Some(results)) => {
+            tokio::select! {
+                command = commands.recv() => RuntimeInput::Command(command),
+                update = updates.recv() => RuntimeInput::Update(update),
+                result = results.recv() => RuntimeInput::BackendResult(result),
+                _ = persistence_tick.tick(), if persistence_dirty => RuntimeInput::Persist,
+                _ = activity_tick.tick(), if activity_active => RuntimeInput::ExpireActivities,
+            }
+        }
+        (None, Some(results)) => {
+            tokio::select! {
+                command = commands.recv() => RuntimeInput::Command(command),
+                result = results.recv() => RuntimeInput::BackendResult(result),
+                _ = persistence_tick.tick(), if persistence_dirty => RuntimeInput::Persist,
+                _ = activity_tick.tick(), if activity_active => RuntimeInput::ExpireActivities,
+            }
+        }
+        (Some(updates), None) => {
             tokio::select! {
                 command = commands.recv() => RuntimeInput::Command(command),
                 update = updates.recv() => RuntimeInput::Update(update),
@@ -609,7 +791,7 @@ async fn next_runtime_input(
                 _ = activity_tick.tick(), if activity_active => RuntimeInput::ExpireActivities,
             }
         }
-        None => {
+        (None, None) => {
             tokio::select! {
                 command = commands.recv() => RuntimeInput::Command(command),
                 _ = persistence_tick.tick(), if persistence_dirty => RuntimeInput::Persist,
