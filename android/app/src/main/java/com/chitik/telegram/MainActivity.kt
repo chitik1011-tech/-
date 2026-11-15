@@ -179,7 +179,7 @@ private fun CoreStatusScreen(
             StatusCard(
                 title = "Native handle",
                 value = if (state.nativeHandle != 0L) "Active" else "Not created",
-                detail = if (state.nativeHandle != 0L) "Opaque handle #\${state.nativeHandle}" else "No Rust session",
+                detail = if (state.nativeHandle != 0L) "Opaque handle #${state.nativeHandle}" else "No Rust session",
             )
         }
         item {

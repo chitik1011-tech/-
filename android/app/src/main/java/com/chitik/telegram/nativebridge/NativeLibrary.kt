@@ -10,6 +10,6 @@ object NativeLibrary {
 
     val errorMessage: String?
         get() = loadResult.exceptionOrNull()?.let { error ->
-            "\${error::class.java.simpleName}: \${error.message ?: "native library load failed"}"
+            "${error::class.java.simpleName}: ${error.message ?: "native library load failed"}"
         }
 }
