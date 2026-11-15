@@ -173,7 +173,11 @@ impl PollSummary {
                 "poll vote selects too many options".to_owned(),
             ));
         }
-        if self.options.iter().any(|option| option.option_id.is_empty()) {
+        if self
+            .options
+            .iter()
+            .any(|option| option.option_id.is_empty())
+        {
             return Err(CoreError::InvalidInput(
                 "poll snapshot has no Telegram option identifiers".to_owned(),
             ));
