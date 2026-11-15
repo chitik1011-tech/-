@@ -46,9 +46,10 @@ impl CoreState {
                 self.account.chats = chats.clone();
                 self.last_error = None;
             }
-            CoreEvent::MessagesLoading { chat_id, .. } => {
+            CoreEvent::MessagesLoading { chat_id, cursor } => {
                 let history = self.message_history.entry(*chat_id).or_default();
                 history.loading = true;
+                history.next_cursor = cursor.clone();
                 history.error = None;
             }
             CoreEvent::MessagesLoaded {
@@ -313,6 +314,6 @@ mod tests {
         assert!(!history.loading);
         assert!(history.has_more);
         assert_eq!(history.error.as_deref(), Some("offline"));
-        assert_eq!(history.next_cursor, None);
+        assert_eq!(history.next_cursor, Some(cursor));
     }
 }
