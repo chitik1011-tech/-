@@ -14,6 +14,7 @@ pub enum CoreCommand {
     SubmitPassword(String),
     LoadChats { limit: usize },
     LoadMessages { chat_id: i64, limit: usize },
+    MarkRead { chat_id: i64, max_message_id: i64 },
     SendText { chat_id: i64, text: String },
     Shutdown,
 }
@@ -27,6 +28,7 @@ impl CoreCommand {
             Self::SubmitPassword(_) => "submit_password",
             Self::LoadChats { .. } => "load_chats",
             Self::LoadMessages { .. } => "load_messages",
+            Self::MarkRead { .. } => "mark_read",
             Self::SendText { .. } => "send_text",
             Self::Shutdown => "shutdown",
         }
@@ -48,6 +50,19 @@ impl CoreCommand {
             Self::LoadMessages { chat_id, limit } => {
                 validate_chat_id(*chat_id)?;
                 validate_limit("message load", *limit, MAX_MESSAGE_LOAD_LIMIT)
+            }
+            Self::MarkRead {
+                chat_id,
+                max_message_id,
+            } => {
+                validate_chat_id(*chat_id)?;
+                if *max_message_id <= 0 {
+                    Err(CoreError::InvalidInput(
+                        "max message id must be positive".into(),
+                    ))
+                } else {
+                    Ok(())
+                }
             }
             Self::SendText { chat_id, text } => {
                 validate_chat_id(*chat_id)?;
