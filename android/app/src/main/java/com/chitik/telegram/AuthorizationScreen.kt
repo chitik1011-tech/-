@@ -178,12 +178,12 @@ fun AuthorizationScreen(
                 val normalizedApiHash = apiHash.trim()
                 val apiIdValid = parsedApiId != null && parsedApiId > 0
                 val apiHashValid = normalizedApiHash.length == 32 &&
-                    normalizedApiHash.all { it.isDigit() || it.lowercaseChar() in 'a'..'f' }
+                    normalizedApiHash.all { character -> character in '0'..'9' || character.lowercaseChar() in 'a'..'f' }
 
                 OutlinedTextField(
                     value = apiId,
                     onValueChange = {
-                        apiId = it.filter(Char::isDigit).take(10)
+                        apiId = it.filter { character -> character in '0'..'9' }.take(10)
                         validationError = null
                     },
                     modifier = Modifier
