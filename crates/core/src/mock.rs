@@ -5,7 +5,7 @@ use crate::{
     command::CoreCommand,
     error::{CoreError, Result},
     event::CoreEvent,
-    model::{AuthorizationState, ChatSummary, MessageSummary},
+    model::{AuthorizationState, ChatPage, ChatSummary, MessageSummary},
 };
 
 pub struct MockTelegramBackend {
@@ -92,6 +92,29 @@ impl MockTelegramBackend {
             CoreCommand::LoadChats { limit } => {
                 let chats = self.chats.iter().take(limit).cloned().collect();
                 Ok(vec![CoreEvent::ChatsLoaded(chats)])
+            }
+            CoreCommand::LoadChatsPage { cursor, limit } => {
+                let offset = match cursor.as_deref() {
+                    Some(value) => value.parse::<usize>().map_err(|_| {
+                        CoreError::InvalidInput("invalid mock chat page cursor".into())
+                    })?,
+                    None => 0,
+                };
+                let chats: Vec<_> = self
+                    .chats
+                    .iter()
+                    .skip(offset)
+                    .take(limit)
+                    .cloned()
+                    .collect();
+                let next_offset = offset.saturating_add(chats.len());
+                let next_cursor = (next_offset < self.chats.len()).then(|| next_offset.to_string());
+
+                Ok(vec![CoreEvent::ChatsPageLoaded(ChatPage {
+                    requested_cursor: cursor,
+                    chats,
+                    next_cursor,
+                })])
             }
             CoreCommand::SendText { chat_id, text } => {
                 if self.authorization != AuthorizationState::Ready {
