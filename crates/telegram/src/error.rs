@@ -1,0 +1,68 @@
+use thiserror::Error;
+use tg_mobile_core::CoreError;
+
+#[derive(Debug, Error)]
+pub enum TelegramBackendError {
+    #[error("invalid Telegram configuration: {0}")]
+    Configuration(String),
+
+    #[error("invalid Telegram input: {0}")]
+    InvalidInput(String),
+
+    #[error("Telegram authorization error: {0}")]
+    Authorization(String),
+
+    #[error("Telegram API error: {0}")]
+    Api(String),
+
+    #[error("Telegram session error: {0}")]
+    Session(String),
+
+    #[error("chat {0} is not available in the peer cache; load chats first")]
+    UnknownChat(i64),
+
+    #[error("Telegram update stream is no longer available")]
+    UpdateStreamUnavailable,
+
+    #[error("Telegram backend has been stopped")]
+    Stopped,
+}
+
+impl From<TelegramBackendError> for CoreError {
+    fn from(value: TelegramBackendError) -> Self {
+        match value {
+            TelegramBackendError::Configuration(message)
+            | TelegramBackendError::InvalidInput(message) => CoreError::InvalidInput(message),
+            TelegramBackendError::UnknownChat(chat_id) => CoreError::InvalidInput(format!(
+                "chat {chat_id} is not available in the Telegram peer cache; call LoadChats first"
+            )),
+            other => CoreError::Backend(other.to_string()),
+        }
+    }
+}
+
+pub(crate) fn api_error(context: &'static str, error: impl std::fmt::Display) -> CoreError {
+    TelegramBackendError::Api(format!("{context}: {error}")).into()
+}
+
+pub(crate) fn session_error(context: &'static str, error: impl std::fmt::Display) -> CoreError {
+    TelegramBackendError::Session(format!("{context}: {error}")).into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TelegramBackendError;
+    use tg_mobile_core::CoreError;
+
+    #[test]
+    fn bad_user_input_maps_to_core_invalid_input() {
+        let error: CoreError = TelegramBackendError::InvalidInput("bad code".into()).into();
+        assert!(matches!(error, CoreError::InvalidInput(message) if message == "bad code"));
+    }
+
+    #[test]
+    fn api_failure_maps_to_core_backend_error() {
+        let error: CoreError = TelegramBackendError::Api("network down".into()).into();
+        assert!(matches!(error, CoreError::Backend(message) if message.contains("network down")));
+    }
+}
