@@ -85,6 +85,7 @@ impl MediaCache {
             }),
         };
         if is_new_state {
+            let _state = cache.lock_state()?;
             cache.recover_temporary_files()?;
         }
         Ok(cache)
@@ -123,6 +124,7 @@ impl MediaCache {
             ".{key}{TEMP_MARKER}{}-{unique}",
             std::process::id()
         ));
+        let _state = self.lock_state()?;
         let file = OpenOptions::new()
             .write(true)
             .create_new(true)
