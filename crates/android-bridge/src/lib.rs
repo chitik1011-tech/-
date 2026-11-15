@@ -104,6 +104,8 @@ fn event_kind(event: &CoreEvent) -> &'static str {
         CoreEvent::AuthorizationChanged(_) => "authorization_changed",
         CoreEvent::ChatsLoaded(_) => "chats_loaded",
         CoreEvent::MessageAdded(_) => "message_added",
+        CoreEvent::SearchStarted(_) => "search_started",
+        CoreEvent::MessagesSearchCompleted(_) => "messages_search_completed",
         CoreEvent::Error(_) => "error",
         CoreEvent::Stopped => "stopped",
     }

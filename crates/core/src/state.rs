@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     event::CoreEvent,
     model::{AccountState, ChatSummary, MessageSummary},
-    search::{MessageSearchState, SearchMessagesRequest},
+    search::MessageSearchState,
 };
 
 pub const MAX_CACHED_MESSAGES_PER_CHAT: usize = 512;
