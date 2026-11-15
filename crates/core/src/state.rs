@@ -124,18 +124,16 @@ impl CoreState {
     /// Returns outgoing lifecycle entries that are not yet represented by a server message.
     ///
     /// UI can render this slice alongside `messages_for_chat`. A successful outbox record
-    /// remains available through `outgoing_message` for send status, but stops rendering as a
-    /// separate row once its server ID is present in the chat message cache.
+    /// remains available through `outgoing_message` for send status, but is never rendered as
+    /// a separate row after the backend has confirmed it with a server message ID. This does not
+    /// depend on the bounded message cache retaining that server message.
     pub fn visible_outgoing_messages_for_chat(&self, chat_id: i64) -> Vec<&OutgoingMessage> {
         self.outgoing_messages
             .values()
             .filter(|pending| {
                 pending.chat_id == chat_id
-                    && !pending.server_message_id.is_some_and(|server_id| {
-                        self.messages_for_chat(chat_id)
-                            .iter()
-                            .any(|message| message.id == server_id)
-                    })
+                    && !(pending.status == OutgoingMessageStatus::Sent
+                        && pending.server_message_id.is_some())
             })
             .collect()
     }
@@ -235,6 +233,57 @@ mod outgoing_message_tests {
         let stored = state.outgoing_message("pending-1").unwrap();
         assert_eq!(stored.status, OutgoingMessageStatus::Sent);
         assert_eq!(stored.server_message_id, Some(88));
+    }
+
+    #[test]
+    fn acknowledged_outbox_item_stays_hidden_after_server_message_cache_eviction() {
+        let mut state = CoreState::default();
+        state.reduce(&CoreEvent::OutgoingMessageChanged(message(
+            OutgoingMessageStatus::Draft,
+            "hello",
+        )));
+        state.reduce(&CoreEvent::OutgoingMessageChanged(message(
+            OutgoingMessageStatus::Sending,
+            "hello",
+        )));
+        let mut sent = message(OutgoingMessageStatus::Sent, "hello");
+        sent.server_message_id = Some(88);
+        state.reduce(&CoreEvent::OutgoingMessageChanged(sent));
+
+        state.reduce(&CoreEvent::MessageAdded(crate::model::MessageSummary {
+            id: 88,
+            chat_id: 7,
+            sender_id: 1,
+            text: "hello".into(),
+            timestamp_unix: 1,
+            outgoing: true,
+        }));
+        assert!(state
+            .messages_for_chat(7)
+            .iter()
+            .any(|cached| cached.id == 88));
+        assert!(state.visible_outgoing_messages_for_chat(7).is_empty());
+
+        for id in 100..(100 + super::MAX_CACHED_MESSAGES_PER_CHAT as i64) {
+            state.reduce(&CoreEvent::MessageAdded(crate::model::MessageSummary {
+                id,
+                chat_id: 7,
+                sender_id: 2,
+                text: format!("message {id}"),
+                timestamp_unix: id,
+                outgoing: false,
+            }));
+        }
+
+        assert_eq!(
+            state.messages_for_chat(7).len(),
+            super::MAX_CACHED_MESSAGES_PER_CHAT
+        );
+        assert!(state.messages_for_chat(7).iter().all(|cached| cached.id != 88));
+        assert!(state.visible_outgoing_messages_for_chat(7).is_empty());
+        let status = state.outgoing_message("pending-1").unwrap();
+        assert_eq!(status.status, OutgoingMessageStatus::Sent);
+        assert_eq!(status.server_message_id, Some(88));
     }
 
     #[test]
