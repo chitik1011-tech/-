@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use std::{
+    collections::{HashMap, VecDeque},
+    sync::Arc,
+};
 
 use grammers_client::{
     Client,
@@ -7,7 +10,7 @@ use grammers_client::{
 };
 use tg_mobile_core::{
     AuthorizationState, BackendFuture, BackendUpdateReceiver, BackendUpdateSender, CoreCommand,
-    CoreError, CoreEvent, TelegramBackend, backend_update_channel,
+    CoreError, CoreEvent, OutgoingSend, TelegramBackend, backend_update_channel,
 };
 use tokio::{
     sync::{broadcast, mpsc, watch},
@@ -19,11 +22,21 @@ use crate::{
     chats::{PeerRegistry, find_peer, load_chats, new_peer_registry},
     config::TelegramConfig,
     error::{TelegramBackendError, session_error},
-    messages::{MessageDeduplicator, load_messages, mark_read, send_text},
+    messages::{
+        MessageDeduplicator, load_messages, mark_read, send_text, send_text_idempotent,
+    },
     updates::{TelegramUpdate, UpdateWorkerInput, run_update_worker},
 };
 
 const MESSAGE_DEDUP_CAPACITY: usize = 4096;
+const RELIABLE_SEND_CACHE_CAPACITY: usize = 4096;
+
+#[derive(Debug, Clone)]
+struct ReliableSendRecord {
+    chat_id: i64,
+    text: String,
+    message_id: i64,
+}
 
 /// Real Telegram implementation of the core `TelegramBackend` trait.
 ///
@@ -44,6 +57,8 @@ pub struct GrammersBackend {
     auth: AuthFlow,
     peers: PeerRegistry,
     dedup: Arc<MessageDeduplicator>,
+    reliable_sends: HashMap<i64, ReliableSendRecord>,
+    reliable_send_order: VecDeque<i64>,
     stopped: bool,
 }
 
@@ -81,6 +96,8 @@ impl GrammersBackend {
             auth: AuthFlow::default(),
             peers: new_peer_registry(),
             dedup: Arc::new(MessageDeduplicator::new(MESSAGE_DEDUP_CAPACITY)),
+            reliable_sends: HashMap::new(),
+            reliable_send_order: VecDeque::new(),
             stopped: false,
         })
     }
@@ -144,6 +161,136 @@ impl GrammersBackend {
             }
         }
         self.ensure_update_worker().await
+    }
+
+    fn known_reliable_send(
+        &self,
+        client_id: i64,
+        chat_id: i64,
+        text: &str,
+    ) -> tg_mobile_core::Result<Option<i64>> {
+        let Some(record) = self.reliable_sends.get(&client_id) else {
+            return Ok(None);
+        };
+
+        if record.chat_id != chat_id || record.text != text {
+            return Err(CoreError::InvalidInput(format!(
+                "client message id {client_id} is already bound to another request"
+            )));
+        }
+
+        Ok(Some(record.message_id))
+    }
+
+    fn remember_reliable_send(
+        &mut self,
+        client_id: i64,
+        chat_id: i64,
+        text: String,
+        message_id: i64,
+    ) {
+        if !self.reliable_sends.contains_key(&client_id) {
+            self.reliable_send_order.push_back(client_id);
+        }
+        self.reliable_sends.insert(
+            client_id,
+            ReliableSendRecord {
+                chat_id,
+                text,
+                message_id,
+            },
+        );
+
+        while self.reliable_send_order.len() > RELIABLE_SEND_CACHE_CAPACITY {
+            if let Some(oldest) = self.reliable_send_order.pop_front() {
+                self.reliable_sends.remove(&oldest);
+            }
+        }
+    }
+
+    async fn handle_reliable_send(
+        &mut self,
+        client_id: i64,
+        chat_id: i64,
+        text: String,
+    ) -> Vec<CoreEvent> {
+        let sending = CoreEvent::MessageSendStateChanged(OutgoingSend::sending(
+            client_id,
+            chat_id,
+            text.clone(),
+        ));
+
+        match self.known_reliable_send(client_id, chat_id, &text) {
+            Ok(Some(message_id)) => {
+                return vec![
+                    sending,
+                    CoreEvent::MessageSendStateChanged(OutgoingSend::sent(
+                        client_id,
+                        chat_id,
+                        text,
+                        message_id,
+                    )),
+                ];
+            }
+            Ok(None) => {}
+            Err(error) => {
+                return vec![
+                    sending,
+                    CoreEvent::MessageSendStateChanged(OutgoingSend::failed(
+                        client_id,
+                        chat_id,
+                        text,
+                        error.to_string(),
+                        false,
+                    )),
+                ];
+            }
+        }
+
+        let result = async {
+            self.require_ready().await?;
+            let peer = find_peer(&self.peers, chat_id)
+                .await
+                .ok_or(TelegramBackendError::UnknownChat(chat_id))?;
+            send_text_idempotent(&self.client, peer, text.clone(), client_id).await
+        }
+        .await;
+
+        match result {
+            Ok(message) => {
+                self.remember_reliable_send(
+                    client_id,
+                    chat_id,
+                    text.clone(),
+                    message.id,
+                );
+
+                let mut events = vec![sending];
+                if self.dedup.should_emit(&message).await {
+                    events.push(CoreEvent::MessageAdded(message.clone()));
+                }
+                events.push(CoreEvent::MessageSendStateChanged(OutgoingSend::sent(
+                    client_id,
+                    chat_id,
+                    text,
+                    message.id,
+                )));
+                events
+            }
+            Err(error) => {
+                let retryable = matches!(error, CoreError::Backend(_));
+                vec![
+                    sending,
+                    CoreEvent::MessageSendStateChanged(OutgoingSend::failed(
+                        client_id,
+                        chat_id,
+                        text,
+                        error.to_string(),
+                        retryable,
+                    )),
+                ]
+            }
+        }
     }
 
     async fn shutdown(&mut self) -> tg_mobile_core::Result<Vec<CoreEvent>> {
@@ -256,6 +403,11 @@ impl GrammersBackend {
                     Vec::new()
                 }
             }
+            CoreCommand::SendTextReliable {
+                client_id,
+                chat_id,
+                text,
+            } => self.handle_reliable_send(client_id, chat_id, text).await,
             CoreCommand::Shutdown => self.shutdown().await?,
         };
 
