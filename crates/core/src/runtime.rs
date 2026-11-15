@@ -122,13 +122,8 @@ where
                         }
 
                         if persistence_dirty {
-                            persist_state(
-                                &store,
-                                &mut reduced_state,
-                                &state_tx,
-                                &event_tx_task,
-                            )
-                            .await;
+                            persist_state(&store, &mut reduced_state, &state_tx, &event_tx_task)
+                                .await;
                         }
                         break;
                     }
