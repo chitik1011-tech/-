@@ -39,6 +39,12 @@ fn reducer_deduplicates_message_updates() {
         text: "draft".into(),
         timestamp_unix: 100,
         outgoing: true,
+        service_message: false,
+        media_caption: None,
+        forwarded_from: None,
+        edited: false,
+        edit_timestamp_unix: None,
+        reply_to: None,
     };
 
     state.reduce(&CoreEvent::MessageAdded(original.clone()));

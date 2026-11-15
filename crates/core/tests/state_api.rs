@@ -16,6 +16,12 @@ fn message(id: i64, timestamp_unix: i64) -> MessageSummary {
         text: format!("message-{id}"),
         timestamp_unix,
         outgoing: false,
+        service_message: false,
+        media_caption: None,
+        forwarded_from: None,
+        edited: false,
+        edit_timestamp_unix: None,
+        reply_to: None,
     }
 }
 

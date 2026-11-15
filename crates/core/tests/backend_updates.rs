@@ -36,6 +36,12 @@ fn message() -> MessageSummary {
         text: "incoming".into(),
         timestamp_unix: 123,
         outgoing: false,
+        service_message: false,
+        media_caption: None,
+        forwarded_from: None,
+        edited: false,
+        edit_timestamp_unix: None,
+        reply_to: None,
     }
 }
 
