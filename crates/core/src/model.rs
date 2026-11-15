@@ -40,6 +40,15 @@ pub struct ChatPaginationState {
     /// Cursors already consumed in this page chain, used to stop cursor loops.
     #[serde(default)]
     pub consumed_cursors: std::collections::BTreeSet<String>,
+    /// Whether a first or next page request is currently running.
+    #[serde(default)]
+    pub loading: bool,
+    /// Cursor for the in-flight request; `None` means the first page.
+    #[serde(default)]
+    pub loading_cursor: Option<String>,
+    /// Latest page-specific error, retained for retry and UI display.
+    #[serde(default)]
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
