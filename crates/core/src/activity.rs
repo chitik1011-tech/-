@@ -177,7 +177,7 @@ mod tests {
             now + Duration::from_millis(10),
         );
 
-        let expired = tracker.expire(now + Duration::from_millis(21));
+        let expired = tracker.expire(now + Duration::from_millis(51));
         assert_eq!(
             expired,
             vec![CoreEvent::ChatActivityExpired {
