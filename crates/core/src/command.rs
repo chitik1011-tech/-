@@ -255,7 +255,9 @@ impl CoreCommand {
 fn validate_media_target(chat_id: i64, message_id: i64, attachment_index: usize) -> Result<()> {
     validate_chat_id(chat_id)?;
     if message_id <= 0 {
-        return Err(CoreError::InvalidInput("message id must be positive".into()));
+        return Err(CoreError::InvalidInput(
+            "message id must be positive".into(),
+        ));
     }
     if attachment_index > 31 {
         return Err(CoreError::InvalidInput(
