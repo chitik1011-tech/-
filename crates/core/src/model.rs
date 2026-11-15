@@ -27,6 +27,18 @@ pub struct ChatSummary {
     pub id: i64,
     pub title: String,
     pub unread_count: u32,
+    /// Whether this chat is archived in the Telegram chat list.
+    #[serde(default)]
+    pub archived: Option<bool>,
+    /// Whether notifications for this chat are muted.
+    #[serde(default)]
+    pub muted: Option<bool>,
+    /// Whether this chat (not an individual message) is pinned in the chat list.
+    #[serde(default)]
+    pub pinned: Option<bool>,
+    /// Whether the chat is marked unread, independently of its unread message count.
+    #[serde(default)]
+    pub is_unread: Option<bool>,
     pub last_message: Option<MessageSummary>,
 }
 
@@ -316,9 +328,9 @@ impl ChatFolder {
             return true;
         }
 
-        if (chat.muted && !self.include_muted)
+        if (chat.muted.unwrap_or(false) && !self.include_muted)
             || (chat.read && !self.include_read)
-            || (chat.archived && !self.include_archived)
+            || (chat.archived.unwrap_or(false) && !self.include_archived)
         {
             return false;
         }
@@ -339,9 +351,9 @@ pub struct ChatFolderFacts {
     pub is_group: bool,
     pub is_channel: bool,
     pub is_bot: bool,
-    pub muted: bool,
+    pub muted: Option<bool>,
     pub read: bool,
-    pub archived: bool,
+    pub archived: Option<bool>,
 }
 
 impl Default for AccountState {

@@ -16,7 +16,7 @@ use jni::{
 };
 use tg_mobile_core::{
     decode_command, encode_event, encode_state, spawn_core, spawn_core_with_store, BackendFuture,
-    CoreCommand, CoreError, CoreEvent, CoreHandle, JsonFileStateStore, TelegramBackend,
+    CoreCommand, CoreError, CoreHandle, JsonFileStateStore, TelegramBackend,
 };
 use tg_mobile_telegram::{GrammersBackend, TelegramConfig};
 use tokio::{runtime::Runtime, task::JoinHandle, time::timeout};
@@ -548,6 +548,7 @@ pub extern "system" fn Java_com_chitik_telegram_nativebridge_NativeBridge_destro
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tg_mobile_core::CoreEvent;
 
     #[test]
     fn accepts_canonical_start_command() {

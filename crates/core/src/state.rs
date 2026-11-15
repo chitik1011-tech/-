@@ -336,6 +336,7 @@ impl CoreState {
                 {
                     if inserted && !message.outgoing {
                         chat.unread_count = chat.unread_count.saturating_add(1);
+                        chat.is_unread = Some(true);
                     }
                     let is_newer = chat
                         .last_message
@@ -353,11 +354,32 @@ impl CoreState {
                         id: message.chat_id,
                         title: format!("Chat {}", message.chat_id),
                         unread_count: if message.outgoing { 0 } else { 1 },
+                        archived: Some(false),
+                        muted: Some(false),
+                        pinned: Some(false),
+                        is_unread: Some(!message.outgoing),
                         last_message: Some(message.clone()),
                     });
                 }
 
                 self.last_error = None;
+            }
+            CoreEvent::ChatArchived { chat_id, archived } => {
+                self.update_chat_action(*chat_id, |chat| chat.archived = Some(*archived));
+            }
+            CoreEvent::ChatMuted { chat_id, muted } => {
+                self.update_chat_action(*chat_id, |chat| chat.muted = Some(*muted));
+            }
+            CoreEvent::ChatPinned { chat_id, pinned } => {
+                self.update_chat_action(*chat_id, |chat| chat.pinned = Some(*pinned));
+            }
+            CoreEvent::ChatUnreadChanged { chat_id, unread } => {
+                self.update_chat_action(*chat_id, |chat| {
+                    chat.is_unread = Some(*unread);
+                    if !*unread {
+                        chat.unread_count = 0;
+                    }
+                });
             }
             CoreEvent::MessageEdited(message) => {
                 if self.apply_message_edit(message) {
@@ -710,6 +732,18 @@ impl CoreState {
 
         self.polls.insert(incoming.id, incoming.clone());
         Ok(true)
+    }
+
+    fn update_chat_action(&mut self, chat_id: i64, update: impl FnOnce(&mut ChatSummary)) {
+        if let Some(chat) = self
+            .account
+            .chats
+            .iter_mut()
+            .find(|chat| chat.id == chat_id)
+        {
+            update(chat);
+            self.last_error = None;
+        }
     }
 
     fn upsert_message(&mut self, message: MessageSummary) -> bool {

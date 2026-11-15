@@ -82,6 +82,10 @@ fn edit_for_unknown_non_preview_message_does_not_create_sparse_history() {
         id: 7,
         title: "chat".into(),
         unread_count: 0,
+        archived: None,
+        muted: None,
+        pinned: None,
+        is_unread: None,
         last_message: Some(message(7, 20, 200, "latest")),
     });
 
@@ -98,6 +102,10 @@ fn edit_updates_preview_even_when_history_page_is_not_cached() {
         id: 7,
         title: "chat".into(),
         unread_count: 0,
+        archived: None,
+        muted: None,
+        pinned: None,
+        is_unread: None,
         last_message: Some(message(7, 20, 200, "before")),
     });
 
@@ -260,6 +268,10 @@ fn deleting_preview_without_cached_history_clears_stale_preview() {
         id: 7,
         title: "chat".into(),
         unread_count: 3,
+        archived: None,
+        muted: None,
+        pinned: None,
+        is_unread: None,
         last_message: Some(message(7, 50, 500, "preview only")),
     });
 
