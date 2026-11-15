@@ -259,6 +259,8 @@ async fn restore_state<S: StateStore>(
         Ok(Some(mut state)) => {
             state.running = true;
             state.last_error = None;
+            state.chat_pagination.loading = false;
+            state.chat_pagination.loading_cursor = None;
             let _ = state_tx.send(state.clone());
             state
         }
