@@ -7,6 +7,7 @@ This project is currently pre-release. Development changes are tracked through p
 ## Unreleased
 
 - Rust-first Telegram core and protocol integration
+- Telegram polls with end-to-end voting and Compose results UI
 - Android JNI/Compose shell
 - connection lifecycle and reconnect synchronization
 - reliable message sending
