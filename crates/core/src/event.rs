@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{connection::ConnectionState, model::{AccountState, AuthorizationState, ChatSummary, MessageSummary}};
+use crate::{
+    connection::ConnectionState,
+    model::{AccountState, AuthorizationState, ChatSummary, MessageSummary},
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
