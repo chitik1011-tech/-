@@ -218,6 +218,10 @@ pub struct MediaAttachment {
     pub filename: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thumbnail: Option<AttachmentThumbnail>,
+    /// Identifies the latest download attempt. Older asynchronous transfer
+    /// events are ignored after a cancellation or retry.
+    #[serde(default)]
+    pub download_generation: u64,
     #[serde(default)]
     pub download_state: AttachmentDownloadState,
 }

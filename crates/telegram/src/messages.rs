@@ -80,6 +80,7 @@ fn photo_attachment(photo: &Photo) -> MediaAttachment {
         duration_ms: None,
         filename: None,
         thumbnail: None,
+        download_generation: 0,
         download_state: AttachmentDownloadState::NotDownloaded,
     }
 }
@@ -107,6 +108,7 @@ fn document_attachment(
         duration_ms,
         filename: document.name().map(str::to_owned),
         thumbnail,
+        download_generation: 0,
         download_state: AttachmentDownloadState::NotDownloaded,
     }
 }

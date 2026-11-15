@@ -17,11 +17,16 @@ pub(crate) struct MediaTarget {
     pub total_bytes: Option<u64>,
 }
 
-pub(crate) fn event(target: &MediaTarget, state: AttachmentDownloadState) -> CoreEvent {
+pub(crate) fn event(
+    target: &MediaTarget,
+    generation: u64,
+    state: AttachmentDownloadState,
+) -> CoreEvent {
     CoreEvent::MediaTransferUpdated {
         chat_id: target.chat_id,
         message_id: target.message_id,
         attachment_index: target.attachment_index,
+        generation,
         state,
     }
 }
@@ -73,18 +78,26 @@ pub(crate) fn spawn_download(
         )
         .await
         {
-            if let Ok(snapshot) = transfers.get(queued_token) {
-                let _ = transfers.fail(snapshot.token);
+            // Emit Failed only if this task still owns an active transfer.
+            // Cancellation advances the generation and makes this token stale,
+            // so late I/O errors cannot overwrite the user's Cancelled state.
+            if let Some(failed_state) = failure_state(&transfers, queued_token, reason) {
+                let _ = updates
+                    .send(Ok(event(&target, queued_token.generation, failed_state)))
+                    .await;
             }
-            let _ = updates
-                .send(Ok(event(
-                    &target,
-                    AttachmentDownloadState::Failed {
-                        reason: Some(reason),
-                    },
-                )))
-                .await;
         }
+    })
+}
+
+fn failure_state(
+    transfers: &TransferManager,
+    token: TransferToken,
+    reason: String,
+) -> Option<AttachmentDownloadState> {
+    transfers.fail(token).ok()?;
+    Some(AttachmentDownloadState::Failed {
+        reason: Some(reason),
     })
 }
 
@@ -139,6 +152,7 @@ async fn run_download(
     let _ = updates
         .send(Ok(event(
             target,
+            snapshot.token.generation,
             state_from_snapshot(&snapshot, Some(local_path)),
         )))
         .await;
@@ -155,7 +169,11 @@ async fn emit_snapshot(
         return;
     };
     let _ = updates
-        .send(Ok(event(target, state_from_snapshot(&snapshot, None))))
+        .send(Ok(event(
+            target,
+            snapshot.token.generation,
+            state_from_snapshot(&snapshot, None),
+        )))
         .await;
 }
 
@@ -200,6 +218,26 @@ mod tests {
         assert_eq!(
             state_from_snapshot(&manager.get(completed).unwrap(), None),
             AttachmentDownloadState::NotDownloaded
+        );
+    }
+
+    #[test]
+    fn late_download_error_does_not_replace_cancelled_state() {
+        let manager = TransferManager::new();
+        let remote = manager
+            .request(TransferDirection::Download, "cancelled-download", None)
+            .unwrap();
+        let queued = manager.queue_download(remote.token).unwrap();
+        let active = manager.start_download(queued).unwrap();
+        let cancelled = manager.cancel(active).unwrap();
+
+        assert_eq!(
+            failure_state(&manager, active, "network failed".into()),
+            None
+        );
+        assert_eq!(
+            state_from_snapshot(&manager.get(cancelled).unwrap(), None),
+            AttachmentDownloadState::Cancelled
         );
     }
 }
