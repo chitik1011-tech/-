@@ -5,8 +5,8 @@ use std::{
 };
 
 use grammers_client::{
-    media::Media,
     Client,
+    media::Media,
     sender::{SenderPool, SenderPoolHandle},
     session::{storages::SqliteSession, updates::UpdatesLike},
     tl,
@@ -15,8 +15,9 @@ use tg_media_cache::{CacheConfig, MediaCache};
 use tg_mobile_core::{
     AttachmentDownloadState, AuthorizationState, BackendFuture, BackendUpdateReceiver,
     BackendUpdateSender, ConnectionToken, CoreCommand, CoreError, CoreEvent, DownloadState,
-    MessageLinkResolution, MessagePeer, MessageSummary, OutgoingSend, PeerReference, PeerResolution,
-    TelegramBackend, TransferDirection, TransferManager, TransferState, backend_update_channel,
+    MessageLinkResolution, MessagePeer, MessageSummary, OutgoingSend, PeerReference,
+    PeerResolution, TelegramBackend, TransferDirection, TransferManager, TransferState,
+    backend_update_channel,
 };
 use tokio::{
     sync::{broadcast, mpsc, watch},
@@ -27,12 +28,10 @@ use crate::{
     auth::AuthFlow,
     chats::{PeerRegistry, find_peer, load_chats, new_peer_registry},
     config::TelegramConfig,
-    downloads::{
-        event as media_event, spawn_download, state_from_snapshot, MediaTarget,
-    },
+    downloads::{MediaTarget, event as media_event, spawn_download, state_from_snapshot},
     error::{TelegramBackendError, session_error},
     messages::{
-        message_to_summary, MessageDeduplicator, load_messages, load_messages_page, mark_read,
+        MessageDeduplicator, load_messages, load_messages_page, mark_read, message_to_summary,
         search_messages_page, send_text, send_text_idempotent,
     },
     updates::{TelegramUpdate, UpdateWorkerInput, run_update_worker},
@@ -111,7 +110,9 @@ impl GrammersBackend {
             root: media_cache_root,
             max_bytes: MEDIA_CACHE_MAX_BYTES,
         })
-        .map_err(|error| CoreError::Backend(format!("could not initialize media cache: {error}")))?;
+        .map_err(|error| {
+            CoreError::Backend(format!("could not initialize media cache: {error}"))
+        })?;
 
         Ok(Self {
             config,
