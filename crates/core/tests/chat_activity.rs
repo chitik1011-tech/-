@@ -32,6 +32,7 @@ async fn runtime_broadcasts_activity_expiry_without_mutating_core_state() {
         .send(Ok(CoreEvent::ChatActivityChanged {
             chat_id: 42,
             user_id: 7,
+            generation: 1,
             activity: tg_mobile_core::ChatActivityKind::Typing,
             ttl_ms: 30,
         }))
@@ -46,6 +47,7 @@ async fn runtime_broadcasts_activity_expiry_without_mutating_core_state() {
         CoreEvent::ChatActivityChanged {
             chat_id: 42,
             user_id: 7,
+            generation: 1,
             activity: tg_mobile_core::ChatActivityKind::Typing,
             ttl_ms: 30,
         }
@@ -59,6 +61,7 @@ async fn runtime_broadcasts_activity_expiry_without_mutating_core_state() {
         CoreEvent::ChatActivityExpired {
             chat_id: 42,
             user_id: 7,
+            generation: 1,
         }
     );
     assert_eq!(core.state(), CoreState::default());

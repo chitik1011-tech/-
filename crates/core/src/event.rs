@@ -11,19 +11,25 @@ pub enum CoreEvent {
     AuthorizationChanged(AuthorizationState),
     ChatsLoaded(Vec<ChatSummary>),
     MessageAdded(MessageSummary),
+    /// `generation` must monotonically increase per (chat_id, user_id).
+    /// Backends that cannot associate an end/cancel update with a generation
+    /// should rely on TTL expiry instead of guessing and clearing newer activity.
     ChatActivityChanged {
         chat_id: i64,
         user_id: i64,
+        generation: u64,
         activity: ChatActivityKind,
         ttl_ms: u64,
     },
     ChatActivityEnded {
         chat_id: i64,
         user_id: i64,
+        generation: u64,
     },
     ChatActivityExpired {
         chat_id: i64,
         user_id: i64,
+        generation: u64,
     },
     Error(String),
     Stopped,
