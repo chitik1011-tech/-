@@ -180,27 +180,40 @@ impl MockTelegramBackend {
                     return Err(CoreError::InvalidInput("message text is empty".into()));
                 }
 
-                if let Some((known_chat_id, known_text, message_id)) =
-                    self.reliable_sends.get(&client_id)
-                {
-                    if *known_chat_id != chat_id || known_text != &text {
-                        return Err(CoreError::InvalidInput(format!(
-                            "client message id {client_id} is already bound to another request"
-                        )));
-                    }
-                    return Ok(vec![CoreEvent::MessageSendStateChanged(OutgoingSend::sent(
-                        client_id,
-                        chat_id,
-                        text,
-                        *message_id,
-                    ))]);
-                }
-
                 let sending = CoreEvent::MessageSendStateChanged(OutgoingSend::sending(
                     client_id,
                     chat_id,
                     text.clone(),
                 ));
+
+                if let Some((known_chat_id, known_text, message_id)) =
+                    self.reliable_sends.get(&client_id)
+                {
+                    if *known_chat_id != chat_id || known_text != &text {
+                        return Ok(vec![
+                            sending,
+                            CoreEvent::MessageSendStateChanged(OutgoingSend::failed(
+                                client_id,
+                                chat_id,
+                                text,
+                                format!(
+                                    "client message id {client_id} is already bound to another request"
+                                ),
+                                false,
+                            )),
+                        ]);
+                    }
+                    return Ok(vec![
+                        sending,
+                        CoreEvent::MessageSendStateChanged(OutgoingSend::sent(
+                            client_id,
+                            chat_id,
+                            text,
+                            *message_id,
+                        )),
+                    ]);
+                }
+
                 let message = MessageSummary {
                     id: self.next_message_id,
                     chat_id,
