@@ -138,7 +138,10 @@ impl MockTelegramBackend {
 
                 Ok(vec![CoreEvent::MessageEdited(edited)])
             }
-            CoreCommand::DeleteMessage { chat_id, message_id } => {
+            CoreCommand::DeleteMessage {
+                chat_id,
+                message_id,
+            } => {
                 self.require_authorized()?;
                 let next_last = {
                     let messages = self
@@ -166,7 +169,10 @@ impl MockTelegramBackend {
                     self.messages.remove(&chat_id);
                 }
 
-                Ok(vec![CoreEvent::MessageDeleted { chat_id, message_id }])
+                Ok(vec![CoreEvent::MessageDeleted {
+                    chat_id,
+                    message_id,
+                }])
             }
             CoreCommand::Shutdown => Ok(Vec::new()),
         }
@@ -208,7 +214,11 @@ impl MockTelegramBackend {
         messages.push(message.clone());
         messages.sort_by_key(|message| (message.timestamp_unix, message.id));
 
-        if let Some(chat) = self.chats.iter_mut().find(|chat| chat.id == message.chat_id) {
+        if let Some(chat) = self
+            .chats
+            .iter_mut()
+            .find(|chat| chat.id == message.chat_id)
+        {
             chat.last_message = Some(message.clone());
         }
     }
