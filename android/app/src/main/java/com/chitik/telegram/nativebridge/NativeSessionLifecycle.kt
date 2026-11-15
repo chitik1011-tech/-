@@ -68,10 +68,15 @@ internal class NativeSessionLifecycle {
             }
 
             startPending = true
-            dispatchWithHandle(send).also { result ->
-                if (result != LifecycleDispatchResult.Accepted) {
-                    startPending = false
+            try {
+                dispatchWithHandle(send).also { result ->
+                    if (result != LifecycleDispatchResult.Accepted) {
+                        startPending = false
+                    }
                 }
+            } catch (error: Throwable) {
+                startPending = false
+                throw error
             }
         }
 
@@ -83,10 +88,15 @@ internal class NativeSessionLifecycle {
             if (chatsPending) return@synchronized LifecycleDispatchResult.Duplicate
 
             chatsPending = true
-            dispatchWithHandle(send).also { result ->
-                if (result != LifecycleDispatchResult.Accepted) {
-                    chatsPending = false
+            try {
+                dispatchWithHandle(send).also { result ->
+                    if (result != LifecycleDispatchResult.Accepted) {
+                        chatsPending = false
+                    }
                 }
+            } catch (error: Throwable) {
+                chatsPending = false
+                throw error
             }
         }
 
