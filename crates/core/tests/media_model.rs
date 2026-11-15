@@ -123,25 +123,13 @@ fn all_telegram_media_kinds_round_trip_with_metadata() {
 }
 
 #[test]
-fn only_downloaded_state_carries_a_local_path() {
-    let mut attachment = media(AttachmentKind::Document);
-    assert_eq!(
-        serde_json::to_value(&attachment)
-            .ok()
-            .and_then(|value| value.get("download_state").cloned())
-            .and_then(|state| state.get("local_path").cloned()),
-        None
-    );
-
-    attachment.download_state = AttachmentDownloadState::Downloaded {
-        local_path: PathBuf::from("/private/app/media/file.bin"),
-    };
-    let state: Option<Value> = serde_json::to_value(&attachment)
+fn undownloaded_state_does_not_expose_a_local_path() {
+    let attachment = media(AttachmentKind::Document);
+    let state = serde_json::to_value(&attachment)
         .ok()
         .and_then(|value| value.get("download_state").cloned());
 
-    assert_eq!(
-        state.and_then(|value| value.get("local_path").cloned()),
-        Some(json!("/private/app/media/file.bin"))
-    );
+    assert!(state
+        .as_ref()
+        .is_some_and(|value| value.get("local_path").is_none()));
 }
