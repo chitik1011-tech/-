@@ -54,6 +54,7 @@ fn partial_updates_are_idempotent_and_preserve_unreported_counters() {
 #[test]
 fn read_receipt_message_count_does_not_clear_mentions_or_reactions() {
     let mut state = CoreState::default();
+    state.account.chats.push(chat(10, 6));
     state.reduce(&CoreUnreadUpdate::complete(10));
 
     state.reduce(&CoreEvent::ChatUnreadUpdated(ChatUnreadUpdate {
