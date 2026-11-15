@@ -120,9 +120,7 @@ pub(crate) async fn poll_from_update(
     let existing = poll_by_id(registry, update.poll_id).await;
 
     let explicit_identity = match (&update.peer, update.msg_id) {
-        (Some(peer), Some(message_id)) => {
-            Some((raw_peer_to_core(peer), i64::from(message_id)))
-        }
+        (Some(peer), Some(message_id)) => Some((raw_peer_to_core(peer), i64::from(message_id))),
         _ => None,
     };
     let (chat_id, message_id) = explicit_identity
