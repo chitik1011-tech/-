@@ -1,0 +1,13 @@
+/target/
+**/target/
+.gradle/
+.idea/
+local.properties
+*.iml
+*.keystore
+*.jks
+.env
+.env.*
+*.session
+*.tdlib
+android/**/build/
