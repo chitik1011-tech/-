@@ -84,14 +84,18 @@ impl CoreState {
 
                 self.merge_messages(*chat_id, messages);
 
-                let next_cursor = next_before_message_id
+                let next_cursor = (*next_before_message_id)
                     .filter(|message_id| *message_id > 0)
                     .filter(|message_id| Some(*message_id) != *before_message_id);
                 let history = self.message_history.entry(*chat_id).or_default();
                 history.loading = false;
                 history.requested_before_message_id = None;
                 history.has_more = *has_more && next_cursor.is_some();
-                history.next_before_message_id = history.has_more.then_some(next_cursor).flatten();
+                history.next_before_message_id = if history.has_more {
+                    next_cursor
+                } else {
+                    None
+                };
                 history.error = None;
                 self.last_error = None;
             }
