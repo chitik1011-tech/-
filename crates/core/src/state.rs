@@ -89,14 +89,17 @@ impl CoreState {
 
     /// Converts sends interrupted while the process was down to retryable failures.
     pub(crate) fn fail_interrupted_sends(&mut self) -> Vec<OutgoingMessage> {
-        let interrupted = self.outgoing_messages.values()
+        let interrupted = self
+            .outgoing_messages
+            .values()
             .filter(|message| message.status == OutgoingMessageStatus::Sending)
             .map(|message| {
                 let mut failed = message.clone();
                 failed.status = OutgoingMessageStatus::Failed;
                 failed.server_message_id = None;
                 failed.error = Some(
-                    "send was interrupted before confirmation; retrying may duplicate a message".into(),
+                    "send was interrupted before confirmation; retrying may duplicate a message"
+                        .into(),
                 );
                 failed
             })
@@ -136,7 +139,8 @@ impl CoreState {
             }
         };
         if accepted {
-            self.outgoing_messages.insert(message.client_id.clone(), message);
+            self.outgoing_messages
+                .insert(message.client_id.clone(), message);
         }
     }
 
@@ -160,7 +164,6 @@ impl CoreState {
         inserted
     }
 }
-
 
 #[cfg(test)]
 mod outgoing_message_tests {
