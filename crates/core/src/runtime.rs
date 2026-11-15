@@ -114,14 +114,7 @@ where
                 }
                 RuntimeInput::Update(Some(Ok(event))) => {
                     let stopped = matches!(event, CoreEvent::Stopped);
-                    apply_event(
-                        event,
-                        &store,
-                        &mut reduced_state,
-                        &state_tx,
-                        &event_tx_task,
-                    )
-                    .await;
+                    apply_event(event, &store, &mut reduced_state, &state_tx, &event_tx_task).await;
 
                     if stopped {
                         break;
