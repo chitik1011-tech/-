@@ -104,6 +104,7 @@ fn event_kind(event: &CoreEvent) -> &'static str {
         CoreEvent::AuthorizationChanged(_) => "authorization_changed",
         CoreEvent::ChatsLoaded(_) => "chats_loaded",
         CoreEvent::MessageAdded(_) => "message_added",
+        CoreEvent::MessagesForwarded(_) => "messages_forwarded",
         CoreEvent::Error(_) => "error",
         CoreEvent::Stopped => "stopped",
     }
@@ -472,6 +473,18 @@ mod tests {
     fn rejects_noncanonical_command_payload() {
         let parsed = decode_command(r#"{"type":"set_phone_number","phone_number":"123"}"#);
         assert!(parsed.is_err());
+    }
+
+    #[test]
+    fn maps_forwarding_results_to_public_event_kind() {
+        let event = CoreEvent::MessagesForwarded(tg_mobile_core::ForwardMessagesResult {
+            request_id: "request-1".into(),
+            destination_chat_id: 30,
+            outcomes: vec![],
+        });
+        assert_eq!(event_kind(&event), "messages_forwarded");
+        let encoded = encode_event(&event).unwrap();
+        assert!(encoded.contains("\\"type\\":\\"messages_forwarded\\""));
     }
 
     #[test]
