@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+pub mod activity;
 pub mod backend;
 pub mod command;
 pub mod error;
@@ -11,6 +12,7 @@ pub mod state;
 pub mod storage;
 pub mod wire;
 
+pub use activity::{ChatActivityTracker, DEFAULT_CHAT_ACTIVITY_TTL_MS, MAX_CHAT_ACTIVITY_TTL_MS};
 pub use backend::{
     backend_update_channel, BackendFuture, BackendUpdateReceiver, BackendUpdateSender,
     TelegramBackend, DEFAULT_BACKEND_UPDATE_CAPACITY,
