@@ -92,6 +92,7 @@ data class ConversationMessageUi(
     val timestamp: String,
     val isOutgoing: Boolean,
     val attachments: List<MediaAttachmentUi> = emptyList(),
+    val isRead: Boolean = false,
     val poll: ConversationPollUi? = null,
     val pollVoting: Boolean = false,
     val pollError: String? = null,
@@ -355,12 +356,24 @@ private fun MessageBubble(
                 }
                 if (message.timestamp.isNotBlank()) {
                     Spacer(Modifier.height(5.dp))
-                    Text(
-                        text = message.timestamp,
+                    Row(
                         modifier = Modifier.align(Alignment.End),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = message.timestamp,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        if (message.isOutgoing) {
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                text = if (message.isRead) "✓✓" else "✓",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (message.isRead) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
                 }
             }
         }

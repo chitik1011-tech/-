@@ -8,7 +8,7 @@ use crate::{
     event::CoreEvent,
     model::{
         AccountState, AttachmentDownloadState, ChatFolder, ChatSummary, Draft, MessageHistoryState,
-        MessageSummary,
+        MessageSummary, ReadDirection, ReadReceipt,
     },
     poll::PollSummary,
     search::MessageSearchState,
@@ -29,6 +29,9 @@ pub struct CoreState {
     #[serde(default)]
     pub connection_machine: ConnectionMachine,
     pub messages: BTreeMap<i64, Vec<MessageSummary>>,
+    /// Telegram's monotonic per-chat inbox and outbox read boundaries.
+    #[serde(default)]
+    pub read_receipts: BTreeMap<i64, ReadReceipt>,
     #[serde(default)]
     pub message_history: BTreeMap<i64, MessageHistoryState>,
     #[serde(default)]
@@ -66,6 +69,7 @@ impl Default for CoreState {
             connection_state: ConnectionState::Disconnected,
             connection_machine: ConnectionMachine::default(),
             messages: BTreeMap::new(),
+            read_receipts: BTreeMap::new(),
             message_history: BTreeMap::new(),
             message_search: MessageSearchState::default(),
             outbox: BTreeMap::new(),
@@ -322,6 +326,38 @@ impl CoreState {
                         chat.unread_count = 0;
                     }
                 }
+                self.last_error = None;
+            }
+            CoreEvent::ReadReceiptUpdated {
+                chat_id,
+                direction,
+                max_message_id,
+            } => {
+                if *chat_id == 0 || *max_message_id <= 0 {
+                    return;
+                }
+                if *direction == ReadDirection::Inbox {
+                    if let Some(chat) = self
+                        .account
+                        .chats
+                        .iter_mut()
+                        .find(|chat| chat.id == *chat_id)
+                    {
+                        let covers_latest = chat
+                            .last_message
+                            .as_ref()
+                            .is_none_or(|message| message.id <= *max_message_id);
+                        if covers_latest {
+                            chat.unread_count = 0;
+                        }
+                    }
+                }
+                let receipt = self.read_receipts.entry(*chat_id).or_default();
+                let boundary = match direction {
+                    ReadDirection::Inbox => &mut receipt.inbox_max_message_id,
+                    ReadDirection::Outbox => &mut receipt.outbox_max_message_id,
+                };
+                *boundary = (*boundary).max(*max_message_id);
                 self.last_error = None;
             }
             CoreEvent::MessageSearchStarted(request) => {
