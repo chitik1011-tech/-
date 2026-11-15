@@ -61,7 +61,9 @@ impl CoreState {
             } => {
                 self.merge_message_page(*chat_id, cursor.as_ref(), messages);
 
-                let page_has_messages = messages.iter().any(|message| message.chat_id == *chat_id);
+                let page_has_messages = messages
+                    .iter()
+                    .any(|message| message.chat_id == *chat_id);
                 let cursor_advanced = next_cursor.as_ref() != cursor.as_ref();
                 let has_more = *has_more
                     && page_has_messages
@@ -124,7 +126,10 @@ impl CoreState {
             .unwrap_or(&[])
     }
 
-    pub fn message_history_for_chat(&self, chat_id: i64) -> MessageHistoryState {
+    pub fn message_history_for_chat(
+        &self,
+        chat_id: i64,
+    ) -> MessageHistoryState {
         self.message_history.get(&chat_id).cloned().unwrap_or_default()
     }
 
@@ -187,7 +192,6 @@ impl CoreState {
         inserted
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -293,7 +297,9 @@ mod tests {
             messages.last().map(|item| item.id),
             Some(MAX_CACHED_MESSAGES_PER_CHAT as i64 - 1)
         );
-        assert!(messages.windows(2).all(|pair| pair[0].timestamp_unix <= pair[1].timestamp_unix));
+        assert!(messages
+            .windows(2)
+            .all(|pair| pair[0].timestamp_unix <= pair[1].timestamp_unix));
     }
 
     #[test]
