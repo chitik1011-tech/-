@@ -212,7 +212,7 @@ async fn map_update(
 
 #[cfg(test)]
 mod tests {
-    use super::TelegramUpdate;
+    use super::{ConnectionState, TelegramUpdate};
     use tg_mobile_core::{CoreEvent, MessageSummary};
 
     #[test]
@@ -236,6 +236,10 @@ mod tests {
             TelegramUpdate::MessageAdded(message).to_core_event(),
             Some(CoreEvent::MessageAdded(_))
         ));
+        assert_eq!(
+            TelegramUpdate::ConnectionStateChanged(ConnectionState::Ready).to_core_event(),
+            Some(CoreEvent::ConnectionStateChanged(ConnectionState::Ready))
+        );
         assert!(TelegramUpdate::Unhandled.to_core_event().is_none());
     }
 }
