@@ -12,13 +12,15 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc, Mutex, MutexGuard,
+        Arc, Mutex, MutexGuard, OnceLock, Weak,
     },
     time::SystemTime,
 };
 use thiserror::Error;
 
 const TEMP_MARKER: &str = ".part-";
+static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+static SHARED_STATES: OnceLock<Mutex<HashMap<PathBuf, Weak<Mutex<State>>>>> = OnceLock::new();
 
 /// Configuration for a media cache.
 ///
@@ -55,8 +57,7 @@ struct State {
 struct Inner {
     root: PathBuf,
     max_bytes: u64,
-    state: Mutex<State>,
-    temp_counter: AtomicU64,
+    state: Arc<Mutex<State>>,
 }
 
 /// A bounded cache rooted in a directory chosen by the caller.
@@ -75,15 +76,17 @@ impl MediaCache {
         if !fs::metadata(&root)?.is_dir() {
             return Err(CacheError::InvalidRoot);
         }
+        let (state, is_new_state) = shared_state(&root)?;
         let cache = Self {
             inner: Arc::new(Inner {
                 root,
                 max_bytes: config.max_bytes,
-                state: Mutex::new(State::default()),
-                temp_counter: AtomicU64::new(0),
+                state,
             }),
         };
-        cache.recover_temporary_files()?;
+        if is_new_state {
+            cache.recover_temporary_files()?;
+        }
         Ok(cache)
     }
 
@@ -115,7 +118,7 @@ impl MediaCache {
     /// download has been written; dropping a writer discards its temporary file.
     pub fn begin_write(&self, reference: &str) -> Result<CacheWriter, CacheError> {
         let key = cache_key(reference);
-        let unique = self.inner.temp_counter.fetch_add(1, Ordering::Relaxed);
+        let unique = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
         let temp_path = self.inner.root.join(format!(
             ".{key}{TEMP_MARKER}{}-{unique}",
             std::process::id()
@@ -242,6 +245,18 @@ struct Entry {
     path: PathBuf,
     size: u64,
     modified: SystemTime,
+}
+
+fn shared_state(root: &Path) -> Result<(Arc<Mutex<State>>, bool), CacheError> {
+    let registry = SHARED_STATES.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut registry = registry.lock().map_err(|_| CacheError::LockPoisoned)?;
+    registry.retain(|_, state| state.strong_count() > 0);
+    if let Some(state) = registry.get(root).and_then(Weak::upgrade) {
+        return Ok((state, false));
+    }
+    let state = Arc::new(Mutex::new(State::default()));
+    registry.insert(root.to_path_buf(), Arc::downgrade(&state));
+    Ok((state, true))
 }
 
 fn mark_accessed(state: &mut State, key: &str) {
@@ -438,6 +453,26 @@ mod tests {
         assert!(matches!(second.commit(), Err(CacheError::CacheFull)));
         assert_eq!(fs::read(lease.path()).expect("leased read"), b"abc");
         assert_eq!(cache.used_bytes().expect("size"), 3);
+    }
+
+    #[test]
+    fn leases_are_shared_between_handles_for_the_same_root() {
+        let (_dir, first_cache) = cache(5);
+        let second_cache = MediaCache::new(CacheConfig {
+            root: first_cache.inner.root.clone(),
+            max_bytes: 5,
+        })
+        .expect("second cache handle");
+
+        let mut first = first_cache.begin_write("first").expect("writer");
+        first.write_all(b"abc").expect("write");
+        let lease = first.commit().expect("commit");
+
+        let mut second = second_cache.begin_write("second").expect("writer");
+        second.write_all(b"def").expect("write");
+        assert!(matches!(second.commit(), Err(CacheError::CacheFull)));
+        assert_eq!(fs::read(lease.path()).expect("leased read"), b"abc");
+        assert_eq!(first_cache.used_bytes().expect("size"), 3);
     }
 
     #[cfg(unix)]
