@@ -9,7 +9,9 @@ pub enum CoreEvent {
     AuthorizationChanged(AuthorizationState),
     ChatsLoaded(Vec<ChatSummary>),
     MessageAdded(MessageSummary),
+    /// Carries the current content and metadata for an edited message.
     MessageEdited(MessageSummary),
+    /// Identifies a deleted message using its chat-local message ID.
     MessageDeleted { chat_id: i64, message_id: i64 },
     Error(String),
     Stopped,
