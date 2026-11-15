@@ -9,6 +9,7 @@ pub mod model;
 pub mod runtime;
 pub mod state;
 pub mod storage;
+pub mod transfer;
 pub mod wire;
 
 pub use backend::{
@@ -26,4 +27,8 @@ pub use model::{
 pub use runtime::{spawn_core, spawn_core_with_store, CoreHandle, PERSISTENCE_FLUSH_INTERVAL_MS};
 pub use state::{CoreState, MAX_CACHED_MESSAGES_PER_CHAT};
 pub use storage::{JsonFileStateStore, MemoryStateStore, NoopStateStore, StateStore};
+pub use transfer::{
+    DownloadState, TransferDirection, TransferError, TransferKey, TransferManager,
+    TransferSnapshot, TransferState, TransferToken, UploadState,
+};
 pub use wire::{decode_command, encode_event, encode_state};
