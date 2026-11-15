@@ -501,8 +501,16 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 val pollId = parsePollEventId(payload)
                 _state.update {
                     it.copy(
-                        votingPollIds = pollId?.let(it.votingPollIds::minus) ?: it.votingPollIds,
-                        pollVoteErrors = pollId?.let(it.pollVoteErrors::minus) ?: it.pollVoteErrors,
+                        votingPollIds = if (pollId != null) {
+                            it.votingPollIds - pollId
+                        } else {
+                            it.votingPollIds
+                        },
+                        pollVoteErrors = if (pollId != null) {
+                            it.pollVoteErrors - pollId
+                        } else {
+                            it.pollVoteErrors
+                        },
                         lastEventType = type,
                         lastEventPayload = payload,
                     )
@@ -512,7 +520,11 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 val pollId = parsePollEventId(payload)
                 _state.update {
                     it.copy(
-                        votingPollIds = pollId?.let(it.votingPollIds::minus) ?: it.votingPollIds,
+                        votingPollIds = if (pollId != null) {
+                            it.votingPollIds - pollId
+                        } else {
+                            it.votingPollIds
+                        },
                         lastEventType = type,
                         lastEventPayload = payload,
                     )
@@ -757,6 +769,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         val root = JSONObject(payload)
         val body = root.optJSONObject("payload") ?: return@runCatching null
         body.optLong("poll_id").takeIf { it != 0L }
+            ?: body.optLong("id").takeIf { it != 0L }
     }.getOrNull()
 
     private fun parsePollVoteFailure(payload: String): Pair<Long, String>? = runCatching {
