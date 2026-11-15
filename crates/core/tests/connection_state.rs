@@ -1,6 +1,6 @@
 use serde_json::json;
 use tg_mobile_core::{
-    ConnectionState, ConnectionStateMachine, CoreEvent, CoreState, encode_event,
+    encode_event, ConnectionState, ConnectionStateMachine, CoreEvent, CoreState,
 };
 
 #[test]
