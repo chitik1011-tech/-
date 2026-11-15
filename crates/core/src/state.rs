@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     event::CoreEvent,
     model::{AccountState, ChatSummary, MessageSummary},
+    outgoing::{OutgoingMessage, OutgoingMessageStatus},
 };
 
 pub const MAX_CACHED_MESSAGES_PER_CHAT: usize = 512;
@@ -14,6 +15,8 @@ pub struct CoreState {
     pub running: bool,
     pub account: AccountState,
     pub messages: BTreeMap<i64, Vec<MessageSummary>>,
+    #[serde(default)]
+    pub outgoing_messages: BTreeMap<String, OutgoingMessage>,
     pub last_error: Option<String>,
 }
 
@@ -23,6 +26,7 @@ impl Default for CoreState {
             running: true,
             account: AccountState::default(),
             messages: BTreeMap::new(),
+            outgoing_messages: BTreeMap::new(),
             last_error: None,
         }
     }
@@ -42,6 +46,9 @@ impl CoreState {
             CoreEvent::ChatsLoaded(chats) => {
                 self.account.chats = chats.clone();
                 self.last_error = None;
+            }
+            CoreEvent::OutgoingMessageChanged(message) => {
+                self.upsert_outgoing_message(message.clone());
             }
             CoreEvent::MessageAdded(message) => {
                 let inserted = self.upsert_message(message.clone());
@@ -76,6 +83,30 @@ impl CoreState {
         }
     }
 
+    pub fn outgoing_message(&self, client_id: &str) -> Option<&OutgoingMessage> {
+        self.outgoing_messages.get(client_id)
+    }
+
+    /// Converts sends interrupted while the process was down to retryable failures.
+    pub(crate) fn fail_interrupted_sends(&mut self) -> Vec<OutgoingMessage> {
+        let interrupted = self.outgoing_messages.values()
+            .filter(|message| message.status == OutgoingMessageStatus::Sending)
+            .map(|message| {
+                let mut failed = message.clone();
+                failed.status = OutgoingMessageStatus::Failed;
+                failed.server_message_id = None;
+                failed.error = Some(
+                    "send was interrupted before confirmation; retrying may duplicate a message".into(),
+                );
+                failed
+            })
+            .collect::<Vec<_>>();
+        for message in &interrupted {
+            self.upsert_outgoing_message(message.clone());
+        }
+        interrupted
+    }
+
     pub fn chat(&self, chat_id: i64) -> Option<&ChatSummary> {
         self.account.chats.iter().find(|chat| chat.id == chat_id)
     }
@@ -93,6 +124,20 @@ impl CoreState {
             .iter()
             .map(|chat| u64::from(chat.unread_count))
             .sum()
+    }
+
+    fn upsert_outgoing_message(&mut self, message: OutgoingMessage) {
+        let accepted = match self.outgoing_messages.get(&message.client_id) {
+            None => message.status == OutgoingMessageStatus::Draft,
+            Some(current) => {
+                current.chat_id == message.chat_id
+                    && current.text == message.text
+                    && (current == &message || current.status.may_transition_to(message.status))
+            }
+        };
+        if accepted {
+            self.outgoing_messages.insert(message.client_id.clone(), message);
+        }
     }
 
     fn upsert_message(&mut self, message: MessageSummary) -> bool {
