@@ -1,6 +1,6 @@
 use std::{io::Write, path::PathBuf, sync::Arc};
 
-use grammers_client::{media::Media, Client};
+use grammers_client::{Client, media::Media};
 use tg_media_cache::MediaCache;
 use tg_mobile_core::{
     AttachmentDownloadState, BackendUpdateSender, CoreEvent, DownloadState, TransferManager,
@@ -42,9 +42,9 @@ pub(crate) fn state_from_snapshot(
         TransferState::Download(DownloadState::Downloaded) => local_path
             .map(|local_path| AttachmentDownloadState::Downloaded { local_path })
             .unwrap_or(AttachmentDownloadState::NotDownloaded),
-        TransferState::Download(DownloadState::Failed) => AttachmentDownloadState::Failed {
-            reason: None,
-        },
+        TransferState::Download(DownloadState::Failed) => {
+            AttachmentDownloadState::Failed { reason: None }
+        }
         TransferState::Download(DownloadState::Cancelled) => AttachmentDownloadState::Cancelled,
         TransferState::Upload(_) => AttachmentDownloadState::Failed {
             reason: Some("invalid media transfer direction".into()),
