@@ -1,9 +1,9 @@
 use std::time::Duration;
 
 use tg_mobile_core::{
-    CoreCommand, CoreEvent, CoreState, MemoryStateStore, MockTelegramBackend,
-    OutgoingMessage, OutgoingMessageCommand, OutgoingMessageStatus, StateStore, spawn_core,
-    spawn_core_with_store,
+    spawn_core, spawn_core_with_store, CoreCommand, CoreEvent, CoreState, MemoryStateStore,
+    MockTelegramBackend, OutgoingMessage, OutgoingMessageCommand, OutgoingMessageStatus,
+    StateStore,
 };
 use tokio::time::timeout;
 
@@ -56,8 +56,7 @@ async fn successful_send_emits_draft_sending_sent_and_is_idempotent() {
 
     let request = request();
     core.send_outgoing(request.clone()).await.unwrap();
-    let statuses =
-        wait_for_status(&mut events, "pending-7d2a", OutgoingMessageStatus::Sent).await;
+    let statuses = wait_for_status(&mut events, "pending-7d2a", OutgoingMessageStatus::Sent).await;
 
     assert_eq!(
         statuses,
@@ -67,7 +66,11 @@ async fn successful_send_emits_draft_sending_sent_and_is_idempotent() {
             OutgoingMessageStatus::Sent,
         ]
     );
-    let sent = core.state().outgoing_message("pending-7d2a").unwrap().clone();
+    let sent = core
+        .state()
+        .outgoing_message("pending-7d2a")
+        .unwrap()
+        .clone();
     assert_eq!(sent.status, OutgoingMessageStatus::Sent);
     assert!(sent.server_message_id.is_some());
     assert_eq!(core.state().messages_for_chat(2).len(), 1);
@@ -88,7 +91,10 @@ async fn successful_send_emits_draft_sending_sent_and_is_idempotent() {
     .expect("barrier command should be handled");
     assert_eq!(core.state().messages_for_chat(2).len(), 1);
     assert_eq!(
-        core.state().outgoing_message("pending-7d2a").unwrap().status,
+        core.state()
+            .outgoing_message("pending-7d2a")
+            .unwrap()
+            .status,
         OutgoingMessageStatus::Sent
     );
 }
@@ -126,7 +132,6 @@ async fn failed_send_can_retry_with_the_same_stable_id() {
     );
     assert_eq!(core.state().messages_for_chat(2).len(), 1);
 }
-
 
 #[tokio::test]
 async fn interrupted_sending_state_is_restored_as_retryable_failure() {
@@ -167,9 +172,7 @@ async fn interrupted_sending_state_is_restored_as_retryable_failure() {
     .await
     .expect("interrupted send should be recoverable");
 
-    let message = restored
-        .outgoing_message("pending-after-restart")
-        .unwrap();
+    let message = restored.outgoing_message("pending-after-restart").unwrap();
     assert_eq!(message.status, OutgoingMessageStatus::Failed);
     assert!(message
         .error
