@@ -9,6 +9,8 @@ pub enum CoreEvent {
     AuthorizationChanged(AuthorizationState),
     ChatsLoaded(Vec<ChatSummary>),
     MessageAdded(MessageSummary),
+    MessageEdited(MessageSummary),
+    MessageDeleted { chat_id: i64, message_id: i64 },
     Error(String),
     Stopped,
 }
@@ -20,6 +22,8 @@ impl CoreEvent {
             Self::AuthorizationChanged(_) => "authorization_changed",
             Self::ChatsLoaded(_) => "chats_loaded",
             Self::MessageAdded(_) => "message_added",
+            Self::MessageEdited(_) => "message_edited",
+            Self::MessageDeleted { .. } => "message_deleted",
             Self::Error(_) => "error",
             Self::Stopped => "stopped",
         }
