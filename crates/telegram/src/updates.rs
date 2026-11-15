@@ -7,6 +7,7 @@ use grammers_client::{
 pub use tg_mobile_core::ConnectionState;
 use tg_mobile_core::{
     BackendUpdateSender, ConnectionToken, CoreError, CoreEvent, LinkEvent, MessageSummary,
+    PollSummary,
 };
 use tokio::sync::{broadcast, mpsc, watch};
 use tokio::time::sleep;
@@ -15,6 +16,9 @@ use crate::{
     chats::{PeerRegistry, remember_peer},
     ids::channel_id_to_core,
     messages::{MessageDeduplicator, message_to_summary},
+    polls::{
+        PollRegistry, forget_deleted_polls, poll_from_message, poll_from_update, remember_poll,
+    },
 };
 
 /// Backend-native update model.
@@ -30,6 +34,7 @@ pub enum TelegramUpdate {
         chat_id: Option<i64>,
         message_ids: Vec<i64>,
     },
+    PollUpdated(PollSummary),
     ChatChanged {
         chat_id: i64,
     },
@@ -63,6 +68,7 @@ impl TelegramUpdate {
                 chat_id: *chat_id,
                 message_ids: message_ids.clone(),
             }),
+            Self::PollUpdated(poll) => Some(CoreEvent::PollUpdated(poll.clone())),
             Self::ConnectionStateChanged(_) => None,
             Self::ConnectionLifecycle { token, event } => Some(CoreEvent::ConnectionLifecycle {
                 token: *token,
@@ -80,6 +86,7 @@ pub(crate) struct UpdateWorkerInput {
     pub catch_up: bool,
     pub peers: PeerRegistry,
     pub dedup: Arc<MessageDeduplicator>,
+    pub polls: PollRegistry,
     pub events: broadcast::Sender<TelegramUpdate>,
     pub core_updates: Option<BackendUpdateSender>,
     pub connection_token: watch::Receiver<Option<ConnectionToken>>,
@@ -378,8 +385,27 @@ pub(crate) async fn run_update_worker(mut input: UpdateWorkerInput) {
                         .await;
                     }
                 }
-                if let Some(event) = map_update(update, &input.peers, &input.dedup).await {
-                    emit_update(&input.events, &input.core_updates, event, operation_token).await;
+                match map_update(update, &input.peers, &input.dedup, &input.polls).await {
+                    Ok(events) => {
+                        for event in events {
+                            emit_update(
+                                &input.events,
+                                &input.core_updates,
+                                event,
+                                operation_token,
+                            )
+                            .await;
+                        }
+                    }
+                    Err(error) => {
+                        emit_error(
+                            &input.events,
+                            &input.core_updates,
+                            format!("map Telegram update: {error}"),
+                            operation_token,
+                        )
+                        .await;
+                    }
                 }
             }
             NextOutcome::Shutdown => break,
@@ -541,31 +567,72 @@ async fn map_update(
     update: Update,
     peers: &PeerRegistry,
     dedup: &MessageDeduplicator,
-) -> Option<TelegramUpdate> {
+    polls: &PollRegistry,
+) -> tg_mobile_core::Result<Vec<TelegramUpdate>> {
     match update {
         Update::NewMessage(message) => {
             let summary = message_to_summary(&message);
             if let Ok(Some(peer)) = message.peer_ref().await {
                 remember_peer(peers, summary.chat_id, peer).await;
             }
-            dedup
-                .should_emit(&summary)
-                .await
-                .then_some(TelegramUpdate::MessageAdded(summary))
+
+            let poll = poll_from_message(&message)?;
+            if let Some(poll) = poll.as_ref() {
+                remember_poll(polls, poll.clone()).await;
+            }
+
+            let mut events = Vec::with_capacity(2);
+            if dedup.should_emit(&summary).await {
+                events.push(TelegramUpdate::MessageAdded(summary));
+            }
+            if let Some(poll) = poll {
+                events.push(TelegramUpdate::PollUpdated(poll));
+            }
+            Ok(events)
         }
         Update::MessageEdited(message) => {
             let summary = message_to_summary(&message);
             if let Ok(Some(peer)) = message.peer_ref().await {
                 remember_peer(peers, summary.chat_id, peer).await;
             }
-            Some(TelegramUpdate::MessageEdited(summary))
+
+            let poll = poll_from_message(&message)?;
+            if let Some(poll) = poll.as_ref() {
+                remember_poll(polls, poll.clone()).await;
+            }
+
+            let mut events = vec![TelegramUpdate::MessageEdited(summary)];
+            if let Some(poll) = poll {
+                events.push(TelegramUpdate::PollUpdated(poll));
+            }
+            Ok(events)
         }
-        Update::MessageDeleted(deletion) => Some(TelegramUpdate::MessagesDeleted {
-            chat_id: deletion.channel_id().map(channel_id_to_core),
-            message_ids: deletion.messages().iter().copied().map(i64::from).collect(),
-        }),
-        Update::Raw(_) => Some(TelegramUpdate::Unhandled),
-        _ => None,
+        Update::MessageDeleted(deletion) => {
+            let chat_id = deletion.channel_id().map(channel_id_to_core);
+            let message_ids = deletion
+                .messages()
+                .iter()
+                .copied()
+                .map(i64::from)
+                .collect::<Vec<_>>();
+            forget_deleted_polls(polls, chat_id, &message_ids).await;
+            Ok(vec![TelegramUpdate::MessagesDeleted {
+                chat_id,
+                message_ids,
+            }])
+        }
+        Update::Raw(raw) => {
+            if let tl::enums::Update::MessagePoll(update) = &raw.raw {
+                Ok(poll_from_update(update, polls)
+                    .await?
+                    .map(TelegramUpdate::PollUpdated)
+                    .into_iter()
+                    .collect())
+            } else {
+                Ok(vec![TelegramUpdate::Unhandled])
+            }
+        }
+        _ => Ok(Vec::new()),
     }
 }
 
