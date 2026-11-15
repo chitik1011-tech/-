@@ -12,6 +12,7 @@ pub enum CoreCommand {
     SubmitCode(String),
     SubmitPassword(String),
     LoadChats { limit: usize },
+    LoadProfile { peer_id: i64 },
     SendText { chat_id: i64, text: String },
     Shutdown,
 }
@@ -24,6 +25,7 @@ impl CoreCommand {
             Self::SubmitCode(_) => "submit_code",
             Self::SubmitPassword(_) => "submit_password",
             Self::LoadChats { .. } => "load_chats",
+            Self::LoadProfile { .. } => "load_profile",
             Self::SendText { .. } => "send_text",
             Self::Shutdown => "shutdown",
         }
@@ -48,6 +50,13 @@ impl CoreCommand {
                     Err(CoreError::InvalidInput(format!(
                         "chat load limit must be in 1..={MAX_CHAT_LOAD_LIMIT}"
                     )))
+                }
+            }
+            Self::LoadProfile { peer_id } => {
+                if *peer_id == 0 {
+                    Err(CoreError::InvalidInput("peer id must be non-zero".into()))
+                } else {
+                    Ok(())
                 }
             }
             Self::SendText { chat_id, text } => {

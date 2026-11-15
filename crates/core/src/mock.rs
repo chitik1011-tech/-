@@ -5,7 +5,7 @@ use crate::{
     command::CoreCommand,
     error::{CoreError, Result},
     event::CoreEvent,
-    model::{AuthorizationState, ChatSummary, MessageSummary},
+    model::{AuthorizationState, ChatSummary, MessageSummary, PeerProfile},
 };
 
 pub struct MockTelegramBackend {
@@ -92,6 +92,9 @@ impl MockTelegramBackend {
             CoreCommand::LoadChats { limit } => {
                 let chats = self.chats.iter().take(limit).cloned().collect();
                 Ok(vec![CoreEvent::ChatsLoaded(chats)])
+            }
+            CoreCommand::LoadProfile { peer_id } => {
+                Ok(vec![CoreEvent::ProfileUpdated(PeerProfile::unknown(peer_id))])
             }
             CoreCommand::SendText { chat_id, text } => {
                 if self.authorization != AuthorizationState::Ready {

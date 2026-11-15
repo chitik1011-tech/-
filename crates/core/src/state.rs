@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     event::CoreEvent,
-    model::{AccountState, ChatSummary, MessageSummary},
+    model::{AccountState, ChatSummary, MessageSummary, PeerProfile},
 };
 
 pub const MAX_CACHED_MESSAGES_PER_CHAT: usize = 512;
@@ -14,6 +14,9 @@ pub struct CoreState {
     pub running: bool,
     pub account: AccountState,
     pub messages: BTreeMap<i64, Vec<MessageSummary>>,
+    /// Profiles keyed by stable peer ID; default enables loading older snapshots.
+    #[serde(default)]
+    pub profiles: BTreeMap<i64, PeerProfile>,
     pub last_error: Option<String>,
 }
 
@@ -23,6 +26,7 @@ impl Default for CoreState {
             running: true,
             account: AccountState::default(),
             messages: BTreeMap::new(),
+            profiles: BTreeMap::new(),
             last_error: None,
         }
     }
@@ -67,6 +71,10 @@ impl CoreState {
 
                 self.last_error = None;
             }
+            CoreEvent::ProfileUpdated(profile) => {
+                self.profiles.insert(profile.peer_id, profile.clone());
+                self.last_error = None;
+            }
             CoreEvent::Error(error) => {
                 self.last_error = Some(error.clone());
             }
@@ -78,6 +86,10 @@ impl CoreState {
 
     pub fn chat(&self, chat_id: i64) -> Option<&ChatSummary> {
         self.account.chats.iter().find(|chat| chat.id == chat_id)
+    }
+
+    pub fn profile(&self, peer_id: i64) -> Option<&PeerProfile> {
+        self.profiles.get(&peer_id)
     }
 
     pub fn messages_for_chat(&self, chat_id: i64) -> &[MessageSummary] {
