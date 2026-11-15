@@ -12,8 +12,14 @@ use crate::model::MessageSummary;
 /// A user action that changes the current message selection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SelectionAction {
-    Select { chat_id: i64, message_id: i64 },
-    Unselect { chat_id: i64, message_id: i64 },
+    Select {
+        chat_id: i64,
+        message_id: i64,
+    },
+    Unselect {
+        chat_id: i64,
+        message_id: i64,
+    },
     SelectRange {
         chat_id: i64,
         anchor_id: i64,
@@ -70,14 +76,20 @@ impl MessageSelection {
                 self.clear();
                 Ok(())
             }
-            SelectionAction::Select { chat_id, message_id } => {
+            SelectionAction::Select {
+                chat_id,
+                message_id,
+            } => {
                 self.ensure_chat(chat_id)?;
                 let message = find_message(messages, chat_id, message_id)?;
                 self.chat_id = Some(chat_id);
                 self.selected.insert(message_id, message.clone());
                 Ok(())
             }
-            SelectionAction::Unselect { chat_id, message_id } => {
+            SelectionAction::Unselect {
+                chat_id,
+                message_id,
+            } => {
                 self.ensure_chat(chat_id)?;
                 self.selected.remove(&message_id);
                 self.reset_empty_chat();
