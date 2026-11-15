@@ -3,7 +3,10 @@ use serde::{Deserialize, Serialize};
 use crate::{
     connection::ConnectionState,
     connection_machine::{ConnectionToken, LinkEvent},
-    model::{AccountState, AuthorizationState, ChatActivityKind, ChatSummary, MessageSummary},
+    model::{
+        AccountState, AttachmentDownloadState, AuthorizationState, ChatActivityKind, ChatSummary,
+        MessageSummary,
+    },
     peer::PeerResolution,
     poll::PollSummary,
     search::{MessageSearchPage, SearchMessagesRequest},
@@ -81,6 +84,12 @@ pub enum CoreEvent {
         unread: bool,
     },
     MessageEdited(MessageSummary),
+    MediaTransferUpdated {
+        chat_id: i64,
+        message_id: i64,
+        attachment_index: usize,
+        state: AttachmentDownloadState,
+    },
     MessagesDeleted {
         chat_id: Option<i64>,
         message_ids: Vec<i64>,
@@ -142,6 +151,7 @@ impl CoreEvent {
             Self::ChatPinned { .. } => "chat_pinned",
             Self::ChatUnreadChanged { .. } => "chat_unread_changed",
             Self::MessageEdited(_) => "message_edited",
+            Self::MediaTransferUpdated { .. } => "media_transfer_updated",
             Self::MessagesDeleted { .. } => "messages_deleted",
             Self::PollUpdated(_) => "poll_updated",
             Self::MessageSendStateChanged(_) => "message_send_state_changed",
