@@ -4,6 +4,7 @@ members = [
     "crates/core",
     "crates/android-bridge",
     "crates/telegram",
+    "crates/message-entities",
 ]
 
 [workspace.package]
