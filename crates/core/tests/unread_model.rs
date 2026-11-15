@@ -140,10 +140,7 @@ fn old_persisted_state_without_unread_map_keeps_legacy_message_counts() {
 
     let state: CoreState = serde_json::from_str(legacy).unwrap();
     assert!(state.unread_by_chat.is_empty());
-    assert_eq!(
-        state.unread_state_for_chat(10).unwrap().unread_messages,
-        7
-    );
+    assert_eq!(state.unread_state_for_chat(10).unwrap().unread_messages, 7);
     assert_eq!(state.total_unread_count(), 7);
 }
 
