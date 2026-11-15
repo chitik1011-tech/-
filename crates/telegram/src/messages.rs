@@ -252,7 +252,9 @@ impl MessageDeduplicator {
 
 #[cfg(test)]
 mod tests {
-    use super::{MessageDeduplicator, MessageFields, message_summary_from_fields};
+    use super::{
+        MessageDeduplicator, MessageFields, finalize_message_page, message_summary_from_fields,
+    };
 
     #[test]
     fn maps_message_fields_without_losing_identifiers() {
@@ -271,6 +273,40 @@ mod tests {
         assert_eq!(summary.text, "hello");
         assert_eq!(summary.timestamp_unix, 1_700_000_000);
         assert!(summary.outgoing);
+    }
+
+    #[test]
+    fn page_finalization_uses_one_extra_message_for_has_more() {
+        let summary = |id| {
+            message_summary_from_fields(MessageFields {
+                id,
+                chat_id: 1,
+                sender_id: 1,
+                text: "page",
+                timestamp_unix: id,
+                outgoing: false,
+            })
+        };
+
+        let page = finalize_message_page(vec![summary(5), summary(4), summary(3)], 2);
+        assert_eq!(
+            page.messages.iter().map(|message| message.id).collect::<Vec<_>>(),
+            vec![4, 5]
+        );
+        assert_eq!(page.next_before_message_id, Some(4));
+        assert!(page.has_more);
+
+        let final_page = finalize_message_page(vec![summary(2), summary(1)], 2);
+        assert_eq!(
+            final_page
+                .messages
+                .iter()
+                .map(|message| message.id)
+                .collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+        assert_eq!(final_page.next_before_message_id, None);
+        assert!(!final_page.has_more);
     }
 
     #[tokio::test]
