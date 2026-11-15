@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use crate::model::{AccountState, AuthorizationState, ChatSummary, MessageSummary};
+use crate::{
+    contacts::Contact,
+    model::{AccountState, AuthorizationState, ChatSummary, MessageSummary},
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
@@ -9,6 +12,13 @@ pub enum CoreEvent {
     AuthorizationChanged(AuthorizationState),
     ChatsLoaded(Vec<ChatSummary>),
     MessageAdded(MessageSummary),
+    ContactAdded(Contact),
+    ContactDeleted { user_id: i64 },
+    ContactsLoaded {
+        offset: usize,
+        total: usize,
+        contacts: Vec<Contact>,
+    },
     Error(String),
     Stopped,
 }
@@ -20,6 +30,9 @@ impl CoreEvent {
             Self::AuthorizationChanged(_) => "authorization_changed",
             Self::ChatsLoaded(_) => "chats_loaded",
             Self::MessageAdded(_) => "message_added",
+            Self::ContactAdded(_) => "contact_added",
+            Self::ContactDeleted { .. } => "contact_deleted",
+            Self::ContactsLoaded { .. } => "contacts_loaded",
             Self::Error(_) => "error",
             Self::Stopped => "stopped",
         }

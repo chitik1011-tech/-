@@ -144,7 +144,7 @@ async fn file_store_writes_versioned_envelope() {
 
     let value: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
-    assert_eq!(value["schema_version"], 1);
+    assert_eq!(value["schema_version"], 2);
     assert!(value.get("state").is_some());
 
     let loaded = store.load().await.unwrap().unwrap();

@@ -13,7 +13,7 @@ use crate::{
     state::CoreState,
 };
 
-const STATE_SCHEMA_VERSION: u32 = 1;
+const STATE_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct StoredState {
@@ -147,12 +147,14 @@ impl StateStore for JsonFileStateStore {
 fn decode_stored_state(content: &str) -> Result<CoreState> {
     match serde_json::from_str::<StoredState>(content) {
         Ok(stored) => {
-            if stored.schema_version != STATE_SCHEMA_VERSION {
+            if !(1..=STATE_SCHEMA_VERSION).contains(&stored.schema_version) {
                 return Err(CoreError::Storage(format!(
                     "unsupported state schema version: {}",
                     stored.schema_version
                 )));
             }
+            // Version 1 did not contain contacts. CoreState's serde default migrates it
+            // to an empty contact book; the next save writes the current schema version.
             Ok(stored.state)
         }
         Err(versioned_error) => {
@@ -162,5 +164,28 @@ fn decode_stored_state(content: &str) -> Result<CoreState> {
                 ))
             })
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn version_one_state_migrates_to_empty_contact_book() {
+        let old = r#"{"schema_version":1,"state":{"running":true,"account":{"authorization":"Closed","chats":[]},"messages":{},"last_error":null}}"#;
+        let state = decode_stored_state(old).unwrap();
+        assert!(state.contacts.is_empty());
+    }
+
+    #[test]
+    fn current_schema_round_trips_contacts() {
+        let state = CoreState::default();
+        let stored = StoredState {
+            schema_version: STATE_SCHEMA_VERSION,
+            state: state.clone(),
+        };
+        let decoded = decode_stored_state(&serde_json::to_string(&stored).unwrap()).unwrap();
+        assert_eq!(decoded, state);
     }
 }

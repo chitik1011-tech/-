@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use crate::error::{CoreError, Result};
+use crate::{
+    contacts::{validate_contact_page, Contact},
+    error::{CoreError, Result},
+};
 
 pub const MAX_CHAT_LOAD_LIMIT: usize = 500;
 
@@ -13,6 +16,9 @@ pub enum CoreCommand {
     SubmitPassword(String),
     LoadChats { limit: usize },
     SendText { chat_id: i64, text: String },
+    AddContact(Contact),
+    DeleteContact { user_id: i64 },
+    LoadContacts { offset: usize, limit: usize },
     Shutdown,
 }
 
@@ -25,6 +31,9 @@ impl CoreCommand {
             Self::SubmitPassword(_) => "submit_password",
             Self::LoadChats { .. } => "load_chats",
             Self::SendText { .. } => "send_text",
+            Self::AddContact(_) => "add_contact",
+            Self::DeleteContact { .. } => "delete_contact",
+            Self::LoadContacts { .. } => "load_contacts",
             Self::Shutdown => "shutdown",
         }
     }
@@ -57,6 +66,17 @@ impl CoreCommand {
 
                 require_non_blank("message text", text)
             }
+            Self::AddContact(contact) => contact.clone().normalized().map(|_| ()),
+            Self::DeleteContact { user_id } => {
+                if *user_id == 0 {
+                    Err(CoreError::InvalidInput(
+                        "contact user id must be non-zero".into(),
+                    ))
+                } else {
+                    Ok(())
+                }
+            }
+            Self::LoadContacts { limit, .. } => validate_contact_page(*limit),
         }
     }
 }

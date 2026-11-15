@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    contacts::ContactBook,
     event::CoreEvent,
     model::{AccountState, ChatSummary, MessageSummary},
 };
@@ -14,6 +15,9 @@ pub struct CoreState {
     pub running: bool,
     pub account: AccountState,
     pub messages: BTreeMap<i64, Vec<MessageSummary>>,
+    /// Contact snapshots sorted by stable user ID; no phone number data is stored.
+    #[serde(default)]
+    pub contacts: ContactBook,
     pub last_error: Option<String>,
 }
 
@@ -23,6 +27,7 @@ impl Default for CoreState {
             running: true,
             account: AccountState::default(),
             messages: BTreeMap::new(),
+            contacts: ContactBook::default(),
             last_error: None,
         }
     }
@@ -65,6 +70,14 @@ impl CoreState {
                     });
                 }
 
+                self.last_error = None;
+            }
+            CoreEvent::ContactAdded(_) | CoreEvent::ContactDeleted { .. } => {
+                self.contacts.reduce(event);
+                self.last_error = None;
+            }
+            CoreEvent::ContactsLoaded { .. } => {
+                self.contacts.reduce(event);
                 self.last_error = None;
             }
             CoreEvent::Error(error) => {

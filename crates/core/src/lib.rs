@@ -2,6 +2,7 @@
 
 pub mod backend;
 pub mod command;
+pub mod contacts;
 pub mod error;
 pub mod event;
 pub mod mock;
@@ -16,6 +17,7 @@ pub use backend::{
     TelegramBackend, DEFAULT_BACKEND_UPDATE_CAPACITY,
 };
 pub use command::{CoreCommand, MAX_CHAT_LOAD_LIMIT};
+pub use contacts::{Contact, ContactBook, MAX_CONTACT_PAGE_LIMIT};
 pub use error::{CoreError, Result};
 pub use event::CoreEvent;
 pub use mock::MockTelegramBackend;
