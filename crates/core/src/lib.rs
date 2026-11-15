@@ -9,6 +9,7 @@ pub mod error;
 pub mod event;
 pub mod mock;
 pub mod model;
+pub mod poll;
 pub mod runtime;
 pub mod search;
 pub mod selection;
@@ -37,6 +38,7 @@ pub use model::{
     ChatActivityKind, ChatFolder, ChatFolderFacts, ChatSummary, ForwardedFrom, MediaAttachment,
     MessageHistoryState, MessageSummary, ReplyMetadata,
 };
+pub use poll::{PollOption, PollSummary, MAX_POLL_OPTIONS};
 pub use runtime::{spawn_core, spawn_core_with_store, CoreHandle, PERSISTENCE_FLUSH_INTERVAL_MS};
 pub use search::{
     ActiveMessageSearch, ChatMessageSearchState, MessageSearchPage, MessageSearchState,
@@ -44,7 +46,7 @@ pub use search::{
 };
 pub use selection::{MessageSelection, SelectionAction, SelectionCapabilities, SelectionError};
 pub use send::{ClientMessageId, OutgoingSend, OutgoingSendState};
-pub use state::{CoreState, FolderAction, MAX_CACHED_MESSAGES_PER_CHAT};
+pub use state::{CoreState, FolderAction, MAX_CACHED_MESSAGES_PER_CHAT, MAX_CACHED_POLLS};
 pub use storage::{JsonFileStateStore, MemoryStateStore, NoopStateStore, StateStore};
 pub use transfer::{
     DownloadState, TransferDirection, TransferError, TransferKey, TransferManager,

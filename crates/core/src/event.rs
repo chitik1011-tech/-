@@ -4,6 +4,7 @@ use crate::{
     connection::ConnectionState,
     connection_machine::{ConnectionToken, LinkEvent},
     model::{AccountState, AuthorizationState, ChatActivityKind, ChatSummary, MessageSummary},
+    poll::PollSummary,
     search::{MessageSearchPage, SearchMessagesRequest},
     send::OutgoingSend,
 };
@@ -67,6 +68,8 @@ pub enum CoreEvent {
         chat_id: Option<i64>,
         message_ids: Vec<i64>,
     },
+    /// Poll snapshot for a message. Replaces the stored snapshot with the same poll id.
+    PollUpdated(PollSummary),
     MessageSendStateChanged(OutgoingSend),
     /// `generation` must monotonically increase per (chat_id, user_id).
     ChatActivityChanged {
@@ -111,6 +114,7 @@ impl CoreEvent {
             Self::MessageAdded(_) => "message_added",
             Self::MessageEdited(_) => "message_edited",
             Self::MessagesDeleted { .. } => "messages_deleted",
+            Self::PollUpdated(_) => "poll_updated",
             Self::MessageSendStateChanged(_) => "message_send_state_changed",
             Self::ChatActivityChanged { .. } => "chat_activity_changed",
             Self::ChatActivityEnded { .. } => "chat_activity_ended",
