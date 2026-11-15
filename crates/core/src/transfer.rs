@@ -296,10 +296,7 @@ impl TransferManager {
     /// Re-queue a previously completed download after its cache entry was evicted.
     /// Unlike retrying a failed attempt, this resets byte progress because the
     /// completed bytes are no longer available locally.
-    pub fn restart_download(
-        &self,
-        token: TransferToken,
-    ) -> Result<TransferToken, TransferError> {
+    pub fn restart_download(&self, token: TransferToken) -> Result<TransferToken, TransferError> {
         self.mutate(token, |record| {
             if !matches!(
                 record.state,
