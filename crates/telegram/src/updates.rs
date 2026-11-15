@@ -3,6 +3,7 @@ use std::sync::Arc;
 use grammers_client::{
     Client, sender::UpdatesConfiguration, session::updates::UpdatesLike, update::Update,
 };
+pub use tg_mobile_core::ConnectionState;
 use tg_mobile_core::{BackendUpdateSender, CoreError, CoreEvent, MessageSummary};
 use tokio::sync::{broadcast, mpsc, watch};
 
@@ -12,18 +13,11 @@ use crate::{
     messages::{MessageDeduplicator, message_to_summary},
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ConnectionState {
-    Connecting,
-    Ready,
-    Disconnected,
-}
-
 /// Backend-native update model.
 ///
-/// It is intentionally richer than `CoreEvent`; the current core API only has
-/// `MessageAdded`, but this stream already preserves edits/deletes and leaves
-/// explicit extension points for chat/unread/typing/connection changes.
+/// It is intentionally richer than `CoreEvent`; message edits/deletes and
+/// several chat-level updates remain backend-native, while connection state
+/// and supported message/error updates cross the core boundary.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TelegramUpdate {
     MessageAdded(MessageSummary),
@@ -53,6 +47,9 @@ impl TelegramUpdate {
     pub(crate) fn to_core_event(&self) -> Option<CoreEvent> {
         match self {
             Self::MessageAdded(message) => Some(CoreEvent::MessageAdded(message.clone())),
+            Self::ConnectionStateChanged(state) => {
+                Some(CoreEvent::ConnectionStateChanged(*state))
+            }
             Self::Error(message) => Some(CoreEvent::Error(message.clone())),
             _ => None,
         }
@@ -71,9 +68,12 @@ pub(crate) struct UpdateWorkerInput {
 }
 
 pub(crate) async fn run_update_worker(mut input: UpdateWorkerInput) {
-    let _ = input.events.send(TelegramUpdate::ConnectionStateChanged(
-        ConnectionState::Connecting,
-    ));
+    emit_update(
+        &input.events,
+        &input.core_updates,
+        TelegramUpdate::ConnectionStateChanged(ConnectionState::Connecting),
+    )
+    .await;
 
     let mut stream = match input
         .client
@@ -94,16 +94,22 @@ pub(crate) async fn run_update_worker(mut input: UpdateWorkerInput) {
                 format!("create Telegram update stream: {error}"),
             )
             .await;
-            let _ = input.events.send(TelegramUpdate::ConnectionStateChanged(
-                ConnectionState::Disconnected,
-            ));
+            emit_update(
+                &input.events,
+                &input.core_updates,
+                TelegramUpdate::ConnectionStateChanged(ConnectionState::Disconnected),
+            )
+            .await;
             return;
         }
     };
 
-    let _ = input.events.send(TelegramUpdate::ConnectionStateChanged(
-        ConnectionState::Ready,
-    ));
+    emit_update(
+        &input.events,
+        &input.core_updates,
+        TelegramUpdate::ConnectionStateChanged(ConnectionState::Ready),
+    )
+    .await;
 
     loop {
         tokio::select! {
@@ -141,9 +147,12 @@ pub(crate) async fn run_update_worker(mut input: UpdateWorkerInput) {
         )
         .await;
     }
-    let _ = input.events.send(TelegramUpdate::ConnectionStateChanged(
-        ConnectionState::Disconnected,
-    ));
+    emit_update(
+        &input.events,
+        &input.core_updates,
+        TelegramUpdate::ConnectionStateChanged(ConnectionState::Disconnected),
+    )
+    .await;
 }
 
 async fn emit_update(
