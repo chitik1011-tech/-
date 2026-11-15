@@ -100,9 +100,9 @@ where
                 RuntimeInput::Command(Some(command)) => {
                     let shutdown_requested = matches!(command, CoreCommand::Shutdown);
                     let history_request = match &command {
-                        CoreCommand::LoadMessages { chat_id, cursor, .. } => {
-                            Some((*chat_id, cursor.clone()))
-                        }
+                        CoreCommand::LoadMessages {
+                            chat_id, cursor, ..
+                        } => Some((*chat_id, cursor.clone())),
                         _ => None,
                     };
                     if let Some((chat_id, cursor)) = history_request.as_ref() {
