@@ -293,6 +293,27 @@ impl TransferManager {
         })
     }
 
+    /// Re-queue a previously completed download after its cache entry was evicted.
+    /// Unlike retrying a failed attempt, this resets byte progress because the
+    /// completed bytes are no longer available locally.
+    pub fn restart_download(&self, token: TransferToken) -> Result<TransferToken, TransferError> {
+        self.mutate(token, |record| {
+            if !matches!(
+                record.state,
+                TransferState::Download(DownloadState::Downloaded)
+            ) {
+                return Err(invalid(record));
+            }
+            record.generation = record
+                .generation
+                .checked_add(1)
+                .ok_or(TransferError::IdExhausted)?;
+            record.state = TransferState::Download(DownloadState::Queued);
+            record.bytes_transferred = 0;
+            Ok(())
+        })
+    }
+
     pub fn get(&self, token: TransferToken) -> Result<TransferSnapshot, TransferError> {
         let inner = self.lock()?;
         let record = inner
@@ -301,6 +322,24 @@ impl TransferManager {
             .ok_or(TransferError::NotFound)?;
         check_generation(token, record)?;
         Ok(snapshot(token.id, record))
+    }
+
+    /// Look up an existing transfer without creating a new record.
+    pub fn get_by_key(
+        &self,
+        direction: TransferDirection,
+        reference: &str,
+    ) -> Result<Option<TransferSnapshot>, TransferError> {
+        let key = TransferKey {
+            direction,
+            reference: reference.to_owned(),
+        };
+        let inner = self.lock()?;
+        let Some(id) = inner.keys.get(&key).copied() else {
+            return Ok(None);
+        };
+        let record = inner.records.get(&id).ok_or(TransferError::NotFound)?;
+        Ok(Some(snapshot(id, record)))
     }
 
     fn transition(
@@ -486,6 +525,47 @@ mod tests {
             .flat_map(|worker| worker.join().unwrap())
             .collect::<Vec<_>>();
         assert!(ids.iter().all(|id| *id == ids[0]));
+    }
+
+    #[test]
+    fn completed_download_can_restart_after_cache_eviction() {
+        let manager = TransferManager::new();
+        let remote = manager
+            .request(TransferDirection::Download, "evicted", Some(4))
+            .unwrap();
+        let queued = manager.queue_download(remote.token).unwrap();
+        let active = manager.start_download(queued).unwrap();
+        manager.report_progress(active, 4).unwrap();
+        let completed = manager.complete(active).unwrap();
+
+        let restarted = manager.restart_download(completed).unwrap();
+        let snapshot = manager.get(restarted).unwrap();
+        assert_eq!(
+            snapshot.state,
+            TransferState::Download(DownloadState::Queued)
+        );
+        assert_eq!(snapshot.bytes_transferred, 0);
+        assert_eq!(restarted.generation, completed.generation + 1);
+    }
+
+    #[test]
+    fn lookup_by_key_does_not_create_a_transfer() {
+        let manager = TransferManager::new();
+        assert!(manager
+            .get_by_key(TransferDirection::Download, "missing")
+            .unwrap()
+            .is_none());
+        let created = manager
+            .request(TransferDirection::Download, "present", None)
+            .unwrap();
+        assert_eq!(
+            manager
+                .get_by_key(TransferDirection::Download, "present")
+                .unwrap()
+                .unwrap()
+                .token,
+            created.token
+        );
     }
 
     #[test]

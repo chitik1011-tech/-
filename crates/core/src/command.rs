@@ -84,6 +84,21 @@ pub enum CoreCommand {
         #[serde(default)]
         expected_draft: Option<crate::model::Draft>,
     },
+    DownloadMedia {
+        chat_id: i64,
+        message_id: i64,
+        attachment_index: usize,
+    },
+    RetryMediaDownload {
+        chat_id: i64,
+        message_id: i64,
+        attachment_index: usize,
+    },
+    CancelMediaDownload {
+        chat_id: i64,
+        message_id: i64,
+        attachment_index: usize,
+    },
     ResolvePeer {
         input: String,
     },
@@ -115,6 +130,9 @@ impl CoreCommand {
             Self::MarkChatRead { .. } => "mark_chat_read",
             Self::UpdateDraft(_) => "update_draft",
             Self::ClearDraft { .. } => "clear_draft",
+            Self::DownloadMedia { .. } => "download_media",
+            Self::RetryMediaDownload { .. } => "retry_media_download",
+            Self::CancelMediaDownload { .. } => "cancel_media_download",
             Self::ResolvePeer { .. } => "resolve_peer",
             Self::Shutdown => "shutdown",
         }
@@ -126,6 +144,21 @@ impl CoreCommand {
             Self::ResolvePeer { input } => {
                 parse_peer_reference(input).map(|_| ()).map_err(Into::into)
             }
+            Self::DownloadMedia {
+                chat_id,
+                message_id,
+                attachment_index,
+            }
+            | Self::RetryMediaDownload {
+                chat_id,
+                message_id,
+                attachment_index,
+            }
+            | Self::CancelMediaDownload {
+                chat_id,
+                message_id,
+                attachment_index,
+            } => validate_media_target(*chat_id, *message_id, *attachment_index),
             Self::SetPhoneNumber(phone_number) => require_non_blank("phone number", phone_number),
             Self::SubmitCode(code) => require_non_blank("login code", code),
             Self::SubmitPassword(password) => {
@@ -265,6 +298,21 @@ impl CoreCommand {
             }
         }
     }
+}
+
+fn validate_media_target(chat_id: i64, message_id: i64, attachment_index: usize) -> Result<()> {
+    validate_chat_id(chat_id)?;
+    if message_id <= 0 {
+        return Err(CoreError::InvalidInput(
+            "message id must be positive".into(),
+        ));
+    }
+    if attachment_index > 31 {
+        return Err(CoreError::InvalidInput(
+            "attachment index must be in 0..=31".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_chat_id(chat_id: i64) -> Result<()> {

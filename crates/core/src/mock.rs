@@ -291,6 +291,11 @@ impl MockTelegramBackend {
             CoreCommand::VotePoll { .. } => Err(CoreError::Backend(
                 "poll voting is not implemented by the mock backend".into(),
             )),
+            CoreCommand::DownloadMedia { .. }
+            | CoreCommand::RetryMediaDownload { .. }
+            | CoreCommand::CancelMediaDownload { .. } => Err(CoreError::Backend(
+                "media downloads are not implemented by the mock backend".into(),
+            )),
             CoreCommand::ArchiveChat { chat_id } => self.set_chat_action(
                 chat_id,
                 |chat| chat.archived = Some(true),
