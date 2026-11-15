@@ -1,4 +1,7 @@
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{
+    collections::BTreeMap,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use crate::{
     backend::{BackendFuture, TelegramBackend},
@@ -6,12 +9,14 @@ use crate::{
     error::{CoreError, Result},
     event::CoreEvent,
     model::{AuthorizationState, ChatSummary, MessageSummary},
+    send::OutgoingSend,
 };
 
 pub struct MockTelegramBackend {
     authorization: AuthorizationState,
     chats: Vec<ChatSummary>,
     next_message_id: i64,
+    reliable_sends: BTreeMap<i64, (i64, String, i64)>,
 }
 
 impl Default for MockTelegramBackend {
@@ -47,6 +52,7 @@ impl Default for MockTelegramBackend {
                 },
             ],
             next_message_id: 2,
+            reliable_sends: BTreeMap::new(),
         }
     }
 }
@@ -190,6 +196,86 @@ impl MockTelegramBackend {
                 }
 
                 Ok(vec![CoreEvent::MessageAdded(message)])
+            }
+            CoreCommand::SendTextReliable {
+                client_id,
+                chat_id,
+                text,
+            } => {
+                if self.authorization != AuthorizationState::Ready {
+                    return Err(CoreError::Backend("not authorized".into()));
+                }
+
+                let text = text.trim().to_owned();
+                if text.is_empty() {
+                    return Err(CoreError::InvalidInput("message text is empty".into()));
+                }
+
+                let sending = CoreEvent::MessageSendStateChanged(OutgoingSend::sending(
+                    client_id,
+                    chat_id,
+                    text.clone(),
+                ));
+
+                if let Some((known_chat_id, known_text, message_id)) =
+                    self.reliable_sends.get(&client_id)
+                {
+                    if *known_chat_id != chat_id || known_text != &text {
+                        return Ok(vec![
+                            sending,
+                            CoreEvent::MessageSendStateChanged(OutgoingSend::failed(
+                                client_id,
+                                chat_id,
+                                text,
+                                format!(
+                                    "client message id {client_id} is already bound to another request"
+                                ),
+                                false,
+                            )),
+                        ]);
+                    }
+                    return Ok(vec![
+                        sending,
+                        CoreEvent::MessageSendStateChanged(OutgoingSend::sent(
+                            client_id,
+                            chat_id,
+                            text,
+                            *message_id,
+                        )),
+                    ]);
+                }
+
+                let message = MessageSummary {
+                    id: self.next_message_id,
+                    chat_id,
+                    sender_id: 0,
+                    text: text.clone(),
+                    timestamp_unix: unix_timestamp(),
+                    outgoing: true,
+                    attachments: Vec::new(),
+                    forwarded_from: None,
+                    edited: false,
+                    edit_timestamp_unix: None,
+                    service_message: false,
+                    media_caption: None,
+                    reply_to: None,
+                };
+                self.next_message_id += 1;
+
+                if let Some(chat) = self.chats.iter_mut().find(|chat| chat.id == chat_id) {
+                    chat.last_message = Some(message.clone());
+                }
+
+                self.reliable_sends
+                    .insert(client_id, (chat_id, text.clone(), message.id));
+
+                Ok(vec![
+                    sending,
+                    CoreEvent::MessageAdded(message.clone()),
+                    CoreEvent::MessageSendStateChanged(OutgoingSend::sent(
+                        client_id, chat_id, text, message.id,
+                    )),
+                ])
             }
             CoreCommand::Shutdown => Ok(Vec::new()),
         }

@@ -5,6 +5,7 @@ use crate::{
     connection_machine::{ConnectionToken, LinkEvent},
     model::{AccountState, AuthorizationState, ChatSummary, MessageSummary},
     search::{MessageSearchPage, SearchMessagesRequest},
+    send::OutgoingSend,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -66,6 +67,7 @@ pub enum CoreEvent {
         chat_id: Option<i64>,
         message_ids: Vec<i64>,
     },
+    MessageSendStateChanged(OutgoingSend),
     Error(String),
     Stopped,
 }
@@ -91,6 +93,7 @@ impl CoreEvent {
             Self::MessageAdded(_) => "message_added",
             Self::MessageEdited(_) => "message_edited",
             Self::MessagesDeleted { .. } => "messages_deleted",
+            Self::MessageSendStateChanged(_) => "message_send_state_changed",
             Self::Error(_) => "error",
             Self::Stopped => "stopped",
         }

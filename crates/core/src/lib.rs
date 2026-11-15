@@ -11,6 +11,7 @@ pub mod model;
 pub mod runtime;
 pub mod search;
 pub mod selection;
+pub mod send;
 pub mod state;
 pub mod storage;
 pub mod transfer;
@@ -40,6 +41,7 @@ pub use search::{
     SearchMessagesRequest, MAX_MESSAGE_SEARCH_LIMIT, MAX_MESSAGE_SEARCH_QUERY_BYTES,
 };
 pub use selection::{MessageSelection, SelectionAction, SelectionCapabilities, SelectionError};
+pub use send::{ClientMessageId, OutgoingSend, OutgoingSendState};
 pub use state::{CoreState, MAX_CACHED_MESSAGES_PER_CHAT};
 pub use storage::{JsonFileStateStore, MemoryStateStore, NoopStateStore, StateStore};
 pub use transfer::{

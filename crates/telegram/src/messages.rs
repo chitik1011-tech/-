@@ -3,6 +3,7 @@ use std::collections::{HashSet, VecDeque};
 use grammers_client::{
     Client,
     message::Message,
+    sender::InvocationError,
     session::types::{PeerKind, PeerRef},
     tl,
 };
@@ -262,6 +263,190 @@ pub(crate) async fn send_text(
         .await
         .map_err(|error| api_error("send message", error))?;
     Ok(message_to_summary(&message))
+}
+
+pub(crate) async fn send_text_idempotent(
+    client: &Client,
+    peer: PeerRef,
+    text: String,
+    random_id: i64,
+) -> tg_mobile_core::Result<MessageSummary> {
+    if text.is_empty() {
+        return Err(CoreError::InvalidInput(
+            "message text must not be empty".into(),
+        ));
+    }
+    if random_id == 0 {
+        return Err(CoreError::InvalidInput(
+            "client message id must be non-zero".into(),
+        ));
+    }
+
+    let updates = client
+        .invoke(&tl::functions::messages::SendMessage {
+            no_webpage: false,
+            silent: false,
+            background: false,
+            clear_draft: false,
+            peer: peer.into(),
+            reply_to: None,
+            message: text.clone(),
+            random_id,
+            reply_markup: None,
+            entities: None,
+            schedule_date: None,
+            schedule_repeat_period: None,
+            send_as: None,
+            noforwards: false,
+            update_stickersets_order: false,
+            invert_media: false,
+            quick_reply_shortcut: None,
+            effect: None,
+            allow_paid_floodskip: false,
+            allow_paid_stars: None,
+            suggested_post: None,
+            rich_message: None,
+        })
+        .await
+        .map_err(classify_send_error)?;
+
+    let message_id = sent_message_id(&updates, random_id).ok_or_else(|| {
+        CoreError::SendOutcomeUnknown(
+            "Telegram accepted send request but returned no resolvable message id".into(),
+        )
+    })?;
+    let date = sent_message_date(&updates).unwrap_or_default();
+    Ok(message_summary_from_fields(MessageFields {
+        id: i64::from(message_id),
+        chat_id: peer_id_to_core(peer.id),
+        sender_id: 0,
+        text: &text,
+        timestamp_unix: i64::from(date),
+        outgoing: true,
+    }))
+}
+
+fn classify_send_error(error: InvocationError) -> CoreError {
+    match &error {
+        InvocationError::Rpc(rpc) if rpc.name == "FLOOD_WAIT" => CoreError::FloodWait {
+            seconds: rpc.value.unwrap_or_default(),
+        },
+        InvocationError::Rpc(rpc) if rpc.code >= 500 => {
+            CoreError::TransientSend("Telegram temporary server failure".into())
+        }
+        InvocationError::Rpc(rpc) => CoreError::SendRejected(rpc.to_string()),
+        _ => CoreError::SendOutcomeUnknown(error.to_string()),
+    }
+}
+
+fn sent_message_date(updates: &tl::enums::Updates) -> Option<i32> {
+    match updates {
+        tl::enums::Updates::UpdateShortSentMessage(update) => Some(update.date),
+        tl::enums::Updates::Updates(updates) => Some(updates.date),
+        tl::enums::Updates::Combined(updates) => Some(updates.date),
+        tl::enums::Updates::UpdateShort(update) => Some(update.date),
+        tl::enums::Updates::UpdateShortMessage(update) => Some(update.date),
+        tl::enums::Updates::UpdateShortChatMessage(update) => Some(update.date),
+        tl::enums::Updates::TooLong => None,
+    }
+}
+
+fn sent_message_id(updates: &tl::enums::Updates, random_id: i64) -> Option<i32> {
+    match updates {
+        tl::enums::Updates::UpdateShortSentMessage(update) => Some(update.id),
+        tl::enums::Updates::Updates(updates) => {
+            sent_message_id_from_updates(&updates.updates, random_id)
+        }
+        tl::enums::Updates::Combined(updates) => {
+            sent_message_id_from_updates(&updates.updates, random_id)
+        }
+        tl::enums::Updates::UpdateShort(update) => {
+            sent_message_id_from_update(&update.update, random_id)
+        }
+        tl::enums::Updates::UpdateShortMessage(update) => Some(update.id),
+        tl::enums::Updates::UpdateShortChatMessage(update) => Some(update.id),
+        tl::enums::Updates::TooLong => None,
+    }
+}
+
+fn sent_message_id_from_updates(updates: &[tl::enums::Update], random_id: i64) -> Option<i32> {
+    if let Some(message_id) = updates.iter().find_map(|update| match update {
+        tl::enums::Update::MessageId(update) if update.random_id == random_id => Some(update.id),
+        _ => None,
+    }) {
+        return Some(message_id);
+    }
+
+    let mut message_ids = updates.iter().filter_map(|update| match update {
+        tl::enums::Update::NewMessage(update) => Some(update.message.id()),
+        tl::enums::Update::NewChannelMessage(update) => Some(update.message.id()),
+        tl::enums::Update::NewScheduledMessage(update) => Some(update.message.id()),
+        _ => None,
+    });
+    let only = message_ids.next()?;
+    message_ids.next().is_none().then_some(only)
+}
+
+fn sent_message_id_from_update(update: &tl::enums::Update, random_id: i64) -> Option<i32> {
+    match update {
+        tl::enums::Update::MessageId(update) if update.random_id == random_id => Some(update.id),
+        tl::enums::Update::NewMessage(update) => Some(update.message.id()),
+        tl::enums::Update::NewChannelMessage(update) => Some(update.message.id()),
+        tl::enums::Update::NewScheduledMessage(update) => Some(update.message.id()),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod send_error_tests {
+    use grammers_client::sender::{InvocationError, RpcError};
+    use tg_mobile_core::CoreError;
+
+    use super::classify_send_error;
+
+    fn rpc_error(code: i32, name: &str, value: Option<u32>) -> InvocationError {
+        InvocationError::Rpc(RpcError {
+            code,
+            name: name.into(),
+            value,
+            caused_by: None,
+        })
+    }
+
+    #[test]
+    fn flood_wait_is_a_distinct_retry_class() {
+        assert!(matches!(
+            classify_send_error(rpc_error(420, "FLOOD_WAIT", Some(30))),
+            CoreError::FloodWait { seconds: 30 }
+        ));
+    }
+
+    #[test]
+    fn permanent_rpc_rejection_is_not_marked_retryable() {
+        assert!(matches!(
+            classify_send_error(rpc_error(400, "MESSAGE_TOO_LONG", None)),
+            CoreError::SendRejected(message) if message.contains("MESSAGE_TOO_LONG")
+        ));
+    }
+
+    #[test]
+    fn temporary_rpc_failure_is_retryable() {
+        assert!(matches!(
+            classify_send_error(rpc_error(500, "INTERNAL", None)),
+            CoreError::TransientSend(_)
+        ));
+    }
+
+    #[test]
+    fn transport_failure_keeps_the_outcome_ambiguous() {
+        assert!(matches!(
+            classify_send_error(InvocationError::Io(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "timed out"
+            ))),
+            CoreError::SendOutcomeUnknown(message) if message.contains("timed out")
+        ));
+    }
 }
 
 #[derive(Debug)]
