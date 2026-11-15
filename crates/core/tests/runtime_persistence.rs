@@ -7,10 +7,9 @@ use std::{
 };
 
 use tg_mobile_core::{
-    backend_update_channel,
-    storage::StoreFuture,
-    spawn_core_with_store, BackendFuture, BackendUpdateReceiver, CoreCommand, CoreEvent, CoreState,
-    MessageSummary, Result, StateStore, TelegramBackend, PERSISTENCE_FLUSH_INTERVAL_MS,
+    backend_update_channel, spawn_core_with_store, storage::StoreFuture, BackendFuture,
+    BackendUpdateReceiver, CoreCommand, CoreEvent, CoreState, MessageSummary, Result, StateStore,
+    TelegramBackend, PERSISTENCE_FLUSH_INTERVAL_MS,
 };
 use tokio::time::{sleep, timeout};
 
