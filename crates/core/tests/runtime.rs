@@ -1,6 +1,5 @@
 use std::{
-    fs,
-    process,
+    fs, process,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -111,10 +110,7 @@ async fn json_file_store_round_trips_state() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let path = std::env::temp_dir().join(format!(
-        "tg-mobile-core-{}-{unique}.json",
-        process::id()
-    ));
+    let path = std::env::temp_dir().join(format!("tg-mobile-core-{}-{unique}.json", process::id()));
     let store = JsonFileStateStore::new(&path);
 
     let mut state = CoreState::default();
