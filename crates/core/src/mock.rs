@@ -94,7 +94,11 @@ impl MockTelegramBackend {
                 Ok(vec![CoreEvent::ChatsLoaded(chats)])
             }
 
-            CoreCommand::LoadMessages { chat_id, cursor, limit } => {
+            CoreCommand::LoadMessages {
+                chat_id,
+                cursor,
+                limit,
+            } => {
                 let messages = if cursor.is_none() {
                     self.chats
                         .iter()
