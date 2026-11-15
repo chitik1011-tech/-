@@ -113,7 +113,16 @@ where
                         );
                     }
                     let events = match backend.handle(command).await {
-                        Ok(events) => events,
+                        Ok(events) => match page_cursor.as_ref() {
+                            Some(cursor) => match page_completion_error(&events, cursor) {
+                                Some(error) => vec![CoreEvent::ChatsPageFailed {
+                                    cursor: cursor.clone(),
+                                    error,
+                                }],
+                                None => events,
+                            },
+                            None => events,
+                        },
                         Err(error) => match page_cursor {
                             Some(cursor) => vec![CoreEvent::ChatsPageFailed {
                                 cursor,
@@ -222,6 +231,23 @@ async fn next_runtime_input(
             }
         }
     }
+}
+
+fn page_completion_error(events: &[CoreEvent], cursor: &Option<String>) -> Option<String> {
+    if let Some(error) = events.iter().find_map(|event| match event {
+        CoreEvent::Error(error) => Some(error.clone()),
+        _ => None,
+    }) {
+        return Some(error);
+    }
+
+    let matching_page_returned = events.iter().any(|event| {
+        matches!(
+            event,
+            CoreEvent::ChatsPageLoaded(page) if &page.requested_cursor == cursor
+        )
+    });
+    (!matching_page_returned).then(|| "backend returned no matching chat page".into())
 }
 
 async fn restore_state<S: StateStore>(
