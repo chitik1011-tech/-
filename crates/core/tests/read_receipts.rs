@@ -43,10 +43,9 @@ fn mark_read_command_validates_ids() {
 
 #[test]
 fn mark_read_wire_format_is_canonical() {
-    let command = decode_command(
-        r#"{"type":"mark_read","payload":{"chat_id":77,"max_message_id":42}}"#,
-    )
-    .unwrap();
+    let command =
+        decode_command(r#"{"type":"mark_read","payload":{"chat_id":77,"max_message_id":42}}"#)
+            .unwrap();
 
     assert_eq!(
         command,
