@@ -1,8 +1,6 @@
 use std::sync::Arc;
 
-use grammers_client::{
-    Client, client::UpdatesConfiguration, session::updates::UpdatesLike, update::Update,
-};
+use grammers_client::{Client, session::updates::UpdatesLike, update::Update};
 use tg_mobile_core::{BackendUpdateSender, CoreError, CoreEvent, MessageSummary};
 use tokio::sync::{broadcast, mpsc, watch};
 
@@ -75,15 +73,12 @@ pub(crate) async fn run_update_worker(mut input: UpdateWorkerInput) {
         ConnectionState::Connecting,
     ));
 
+    let mut update_configuration = Default::default();
+    update_configuration.catch_up = input.catch_up;
+
     let mut stream = match input
         .client
-        .stream_updates(
-            input.network_updates,
-            UpdatesConfiguration {
-                catch_up: input.catch_up,
-                ..Default::default()
-            },
-        )
+        .stream_updates(input.network_updates, update_configuration)
         .await
     {
         Ok(stream) => stream,
