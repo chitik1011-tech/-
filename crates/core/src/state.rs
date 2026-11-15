@@ -111,7 +111,17 @@ impl CoreState {
                     if inserted && !message.outgoing {
                         chat.unread_count = chat.unread_count.saturating_add(1);
                     }
-                    chat.last_message = Some(message.clone());
+                    let is_newer = chat
+                        .last_message
+                        .as_ref()
+                        .map(|current| {
+                            (message.timestamp_unix, message.id)
+                                >= (current.timestamp_unix, current.id)
+                        })
+                        .unwrap_or(true);
+                    if is_newer {
+                        chat.last_message = Some(message.clone());
+                    }
                 } else {
                     self.account.chats.push(ChatSummary {
                         id: message.chat_id,
@@ -169,5 +179,62 @@ impl CoreState {
         }
 
         inserted
+    }
+}
+
+#[cfg(test)]
+mod message_ordering_tests {
+    use super::*;
+
+    fn message(id: i64, timestamp_unix: i64, outgoing: bool) -> MessageSummary {
+        MessageSummary {
+            id,
+            chat_id: 42,
+            sender_id: 7,
+            text: format!("message {id}"),
+            timestamp_unix,
+            outgoing,
+            attachments: vec![],
+            forwarded_from: None,
+            edited: false,
+            edit_timestamp_unix: None,
+            service_message: false,
+            media_caption: None,
+            reply_to: None,
+        }
+    }
+
+    #[test]
+    fn older_live_update_cannot_replace_chat_preview() {
+        let mut state = CoreState::default();
+        state.reduce(&CoreEvent::MessageAdded(message(20, 200, false)));
+        state.reduce(&CoreEvent::MessageAdded(message(10, 100, false)));
+        assert_eq!(
+            state.chat(42).unwrap().last_message.as_ref().unwrap().id,
+            20
+        );
+        assert_eq!(state.messages_for_chat(42).len(), 2);
+    }
+
+    #[test]
+    fn duplicate_update_does_not_increment_unread_count() {
+        let mut state = CoreState::default();
+        let first = message(20, 200, false);
+        state.reduce(&CoreEvent::MessageAdded(first.clone()));
+        state.reduce(&CoreEvent::MessageAdded(first));
+        assert_eq!(state.chat(42).unwrap().unread_count, 1);
+    }
+
+    #[test]
+    fn equal_timestamp_uses_message_id_as_tiebreaker() {
+        let mut state = CoreState::default();
+        state.reduce(&CoreEvent::MessageAdded(message(9, 200, true)));
+        state.reduce(&CoreEvent::MessageAdded(message(8, 200, true)));
+        assert_eq!(state.chat(42).unwrap().last_message.as_ref().unwrap().id, 9);
+        state.reduce(&CoreEvent::MessageAdded(message(10, 200, true)));
+        assert_eq!(
+            state.chat(42).unwrap().last_message.as_ref().unwrap().id,
+            10
+        );
     }
 }
