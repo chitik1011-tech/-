@@ -63,6 +63,22 @@ pub enum CoreEvent {
         error: String,
     },
     MessageAdded(MessageSummary),
+    ChatArchived {
+        chat_id: i64,
+        archived: bool,
+    },
+    ChatMuted {
+        chat_id: i64,
+        muted: bool,
+    },
+    ChatPinned {
+        chat_id: i64,
+        pinned: bool,
+    },
+    ChatUnreadChanged {
+        chat_id: i64,
+        unread: bool,
+    },
     MessageEdited(MessageSummary),
     MessagesDeleted {
         chat_id: Option<i64>,
@@ -112,6 +128,10 @@ impl CoreEvent {
             Self::MessageSearchCompleted(_) => "message_search_completed",
             Self::MessageSearchFailed { .. } => "message_search_failed",
             Self::MessageAdded(_) => "message_added",
+            Self::ChatArchived { .. } => "chat_archived",
+            Self::ChatMuted { .. } => "chat_muted",
+            Self::ChatPinned { .. } => "chat_pinned",
+            Self::ChatUnreadChanged { .. } => "chat_unread_changed",
             Self::MessageEdited(_) => "message_edited",
             Self::MessagesDeleted { .. } => "messages_deleted",
             Self::PollUpdated(_) => "poll_updated",

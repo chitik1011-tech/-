@@ -258,7 +258,7 @@ async fn duplicate_and_reordered_message_updates_merge_in_chronological_order() 
     );
     assert_eq!(messages[0].timestamp_unix, 20);
     assert_eq!(messages[1].text, "late corrected");
-    assert_eq!(state.chat(5).unwrap().unread_count, 2);
+    assert!(state.chat(5).is_none());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -59,6 +59,10 @@ fn incoming_message_increments_unread_only_when_first_inserted() {
         id: 77,
         title: "existing".into(),
         unread_count: 4,
+        archived: Some(false),
+        muted: Some(false),
+        pinned: Some(false),
+        is_unread: Some(false),
         last_message: None,
     });
 
@@ -79,6 +83,10 @@ fn outgoing_message_does_not_increment_unread() {
         id: 77,
         title: "existing".into(),
         unread_count: 4,
+        archived: Some(false),
+        muted: Some(false),
+        pinned: Some(false),
+        is_unread: Some(false),
         last_message: None,
     });
 
@@ -96,6 +104,10 @@ fn unread_increment_saturates_at_u32_max() {
         id: 77,
         title: "existing".into(),
         unread_count: u32::MAX,
+        archived: Some(false),
+        muted: Some(false),
+        pinned: Some(false),
+        is_unread: Some(false),
         last_message: None,
     });
 
@@ -125,12 +137,20 @@ fn state_query_helpers_return_chat_messages_and_unread_total() {
             id: 1,
             title: "one".into(),
             unread_count: 3,
+            archived: Some(false),
+            muted: Some(false),
+            pinned: Some(false),
+            is_unread: Some(false),
             last_message: None,
         },
         ChatSummary {
             id: 2,
             title: "two".into(),
             unread_count: 4,
+            archived: Some(false),
+            muted: Some(false),
+            pinned: Some(false),
+            is_unread: Some(false),
             last_message: None,
         },
     ];

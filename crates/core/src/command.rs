@@ -43,6 +43,30 @@ pub enum CoreCommand {
         chat_id: i64,
         text: String,
     },
+    ArchiveChat {
+        chat_id: i64,
+    },
+    UnarchiveChat {
+        chat_id: i64,
+    },
+    MuteChat {
+        chat_id: i64,
+    },
+    UnmuteChat {
+        chat_id: i64,
+    },
+    PinChat {
+        chat_id: i64,
+    },
+    UnpinChat {
+        chat_id: i64,
+    },
+    MarkChatUnread {
+        chat_id: i64,
+    },
+    MarkChatRead {
+        chat_id: i64,
+    },
     Shutdown,
 }
 
@@ -60,6 +84,14 @@ impl CoreCommand {
             Self::SearchMessages(_) => "search_messages",
             Self::SendText { .. } => "send_text",
             Self::SendTextReliable { .. } => "send_text_reliable",
+            Self::ArchiveChat { .. } => "archive_chat",
+            Self::UnarchiveChat { .. } => "unarchive_chat",
+            Self::MuteChat { .. } => "mute_chat",
+            Self::UnmuteChat { .. } => "unmute_chat",
+            Self::PinChat { .. } => "pin_chat",
+            Self::UnpinChat { .. } => "unpin_chat",
+            Self::MarkChatUnread { .. } => "mark_chat_unread",
+            Self::MarkChatRead { .. } => "mark_chat_read",
             Self::Shutdown => "shutdown",
         }
     }
@@ -126,6 +158,14 @@ impl CoreCommand {
                 validate_chat_id(*chat_id)?;
                 require_non_blank("message text", text)
             }
+            Self::ArchiveChat { chat_id }
+            | Self::UnarchiveChat { chat_id }
+            | Self::MuteChat { chat_id }
+            | Self::UnmuteChat { chat_id }
+            | Self::PinChat { chat_id }
+            | Self::UnpinChat { chat_id }
+            | Self::MarkChatUnread { chat_id }
+            | Self::MarkChatRead { chat_id } => validate_chat_id(*chat_id),
         }
     }
 }

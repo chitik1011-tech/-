@@ -7,6 +7,7 @@ use grammers_client::{
     Client,
     sender::{SenderPool, SenderPoolHandle},
     session::{storages::SqliteSession, updates::UpdatesLike},
+    tl,
 };
 use tg_mobile_core::{
     AuthorizationState, BackendFuture, BackendUpdateReceiver, BackendUpdateSender, ConnectionToken,
@@ -437,6 +438,97 @@ impl GrammersBackend {
                 chat_id,
                 text,
             } => self.handle_reliable_send(client_id, chat_id, text).await,
+            CoreCommand::ArchiveChat { chat_id } | CoreCommand::UnarchiveChat { chat_id } => {
+                self.require_ready().await?;
+                let archived = matches!(command, CoreCommand::ArchiveChat { .. });
+                let peer = find_peer(&self.peers, chat_id)
+                    .await
+                    .ok_or(TelegramBackendError::UnknownChat(chat_id))?;
+                self.client
+                    .invoke(&tl::functions::folders::EditPeerFolders {
+                        folder_peers: vec![
+                            tl::types::InputFolderPeer {
+                                peer: peer.clone().into(),
+                                folder_id: if archived { 1 } else { 0 },
+                            }
+                            .into(),
+                        ],
+                    })
+                    .await
+                    .map_err(|error| crate::error::api_error("update chat archive", error))?;
+                vec![CoreEvent::ChatArchived { chat_id, archived }]
+            }
+            CoreCommand::MuteChat { chat_id } | CoreCommand::UnmuteChat { chat_id } => {
+                self.require_ready().await?;
+                let muted = matches!(command, CoreCommand::MuteChat { .. });
+                let peer = find_peer(&self.peers, chat_id)
+                    .await
+                    .ok_or(TelegramBackendError::UnknownChat(chat_id))?;
+                self.client
+                    .invoke(&tl::functions::account::UpdateNotifySettings {
+                        peer: tl::types::InputNotifyPeer {
+                            peer: peer.clone().into(),
+                        }
+                        .into(),
+                        settings: tl::types::InputPeerNotifySettings {
+                            show_previews: None,
+                            silent: None,
+                            mute_until: Some(if muted { i32::MAX } else { 0 }),
+                            sound: None,
+                            stories_muted: None,
+                            stories_hide_sender: None,
+                            stories_sound: None,
+                        }
+                        .into(),
+                    })
+                    .await
+                    .map_err(|error| crate::error::api_error("update chat notifications", error))?;
+                vec![CoreEvent::ChatMuted { chat_id, muted }]
+            }
+            CoreCommand::PinChat { chat_id } | CoreCommand::UnpinChat { chat_id } => {
+                self.require_ready().await?;
+                let pinned = matches!(command, CoreCommand::PinChat { .. });
+                let peer = find_peer(&self.peers, chat_id)
+                    .await
+                    .ok_or(TelegramBackendError::UnknownChat(chat_id))?;
+                self.client
+                    .invoke(&tl::functions::messages::ToggleDialogPin {
+                        pinned,
+                        peer: tl::types::InputDialogPeer {
+                            peer: peer.clone().into(),
+                        }
+                        .into(),
+                    })
+                    .await
+                    .map_err(|error| crate::error::api_error("update chat pin", error))?;
+                vec![CoreEvent::ChatPinned { chat_id, pinned }]
+            }
+            CoreCommand::MarkChatUnread { chat_id } | CoreCommand::MarkChatRead { chat_id } => {
+                self.require_ready().await?;
+                let unread = matches!(command, CoreCommand::MarkChatUnread { .. });
+                let peer = find_peer(&self.peers, chat_id)
+                    .await
+                    .ok_or(TelegramBackendError::UnknownChat(chat_id))?;
+                if unread {
+                    self.client
+                        .invoke(&tl::functions::messages::MarkDialogUnread {
+                            unread: true,
+                            parent_peer: None,
+                            peer: tl::types::InputDialogPeer {
+                                peer: peer.clone().into(),
+                            }
+                            .into(),
+                        })
+                        .await
+                        .map_err(|error| crate::error::api_error("mark chat unread", error))?;
+                } else {
+                    self.client
+                        .mark_as_read(peer)
+                        .await
+                        .map_err(|error| crate::error::api_error("mark chat read", error))?;
+                }
+                vec![CoreEvent::ChatUnreadChanged { chat_id, unread }]
+            }
             CoreCommand::Shutdown => self.shutdown().await?,
         };
 

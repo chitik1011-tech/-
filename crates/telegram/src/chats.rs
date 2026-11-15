@@ -44,6 +44,10 @@ pub(crate) async fn load_chats(
             id: chat_id,
             title: dialog.peer().name().unwrap_or_default().to_owned(),
             unread_count: unread_count(&dialog.raw),
+            archived: None,
+            muted: None,
+            pinned: None,
+            is_unread: None,
             last_message: dialog.last_message.as_ref().map(message_to_summary),
         });
     }

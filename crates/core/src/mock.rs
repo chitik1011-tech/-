@@ -28,12 +28,20 @@ impl Default for MockTelegramBackend {
                     id: 1,
                     title: "Saved Messages".into(),
                     unread_count: 0,
+                    archived: Some(false),
+                    muted: Some(false),
+                    pinned: Some(false),
+                    is_unread: Some(false),
                     last_message: None,
                 },
                 ChatSummary {
                     id: 2,
                     title: "Rust Telegram".into(),
                     unread_count: 1,
+                    archived: Some(false),
+                    muted: Some(false),
+                    pinned: Some(false),
+                    is_unread: Some(true),
                     last_message: Some(MessageSummary {
                         id: 1,
                         chat_id: 2,
@@ -277,8 +285,93 @@ impl MockTelegramBackend {
                     )),
                 ])
             }
+            CoreCommand::ArchiveChat { chat_id } => self.set_chat_action(
+                chat_id,
+                |chat| chat.archived = Some(true),
+                CoreEvent::ChatArchived {
+                    chat_id,
+                    archived: true,
+                },
+            ),
+            CoreCommand::UnarchiveChat { chat_id } => self.set_chat_action(
+                chat_id,
+                |chat| chat.archived = Some(false),
+                CoreEvent::ChatArchived {
+                    chat_id,
+                    archived: false,
+                },
+            ),
+            CoreCommand::MuteChat { chat_id } => self.set_chat_action(
+                chat_id,
+                |chat| chat.muted = Some(true),
+                CoreEvent::ChatMuted {
+                    chat_id,
+                    muted: true,
+                },
+            ),
+            CoreCommand::UnmuteChat { chat_id } => self.set_chat_action(
+                chat_id,
+                |chat| chat.muted = Some(false),
+                CoreEvent::ChatMuted {
+                    chat_id,
+                    muted: false,
+                },
+            ),
+            CoreCommand::PinChat { chat_id } => self.set_chat_action(
+                chat_id,
+                |chat| chat.pinned = Some(true),
+                CoreEvent::ChatPinned {
+                    chat_id,
+                    pinned: true,
+                },
+            ),
+            CoreCommand::UnpinChat { chat_id } => self.set_chat_action(
+                chat_id,
+                |chat| chat.pinned = Some(false),
+                CoreEvent::ChatPinned {
+                    chat_id,
+                    pinned: false,
+                },
+            ),
+            CoreCommand::MarkChatUnread { chat_id } => self.set_chat_action(
+                chat_id,
+                |chat| chat.is_unread = Some(true),
+                CoreEvent::ChatUnreadChanged {
+                    chat_id,
+                    unread: true,
+                },
+            ),
+            CoreCommand::MarkChatRead { chat_id } => self.set_chat_action(
+                chat_id,
+                |chat| {
+                    chat.is_unread = Some(false);
+                    chat.unread_count = 0;
+                },
+                CoreEvent::ChatUnreadChanged {
+                    chat_id,
+                    unread: false,
+                },
+            ),
             CoreCommand::Shutdown => Ok(Vec::new()),
         }
+    }
+
+    fn set_chat_action(
+        &mut self,
+        chat_id: i64,
+        update: impl FnOnce(&mut ChatSummary),
+        event: CoreEvent,
+    ) -> Result<Vec<CoreEvent>> {
+        if self.authorization != AuthorizationState::Ready {
+            return Err(CoreError::Backend("not authorized".into()));
+        }
+        let chat = self
+            .chats
+            .iter_mut()
+            .find(|chat| chat.id == chat_id)
+            .ok_or_else(|| CoreError::Backend(format!("chat {chat_id} not found")))?;
+        update(chat);
+        Ok(vec![event])
     }
 }
 

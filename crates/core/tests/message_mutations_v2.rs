@@ -18,9 +18,23 @@ fn message(chat_id: i64, id: i64, timestamp_unix: i64, text: &str) -> MessageSum
     }
 }
 
+fn seed_chat(state: &mut CoreState, chat_id: i64) {
+    state.account.chats.push(ChatSummary {
+        id: chat_id,
+        title: format!("Known chat {chat_id}"),
+        unread_count: 0,
+        archived: None,
+        muted: None,
+        pinned: None,
+        is_unread: None,
+        last_message: None,
+    });
+}
+
 #[test]
 fn edit_updates_cached_message_and_last_message_preview() {
     let mut state = CoreState::default();
+    seed_chat(&mut state, 7);
     let original = message(7, 10, 100, "before");
     state.reduce(&CoreEvent::MessageAdded(original));
 
@@ -39,6 +53,7 @@ fn edit_updates_cached_message_and_last_message_preview() {
 #[test]
 fn stale_edit_cannot_roll_back_a_newer_cached_message_or_preview() {
     let mut state = CoreState::default();
+    seed_chat(&mut state, 7);
     state.reduce(&CoreEvent::MessageAdded(message(7, 10, 100, "before")));
 
     let mut newest = message(7, 10, 100, "newest");
@@ -61,6 +76,7 @@ fn stale_edit_cannot_roll_back_a_newer_cached_message_or_preview() {
 #[test]
 fn duplicate_edit_is_idempotent_and_does_not_clear_later_error() {
     let mut state = CoreState::default();
+    seed_chat(&mut state, 7);
     state.reduce(&CoreEvent::MessageAdded(message(7, 10, 100, "before")));
     let mut edited = message(7, 10, 100, "after");
     edited.edited = true;
@@ -82,6 +98,10 @@ fn edit_for_unknown_non_preview_message_does_not_create_sparse_history() {
         id: 7,
         title: "chat".into(),
         unread_count: 0,
+        archived: None,
+        muted: None,
+        pinned: None,
+        is_unread: None,
         last_message: Some(message(7, 20, 200, "latest")),
     });
 
@@ -98,6 +118,10 @@ fn edit_updates_preview_even_when_history_page_is_not_cached() {
         id: 7,
         title: "chat".into(),
         unread_count: 0,
+        archived: None,
+        muted: None,
+        pinned: None,
+        is_unread: None,
         last_message: Some(message(7, 20, 200, "before")),
     });
 
@@ -115,6 +139,7 @@ fn edit_updates_preview_even_when_history_page_is_not_cached() {
 #[test]
 fn scoped_delete_repairs_last_message_from_remaining_cache() {
     let mut state = CoreState::default();
+    seed_chat(&mut state, 7);
     state.reduce(&CoreEvent::MessageAdded(message(7, 10, 100, "older")));
     state.reduce(&CoreEvent::MessageAdded(message(7, 11, 200, "latest")));
 
@@ -143,6 +168,7 @@ fn scoped_delete_repairs_last_message_from_remaining_cache() {
 #[test]
 fn deleting_ordered_preview_falls_back_after_out_of_order_message_add() {
     let mut state = CoreState::default();
+    seed_chat(&mut state, 7);
     state.reduce(&CoreEvent::MessageAdded(message(7, 20, 200, "newest")));
     state.reduce(&CoreEvent::MessageAdded(message(
         7,
@@ -184,6 +210,7 @@ fn deleting_ordered_preview_falls_back_after_out_of_order_message_add() {
 #[test]
 fn paginated_cache_keeps_cursor_through_edit_and_preview_delete_fallback() {
     let mut state = CoreState::default();
+    seed_chat(&mut state, 7);
     let newest = message(7, 20, 200, "newest");
     let older = message(7, 10, 100, "older");
     state.reduce(&CoreEvent::MessageAdded(newest.clone()));
@@ -223,6 +250,8 @@ fn paginated_cache_keeps_cursor_through_edit_and_preview_delete_fallback() {
 #[test]
 fn global_delete_batch_applies_across_cached_non_channel_histories() {
     let mut state = CoreState::default();
+    seed_chat(&mut state, 1);
+    seed_chat(&mut state, 2);
     state.reduce(&CoreEvent::MessageAdded(message(1, 100, 100, "a")));
     state.reduce(&CoreEvent::MessageAdded(message(2, 200, 100, "b")));
     state.reduce(&CoreEvent::MessageAdded(message(2, 201, 200, "c")));
@@ -260,6 +289,10 @@ fn deleting_preview_without_cached_history_clears_stale_preview() {
         id: 7,
         title: "chat".into(),
         unread_count: 3,
+        archived: None,
+        muted: None,
+        pinned: None,
+        is_unread: None,
         last_message: Some(message(7, 50, 500, "preview only")),
     });
 
@@ -275,6 +308,7 @@ fn deleting_preview_without_cached_history_clears_stale_preview() {
 #[test]
 fn delete_batch_deduplicates_ids_and_ignores_invalid_ids() {
     let mut state = CoreState::default();
+    seed_chat(&mut state, 7);
     state.reduce(&CoreEvent::MessageAdded(message(7, 10, 100, "one")));
     state.reduce(&CoreEvent::MessageAdded(message(7, 11, 200, "two")));
 
@@ -296,6 +330,7 @@ fn delete_batch_deduplicates_ids_and_ignores_invalid_ids() {
 #[test]
 fn duplicate_delete_is_idempotent_and_does_not_clear_later_error() {
     let mut state = CoreState::default();
+    seed_chat(&mut state, 7);
     state.reduce(&CoreEvent::MessageAdded(message(7, 10, 100, "one")));
     let event = CoreEvent::MessagesDeleted {
         chat_id: Some(7),

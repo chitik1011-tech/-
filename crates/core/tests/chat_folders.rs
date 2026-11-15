@@ -28,9 +28,9 @@ fn facts(id: i64) -> ChatFolderFacts {
         is_group: false,
         is_channel: false,
         is_bot: false,
-        muted: false,
+        muted: Some(false),
         read: false,
-        archived: false,
+        archived: Some(false),
     }
 }
 
@@ -53,7 +53,7 @@ fn category_and_status_filters_are_evaluated_without_backend_assumptions() {
 
     let mut muted_group = facts(11);
     muted_group.is_group = true;
-    muted_group.muted = true;
+    muted_group.muted = Some(true);
     assert!(folder.matches(&muted_group));
 
     let mut read_group = muted_group;
@@ -64,7 +64,7 @@ fn category_and_status_filters_are_evaluated_without_backend_assumptions() {
 
     let mut archived = facts(12);
     archived.is_channel = true;
-    archived.archived = true;
+    archived.archived = Some(true);
     assert!(!folder.matches(&archived));
     folder.include_channels = true;
     folder.include_archived = true;
@@ -78,7 +78,7 @@ fn explicit_include_and_exclude_have_stable_precedence() {
     folder.excluded_chat_ids.insert(11);
     folder.included_chat_ids.insert(11);
     let mut included = facts(10);
-    included.archived = true;
+    included.archived = Some(true);
     assert!(folder.matches(&included));
     let mut excluded = facts(11);
     excluded.is_user = true;

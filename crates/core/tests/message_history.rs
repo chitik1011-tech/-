@@ -25,6 +25,10 @@ fn loaded_history_merges_without_incrementing_unread() {
         id: 77,
         title: "history".into(),
         unread_count: 5,
+        archived: Some(false),
+        muted: Some(false),
+        pinned: Some(false),
+        is_unread: Some(true),
         last_message: None,
     });
 
@@ -69,6 +73,10 @@ fn live_message_deduplicates_against_loaded_history() {
         id: 77,
         title: "history".into(),
         unread_count: 0,
+        archived: Some(false),
+        muted: Some(false),
+        pinned: Some(false),
+        is_unread: Some(false),
         last_message: None,
     });
 

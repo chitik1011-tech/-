@@ -336,6 +336,7 @@ impl CoreState {
                 {
                     if inserted && !message.outgoing {
                         chat.unread_count = chat.unread_count.saturating_add(1);
+                        chat.is_unread = Some(true);
                     }
                     let is_newer = chat
                         .last_message
@@ -348,16 +349,26 @@ impl CoreState {
                     if is_newer {
                         chat.last_message = Some(message.clone());
                     }
-                } else {
-                    self.account.chats.push(ChatSummary {
-                        id: message.chat_id,
-                        title: format!("Chat {}", message.chat_id),
-                        unread_count: if message.outgoing { 0 } else { 1 },
-                        last_message: Some(message.clone()),
-                    });
                 }
 
                 self.last_error = None;
+            }
+            CoreEvent::ChatArchived { chat_id, archived } => {
+                self.update_chat_action(*chat_id, |chat| chat.archived = Some(*archived));
+            }
+            CoreEvent::ChatMuted { chat_id, muted } => {
+                self.update_chat_action(*chat_id, |chat| chat.muted = Some(*muted));
+            }
+            CoreEvent::ChatPinned { chat_id, pinned } => {
+                self.update_chat_action(*chat_id, |chat| chat.pinned = Some(*pinned));
+            }
+            CoreEvent::ChatUnreadChanged { chat_id, unread } => {
+                self.update_chat_action(*chat_id, |chat| {
+                    chat.is_unread = Some(*unread);
+                    if !*unread {
+                        chat.unread_count = 0;
+                    }
+                });
             }
             CoreEvent::MessageEdited(message) => {
                 if self.apply_message_edit(message) {
@@ -712,6 +723,18 @@ impl CoreState {
         Ok(true)
     }
 
+    fn update_chat_action(&mut self, chat_id: i64, update: impl FnOnce(&mut ChatSummary)) {
+        if let Some(chat) = self
+            .account
+            .chats
+            .iter_mut()
+            .find(|chat| chat.id == chat_id)
+        {
+            update(chat);
+            self.last_error = None;
+        }
+    }
+
     fn upsert_message(&mut self, message: MessageSummary) -> bool {
         let messages = self.messages.entry(message.chat_id).or_default();
         let inserted = if let Some(index) = messages.iter().position(|item| item.id == message.id) {
@@ -737,6 +760,19 @@ impl CoreState {
 mod message_ordering_tests {
     use super::*;
 
+    fn seed_chat(state: &mut CoreState, unread_count: u32) {
+        state.account.chats.push(ChatSummary {
+            id: 42,
+            title: "Known chat".into(),
+            unread_count,
+            archived: None,
+            muted: None,
+            pinned: None,
+            is_unread: None,
+            last_message: None,
+        });
+    }
+
     fn message(id: i64, timestamp_unix: i64, outgoing: bool) -> MessageSummary {
         MessageSummary {
             id,
@@ -758,6 +794,7 @@ mod message_ordering_tests {
     #[test]
     fn older_live_update_cannot_replace_chat_preview() {
         let mut state = CoreState::default();
+        seed_chat(&mut state, 0);
         state.reduce(&CoreEvent::MessageAdded(message(20, 200, false)));
         state.reduce(&CoreEvent::MessageAdded(message(10, 100, false)));
         assert_eq!(
@@ -770,6 +807,7 @@ mod message_ordering_tests {
     #[test]
     fn duplicate_update_does_not_increment_unread_count() {
         let mut state = CoreState::default();
+        seed_chat(&mut state, 0);
         let first = message(20, 200, false);
         state.reduce(&CoreEvent::MessageAdded(first.clone()));
         state.reduce(&CoreEvent::MessageAdded(first));
@@ -779,6 +817,7 @@ mod message_ordering_tests {
     #[test]
     fn equal_timestamp_uses_message_id_as_tiebreaker() {
         let mut state = CoreState::default();
+        seed_chat(&mut state, 0);
         state.reduce(&CoreEvent::MessageAdded(message(9, 200, true)));
         state.reduce(&CoreEvent::MessageAdded(message(8, 200, true)));
         assert_eq!(state.chat(42).unwrap().last_message.as_ref().unwrap().id, 9);

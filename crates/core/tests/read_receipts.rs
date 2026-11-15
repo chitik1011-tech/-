@@ -71,6 +71,10 @@ fn reducer_only_clears_unread_when_receipt_covers_latest_message() {
         id: 77,
         title: "chat".into(),
         unread_count: 4,
+        archived: None,
+        muted: None,
+        pinned: None,
+        is_unread: None,
         last_message: Some(last_message(10)),
     });
 
