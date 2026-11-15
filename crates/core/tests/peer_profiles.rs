@@ -29,7 +29,9 @@ fn profile_event_preserves_supplied_fields_and_omits_absent_phone() {
         member_count: None,
         bio: Some("Telegram supplied bio".into()),
         avatar: None,
-        presence: PeerPresence::Offline { last_seen_unix: 1_700_000_000 },
+        presence: PeerPresence::Offline {
+            last_seen_unix: 1_700_000_000,
+        },
     };
     let event = CoreEvent::ProfileUpdated(profile);
     let encoded = tg_mobile_core::encode_event(&event).expect("event serializes");
@@ -63,6 +65,10 @@ async fn peer_profiles_are_persisted_by_the_existing_store() {
     let profile = PeerProfile::unknown(73);
     state.reduce(&CoreEvent::ProfileUpdated(profile.clone()));
     store.save(&state).await.expect("state saves");
-    let restored = store.load().await.expect("state loads").expect("state exists");
+    let restored = store
+        .load()
+        .await
+        .expect("state loads")
+        .expect("state exists");
     assert_eq!(restored.profile(73), Some(&profile));
 }

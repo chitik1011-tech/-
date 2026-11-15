@@ -93,9 +93,9 @@ impl MockTelegramBackend {
                 let chats = self.chats.iter().take(limit).cloned().collect();
                 Ok(vec![CoreEvent::ChatsLoaded(chats)])
             }
-            CoreCommand::LoadProfile { peer_id } => {
-                Ok(vec![CoreEvent::ProfileUpdated(PeerProfile::unknown(peer_id))])
-            }
+            CoreCommand::LoadProfile { peer_id } => Ok(vec![CoreEvent::ProfileUpdated(
+                PeerProfile::unknown(peer_id),
+            )]),
             CoreCommand::SendText { chat_id, text } => {
                 if self.authorization != AuthorizationState::Ready {
                     return Err(CoreError::Backend("not authorized".into()));

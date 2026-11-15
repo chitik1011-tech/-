@@ -54,7 +54,9 @@ pub enum PeerPresence {
     #[default]
     Unknown,
     Online,
-    Offline { last_seen_unix: i64 },
+    Offline {
+        last_seen_unix: i64,
+    },
 }
 
 /// Backend-owned avatar/file reference metadata; the core does not download it.
