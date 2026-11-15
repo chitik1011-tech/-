@@ -194,7 +194,10 @@ impl AuthFlow {
                 // failures do not return a replacement token, so restart the login
                 // flow rather than pretending a retry can succeed with stale state.
                 self.phase = AuthPhase::WaitingForPhoneNumber;
-                Err(auth_api_error("sign in with 2FA password; restart login", error))
+                Err(auth_api_error(
+                    "sign in with 2FA password; restart login",
+                    error,
+                ))
             }
         }
     }
