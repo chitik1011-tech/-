@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/core",
     "crates/android-bridge",
+    "crates/media-cache",
 ]
 
 [workspace.package]
@@ -15,3 +16,4 @@ thiserror = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }
+sha2 = "0.10"
