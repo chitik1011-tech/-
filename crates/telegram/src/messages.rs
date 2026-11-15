@@ -93,6 +93,66 @@ pub(crate) async fn load_messages(
     Ok(messages)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MessagePage {
+    pub messages: Vec<MessageSummary>,
+    pub next_before_message_id: Option<i64>,
+    pub has_more: bool,
+}
+
+pub(crate) async fn load_messages_page(
+    client: &Client,
+    peer: PeerRef,
+    before_message_id: Option<i64>,
+    limit: usize,
+) -> tg_mobile_core::Result<MessagePage> {
+    let offset_id = before_message_id
+        .map(|message_id| {
+            i32::try_from(message_id).map_err(|_| {
+                CoreError::InvalidInput("message page cursor exceeds Telegram range".into())
+            })
+        })
+        .transpose()?;
+
+    let fetch_limit = limit.saturating_add(1);
+    let mut iterator = client.iter_messages(peer);
+    if let Some(offset_id) = offset_id {
+        iterator = iterator.offset_id(offset_id);
+    }
+    iterator = iterator.limit(fetch_limit);
+
+    let mut messages = Vec::with_capacity(fetch_limit.min(201));
+    while let Some(message) = iterator
+        .next()
+        .await
+        .map_err(|error| api_error("load message page", error))?
+    {
+        messages.push(message_to_summary(&message));
+    }
+
+    Ok(finalize_message_page(messages, limit))
+}
+
+fn finalize_message_page(mut messages: Vec<MessageSummary>, limit: usize) -> MessagePage {
+    let has_extra = messages.len() > limit;
+    if has_extra {
+        messages.truncate(limit);
+    }
+
+    let next_before_message_id = has_extra
+        .then(|| messages.last().map(|message| message.id))
+        .flatten()
+        .filter(|message_id| *message_id > 0);
+    let has_more = next_before_message_id.is_some();
+    messages.reverse();
+
+    MessagePage {
+        messages,
+        next_before_message_id,
+        has_more,
+    }
+}
+
 pub(crate) async fn mark_read(
     client: &Client,
     peer: PeerRef,
