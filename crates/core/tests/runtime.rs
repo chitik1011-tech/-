@@ -84,6 +84,10 @@ async fn memory_store_restores_state_for_runtime() {
     saved.running = false;
     saved.last_error = Some("old error".into());
     saved.account.authorization = AuthorizationState::Ready;
+    saved.chat_pagination.loaded = true;
+    saved.chat_pagination.next_cursor = Some("retry-me".into());
+    saved.chat_pagination.loading = true;
+    saved.chat_pagination.loading_cursor = Some("in-flight".into());
     store.save(&saved).await.unwrap();
 
     let core = spawn_core_with_store(MockTelegramBackend::default(), store);
@@ -102,6 +106,12 @@ async fn memory_store_restores_state_for_runtime() {
 
     assert!(restored.running);
     assert_eq!(restored.last_error, None);
+    assert!(!restored.chat_pagination.loading);
+    assert_eq!(restored.chat_pagination.loading_cursor, None);
+    assert_eq!(
+        restored.chat_pagination.next_cursor.as_deref(),
+        Some("retry-me")
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
