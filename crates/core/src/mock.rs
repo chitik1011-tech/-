@@ -121,9 +121,9 @@ impl MockTelegramBackend {
             }
             CoreCommand::AddContact(_)
             | CoreCommand::DeleteContact { .. }
-            | CoreCommand::LoadContacts { .. } => Err(CoreError::Backend(
-                "contacts backend is unavailable".into(),
-            )),
+            | CoreCommand::LoadContacts { .. } => {
+                Err(CoreError::Backend("contacts backend is unavailable".into()))
+            }
             CoreCommand::Shutdown => Ok(Vec::new()),
         }
     }

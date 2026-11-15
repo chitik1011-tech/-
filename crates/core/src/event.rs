@@ -13,7 +13,9 @@ pub enum CoreEvent {
     ChatsLoaded(Vec<ChatSummary>),
     MessageAdded(MessageSummary),
     ContactAdded(Contact),
-    ContactDeleted { user_id: i64 },
+    ContactDeleted {
+        user_id: i64,
+    },
     ContactsLoaded {
         offset: usize,
         total: usize,

@@ -1,7 +1,7 @@
+use tg_mobile_core::contacts::{Contact, ContactBook};
 use tg_mobile_core::{
     CoreCommand, CoreEvent, CoreState, MockTelegramBackend, TelegramBackend, MAX_CONTACT_PAGE_LIMIT,
 };
-use tg_mobile_core::contacts::{Contact, ContactBook};
 
 fn contact(user_id: i64, name: &str, username: Option<&str>) -> Contact {
     Contact {
@@ -21,9 +21,12 @@ fn command_validation_rejects_bad_contacts_and_invalid_pages() {
     assert!(CoreCommand::AddContact(contact(1, " ", None))
         .validate()
         .is_err());
-    assert!(CoreCommand::LoadContacts { offset: 0, limit: 0 }
-        .validate()
-        .is_err());
+    assert!(CoreCommand::LoadContacts {
+        offset: 0,
+        limit: 0
+    }
+    .validate()
+    .is_err());
     assert!(CoreCommand::LoadContacts {
         offset: 0,
         limit: MAX_CONTACT_PAGE_LIMIT + 1,
@@ -52,7 +55,10 @@ fn reducer_merges_pages_and_add_delete_events_idempotently() {
         contacts: vec![first.clone(), second.clone()],
     });
     assert_eq!(state.contacts.len(), 2);
-    assert_eq!(state.contacts.page(0, 10).unwrap(), vec![second, first.clone()]);
+    assert_eq!(
+        state.contacts.page(0, 10).unwrap(),
+        vec![second, first.clone()]
+    );
 
     state.reduce(&CoreEvent::ContactAdded(first.clone()));
     assert_eq!(state.contacts.len(), 2);
@@ -76,7 +82,10 @@ fn contacts_serialize_without_phone_number_fields() {
 async fn mock_backend_returns_explicit_unsupported_error_for_contacts() {
     let mut backend = MockTelegramBackend::default();
     let result = backend
-        .handle(CoreCommand::LoadContacts { offset: 0, limit: 20 })
+        .handle(CoreCommand::LoadContacts {
+            offset: 0,
+            limit: 20,
+        })
         .await;
     assert!(result.is_err());
     let message = result.unwrap_err().to_string();

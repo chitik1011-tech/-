@@ -52,8 +52,7 @@ impl Contact {
             .filter(|username| !username.is_empty());
 
         if let Some(username) = &self.username {
-            let valid_length =
-                (MIN_USERNAME_CHARS..=MAX_USERNAME_CHARS).contains(&username.len());
+            let valid_length = (MIN_USERNAME_CHARS..=MAX_USERNAME_CHARS).contains(&username.len());
             let valid_characters = username
                 .bytes()
                 .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_');
@@ -187,9 +186,7 @@ mod tests {
 
     #[test]
     fn validation_trims_names_and_canonicalizes_usernames() {
-        let normalized = contact(1, Some(" @Example_User "))
-            .normalized()
-            .unwrap();
+        let normalized = contact(1, Some(" @Example_User ")).normalized().unwrap();
         assert_eq!(normalized.display_name, "Person 1");
         assert_eq!(normalized.username.as_deref(), Some("example_user"));
         assert!(contact(0, None).normalized().is_err());
@@ -223,7 +220,12 @@ mod tests {
         contacts.upsert(contact(2, None)).unwrap();
 
         assert_eq!(
-            contacts.page(1, 2).unwrap().iter().map(|c| c.user_id).collect::<Vec<_>>(),
+            contacts
+                .page(1, 2)
+                .unwrap()
+                .iter()
+                .map(|c| c.user_id)
+                .collect::<Vec<_>>(),
             vec![2, 3]
         );
         assert!(contacts.page(0, 0).is_err());
