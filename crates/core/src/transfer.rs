@@ -215,7 +215,10 @@ impl TransferManager {
             if !record.state.is_active() {
                 return Err(invalid(record));
             }
-            if record.total_bytes.is_some_and(|total| bytes_transferred > total) {
+            if record
+                .total_bytes
+                .is_some_and(|total| bytes_transferred > total)
+            {
                 return Err(TransferError::ProgressExceedsTotal);
             }
             record.bytes_transferred = record.bytes_transferred.max(bytes_transferred);
@@ -292,7 +295,10 @@ impl TransferManager {
 
     pub fn get(&self, token: TransferToken) -> Result<TransferSnapshot, TransferError> {
         let inner = self.lock()?;
-        let record = inner.records.get(&token.id).ok_or(TransferError::NotFound)?;
+        let record = inner
+            .records
+            .get(&token.id)
+            .ok_or(TransferError::NotFound)?;
         check_generation(token, record)?;
         Ok(snapshot(token.id, record))
     }
@@ -318,7 +324,10 @@ impl TransferManager {
         operation: impl FnOnce(&mut TransferRecord) -> Result<(), TransferError>,
     ) -> Result<TransferToken, TransferError> {
         let mut inner = self.lock()?;
-        let record = inner.records.get_mut(&token.id).ok_or(TransferError::NotFound)?;
+        let record = inner
+            .records
+            .get_mut(&token.id)
+            .ok_or(TransferError::NotFound)?;
         check_generation(token, record)?;
         operation(record)?;
         Ok(TransferToken {
@@ -369,7 +378,9 @@ mod tests {
     #[test]
     fn download_lifecycle_tracks_progress_and_terminal_state() {
         let manager = TransferManager::new();
-        let remote = manager.request(TransferDirection::Download, "opaque-telegram-ref", Some(10)).unwrap();
+        let remote = manager
+            .request(TransferDirection::Download, "opaque-telegram-ref", Some(10))
+            .unwrap();
         assert_eq!(remote.state, TransferState::Download(DownloadState::Remote));
         let queued = manager.queue_download(remote.token).unwrap();
         let active = manager.start_download(queued).unwrap();
@@ -378,7 +389,10 @@ mod tests {
         let completed = manager.complete(active).unwrap();
         let snapshot = manager.get(completed).unwrap();
         assert_eq!(snapshot.bytes_transferred, 7);
-        assert_eq!(snapshot.state, TransferState::Download(DownloadState::Downloaded));
+        assert_eq!(
+            snapshot.state,
+            TransferState::Download(DownloadState::Downloaded)
+        );
         assert!(snapshot.state.is_terminal());
         assert!(matches!(
             manager.report_progress(completed, 8),
@@ -389,7 +403,9 @@ mod tests {
     #[test]
     fn upload_lifecycle_and_failure_retry_reject_old_callbacks() {
         let manager = TransferManager::new();
-        let pending = manager.request(TransferDirection::Upload, "upload-key-1", Some(12)).unwrap();
+        let pending = manager
+            .request(TransferDirection::Upload, "upload-key-1", Some(12))
+            .unwrap();
         let active = manager.start_upload(pending.token).unwrap();
         manager.report_progress(active, 8).unwrap();
         let failed = manager.fail(active).unwrap();
@@ -400,16 +416,26 @@ mod tests {
             TransferState::Upload(UploadState::Pending)
         );
         assert_eq!(manager.get(retry).unwrap().bytes_transferred, 8);
-        assert_eq!(manager.report_progress(failed, 9), Err(TransferError::StaleToken));
+        assert_eq!(
+            manager.report_progress(failed, 9),
+            Err(TransferError::StaleToken)
+        );
         let active_retry = manager.start_upload(retry).unwrap();
-        assert_eq!(manager.complete(active_retry).unwrap().generation, retry.generation);
+        assert_eq!(
+            manager.complete(active_retry).unwrap().generation,
+            retry.generation
+        );
     }
 
     #[test]
     fn duplicate_requests_share_one_transfer() {
         let manager = TransferManager::new();
-        let first = manager.request(TransferDirection::Download, "same-ref", Some(4)).unwrap();
-        let second = manager.request(TransferDirection::Download, "same-ref", Some(99)).unwrap();
+        let first = manager
+            .request(TransferDirection::Download, "same-ref", Some(4))
+            .unwrap();
+        let second = manager
+            .request(TransferDirection::Download, "same-ref", Some(99))
+            .unwrap();
         assert_eq!(first.token, second.token);
         assert_eq!(second.total_bytes, Some(4));
     }
@@ -417,12 +443,23 @@ mod tests {
     #[test]
     fn cancellation_is_terminal_until_explicit_retry() {
         let manager = TransferManager::new();
-        let pending = manager.request(TransferDirection::Upload, "cancel-me", None).unwrap();
+        let pending = manager
+            .request(TransferDirection::Upload, "cancel-me", None)
+            .unwrap();
         let cancelled = manager.cancel(pending.token).unwrap();
-        assert_eq!(manager.get(cancelled).unwrap().state, TransferState::Upload(UploadState::Cancelled));
-        assert!(matches!(manager.start_upload(cancelled), Err(TransferError::InvalidTransition { .. })));
+        assert_eq!(
+            manager.get(cancelled).unwrap().state,
+            TransferState::Upload(UploadState::Cancelled)
+        );
+        assert!(matches!(
+            manager.start_upload(cancelled),
+            Err(TransferError::InvalidTransition { .. })
+        ));
         let retry = manager.retry(cancelled).unwrap();
-        assert_eq!(manager.get(retry).unwrap().state, TransferState::Upload(UploadState::Pending));
+        assert_eq!(
+            manager.get(retry).unwrap().state,
+            TransferState::Upload(UploadState::Pending)
+        );
     }
 
     #[test]
@@ -454,7 +491,9 @@ mod tests {
     #[test]
     fn concurrent_out_of_order_progress_remains_monotonic() {
         let manager = Arc::new(TransferManager::new());
-        let remote = manager.request(TransferDirection::Download, "progress", Some(1_000)).unwrap();
+        let remote = manager
+            .request(TransferDirection::Download, "progress", Some(1_000))
+            .unwrap();
         let queued = manager.queue_download(remote.token).unwrap();
         let active = manager.start_download(queued).unwrap();
         let workers = (0..8)
