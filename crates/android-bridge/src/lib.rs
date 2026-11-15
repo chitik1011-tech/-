@@ -484,7 +484,7 @@ mod tests {
         });
         assert_eq!(event_kind(&event), "messages_forwarded");
         let encoded = encode_event(&event).unwrap();
-        assert!(encoded.contains("\\"type\\":\\"messages_forwarded\\""));
+        assert!(encoded.contains("\"type\":\"messages_forwarded\""));
     }
 
     #[test]
