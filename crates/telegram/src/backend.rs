@@ -309,6 +309,258 @@ impl GrammersBackend {
         }
     }
 
+    fn cleanup_media_tasks(&mut self) {
+        self.media_tasks
+            .retain(|_, task| !task.handle.is_finished());
+    }
+
+    fn hydrate_cached_media(&self, messages: &mut [MessageSummary]) {
+        for message in messages {
+            for attachment in &mut message.attachments {
+                match self.media_cache.get(&attachment.file_reference) {
+                    Ok(Some(lease)) => {
+                        attachment.download_state = AttachmentDownloadState::Downloaded {
+                            local_path: lease.path().to_path_buf(),
+                        };
+                    }
+                    Ok(None)
+                        if matches!(
+                            attachment.download_state,
+                            AttachmentDownloadState::Downloaded { .. }
+                        ) =>
+                    {
+                        attachment.download_state = AttachmentDownloadState::NotDownloaded;
+                    }
+                    Ok(None) | Err(_) => {}
+                }
+            }
+        }
+    }
+
+    async fn resolve_media_target(
+        &mut self,
+        chat_id: i64,
+        message_id: i64,
+        attachment_index: usize,
+    ) -> tg_mobile_core::Result<(MediaTarget, Media)> {
+        self.require_ready().await?;
+        let peer = find_peer(&self.peers, chat_id)
+            .await
+            .ok_or(TelegramBackendError::UnknownChat(chat_id))?;
+        let telegram_message_id = i32::try_from(message_id)
+            .map_err(|_| CoreError::InvalidInput("message id exceeds Telegram range".into()))?;
+        let message = self
+            .client
+            .get_messages_by_id(peer, &[telegram_message_id])
+            .await
+            .map_err(|error| crate::error::api_error("load media message", error))?
+            .into_iter()
+            .next()
+            .flatten()
+            .ok_or_else(|| CoreError::InvalidInput("media message no longer exists".into()))?;
+        let summary = message_to_summary(&message);
+        let attachment = summary
+            .attachments
+            .get(attachment_index)
+            .ok_or_else(|| CoreError::InvalidInput("attachment no longer exists".into()))?;
+        let media = message
+            .media()
+            .ok_or_else(|| CoreError::InvalidInput("message has no downloadable media".into()))?;
+
+        Ok((
+            MediaTarget {
+                chat_id,
+                message_id,
+                attachment_index,
+                reference: attachment.file_reference.clone(),
+                total_bytes: attachment.size_bytes,
+            },
+            media,
+        ))
+    }
+
+    async fn handle_media_download(
+        &mut self,
+        chat_id: i64,
+        message_id: i64,
+        attachment_index: usize,
+        retry: bool,
+    ) -> tg_mobile_core::Result<Vec<CoreEvent>> {
+        self.cleanup_media_tasks();
+        let key = (chat_id, message_id, attachment_index);
+        let (target, media) = self
+            .resolve_media_target(chat_id, message_id, attachment_index)
+            .await?;
+
+        if retry {
+            let _ = self.media_cache.remove(&target.reference);
+        } else if let Some(lease) = self
+            .media_cache
+            .get(&target.reference)
+            .map_err(|error| CoreError::Backend(format!("media cache lookup failed: {error}")))?
+        {
+            return Ok(vec![media_event(
+                &target,
+                AttachmentDownloadState::Downloaded {
+                    local_path: lease.path().to_path_buf(),
+                },
+            )]);
+        }
+
+        if let Some(active) = self.media_tasks.get(&key) {
+            if active.reference == target.reference && !active.handle.is_finished() {
+                if let Some(snapshot) = self
+                    .transfers
+                    .get_by_key(TransferDirection::Download, &target.reference)
+                    .map_err(|error| CoreError::Backend(error.to_string()))?
+                {
+                    return Ok(vec![media_event(
+                        &target,
+                        state_from_snapshot(&snapshot, None),
+                    )]);
+                }
+            }
+        }
+
+        if let Some(previous) = self.media_tasks.remove(&key) {
+            previous.handle.abort();
+            if let Some(snapshot) = self
+                .transfers
+                .get_by_key(TransferDirection::Download, &previous.reference)
+                .map_err(|error| CoreError::Backend(error.to_string()))?
+            {
+                if !snapshot.state.is_terminal() {
+                    let _ = self.transfers.cancel(snapshot.token);
+                }
+            }
+        }
+
+        let snapshot = match self
+            .transfers
+            .get_by_key(TransferDirection::Download, &target.reference)
+            .map_err(|error| CoreError::Backend(error.to_string()))?
+        {
+            Some(snapshot) => snapshot,
+            None => self
+                .transfers
+                .request(
+                    TransferDirection::Download,
+                    target.reference.clone(),
+                    target.total_bytes,
+                )
+                .map_err(|error| CoreError::Backend(error.to_string()))?,
+        };
+
+        let queued_token = match snapshot.state {
+            TransferState::Download(DownloadState::Remote) => self
+                .transfers
+                .queue_download(snapshot.token)
+                .map_err(|error| CoreError::Backend(error.to_string()))?,
+            TransferState::Download(DownloadState::Queued) => snapshot.token,
+            TransferState::Download(DownloadState::Downloading) => {
+                let failed = self
+                    .transfers
+                    .fail(snapshot.token)
+                    .map_err(|error| CoreError::Backend(error.to_string()))?;
+                if retry {
+                    self.transfers
+                        .retry(failed)
+                        .map_err(|error| CoreError::Backend(error.to_string()))?
+                } else {
+                    return Ok(vec![media_event(
+                        &target,
+                        AttachmentDownloadState::Failed {
+                            reason: Some("previous download was interrupted".into()),
+                        },
+                    )]);
+                }
+            }
+            TransferState::Download(DownloadState::Downloaded) => self
+                .transfers
+                .restart_download(snapshot.token)
+                .map_err(|error| CoreError::Backend(error.to_string()))?,
+            TransferState::Download(DownloadState::Failed | DownloadState::Cancelled) if retry => {
+                self.transfers
+                    .retry(snapshot.token)
+                    .map_err(|error| CoreError::Backend(error.to_string()))?
+            }
+            TransferState::Download(DownloadState::Failed) => {
+                return Ok(vec![media_event(
+                    &target,
+                    AttachmentDownloadState::Failed { reason: None },
+                )]);
+            }
+            TransferState::Download(DownloadState::Cancelled) => {
+                return Ok(vec![media_event(
+                    &target,
+                    AttachmentDownloadState::Cancelled,
+                )]);
+            }
+            TransferState::Upload(_) => {
+                return Err(CoreError::Backend(
+                    "media download resolved to an upload transfer".into(),
+                ));
+            }
+        };
+
+        let handle = spawn_download(
+            self.client.clone(),
+            media,
+            self.media_cache.clone(),
+            Arc::clone(&self.transfers),
+            self.core_update_tx.clone(),
+            target.clone(),
+            queued_token,
+        );
+        self.media_tasks.insert(
+            key,
+            ActiveMediaTask {
+                reference: target.reference.clone(),
+                handle,
+            },
+        );
+
+        Ok(vec![media_event(&target, AttachmentDownloadState::Queued)])
+    }
+
+    fn cancel_media_download(
+        &mut self,
+        chat_id: i64,
+        message_id: i64,
+        attachment_index: usize,
+    ) -> tg_mobile_core::Result<Vec<CoreEvent>> {
+        self.cleanup_media_tasks();
+        let key = (chat_id, message_id, attachment_index);
+        let Some(active) = self.media_tasks.remove(&key) else {
+            return Ok(Vec::new());
+        };
+        active.handle.abort();
+
+        let target = MediaTarget {
+            chat_id,
+            message_id,
+            attachment_index,
+            reference: active.reference.clone(),
+            total_bytes: None,
+        };
+        if let Some(snapshot) = self
+            .transfers
+            .get_by_key(TransferDirection::Download, &active.reference)
+            .map_err(|error| CoreError::Backend(error.to_string()))?
+        {
+            if !snapshot.state.is_terminal() {
+                self.transfers
+                    .cancel(snapshot.token)
+                    .map_err(|error| CoreError::Backend(error.to_string()))?;
+            }
+        }
+
+        Ok(vec![media_event(
+            &target,
+            AttachmentDownloadState::Cancelled,
+        )])
+    }
+
     async fn shutdown(&mut self) -> tg_mobile_core::Result<Vec<CoreEvent>> {
         if self.stopped {
             return Ok(Vec::new());
