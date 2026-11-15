@@ -1,6 +1,6 @@
 use tg_mobile_core::{
-    decode_command, encode_event, CoreCommand, CoreEvent, CoreState, MockTelegramBackend,
-    MessageSummary, TelegramBackend, MAX_MESSAGE_TEXT_BYTES,
+    decode_command, encode_event, CoreCommand, CoreEvent, CoreState, MessageSummary,
+    MockTelegramBackend, TelegramBackend, MAX_MESSAGE_TEXT_BYTES,
 };
 
 #[test]
@@ -97,7 +97,11 @@ fn message_action_validation_rejects_missing_ids_blank_content_and_oversize_text
 async fn mock_backend_replies_edits_and_deletes_by_chat_and_message_id() {
     let mut backend = MockTelegramBackend::default();
     send(&mut backend, CoreCommand::Start).await;
-    send(&mut backend, CoreCommand::SetPhoneNumber("+10000000000".into())).await;
+    send(
+        &mut backend,
+        CoreCommand::SetPhoneNumber("+10000000000".into()),
+    )
+    .await;
     send(&mut backend, CoreCommand::SubmitCode("12345".into())).await;
 
     let reply = send(
@@ -159,7 +163,10 @@ fn reducer_updates_edited_message_and_removes_deleted_message() {
     let edited = message(2, 7, "after", false, 10);
     state.reduce(&CoreEvent::MessageEdited(edited.clone()));
     assert_eq!(state.messages_for_chat(2), &[edited.clone()]);
-    assert_eq!(state.chat(2).and_then(|chat| chat.last_message.as_ref()), Some(&edited));
+    assert_eq!(
+        state.chat(2).and_then(|chat| chat.last_message.as_ref()),
+        Some(&edited)
+    );
 
     state.reduce(&CoreEvent::MessageDeleted {
         chat_id: 2,
@@ -171,14 +178,17 @@ fn reducer_updates_edited_message_and_removes_deleted_message() {
         .is_some_and(|chat| chat.last_message.is_none()));
 }
 
-async fn send(
-    backend: &mut MockTelegramBackend,
-    command: CoreCommand,
-) -> Vec<CoreEvent> {
+async fn send(backend: &mut MockTelegramBackend, command: CoreCommand) -> Vec<CoreEvent> {
     backend.handle(command).await.expect("mock command")
 }
 
-fn message(chat_id: i64, id: i64, text: &str, outgoing: bool, timestamp_unix: i64) -> MessageSummary {
+fn message(
+    chat_id: i64,
+    id: i64,
+    text: &str,
+    outgoing: bool,
+    timestamp_unix: i64,
+) -> MessageSummary {
     MessageSummary {
         id,
         chat_id,
