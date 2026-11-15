@@ -48,9 +48,28 @@ impl CoreState {
                 self.chat_pagination = ChatPaginationState::default();
                 self.last_error = None;
             }
+            CoreEvent::ChatsPageLoading { cursor } => {
+                self.chat_pagination.loading = true;
+                self.chat_pagination.loading_cursor = cursor.clone();
+                self.chat_pagination.error = None;
+                self.last_error = None;
+            }
             CoreEvent::ChatsPageLoaded(page) => {
                 if self.merge_chat_page(page) {
+                    self.chat_pagination.loading = false;
+                    self.chat_pagination.loading_cursor = None;
+                    self.chat_pagination.error = None;
                     self.last_error = None;
+                }
+            }
+            CoreEvent::ChatsPageFailed { cursor, error } => {
+                if self.chat_pagination.loading
+                    && self.chat_pagination.loading_cursor.as_ref() == cursor.as_ref()
+                {
+                    self.chat_pagination.loading = false;
+                    self.chat_pagination.loading_cursor = None;
+                    self.chat_pagination.error = Some(error.clone());
+                    self.last_error = Some(error.clone());
                 }
             }
             CoreEvent::MessageAdded(message) => {
@@ -108,7 +127,9 @@ impl CoreState {
         };
 
         if first_page {
+            let loading = self.chat_pagination.loading;
             self.chat_pagination = ChatPaginationState::default();
+            self.chat_pagination.loading = loading;
         } else if let Some(requested_cursor) = page.requested_cursor.as_ref() {
             self.chat_pagination
                 .consumed_cursors
