@@ -52,6 +52,10 @@ jobs:
       - name: Install cargo-ndk
         run: cargo install cargo-ndk --locked
 
+      - name: Run Android unit tests
+        working-directory: android
+        run: ./gradlew testDebugUnitTest --stacktrace
+
       - name: Build Android debug APK
         working-directory: android
         run: ./gradlew assembleDebug --stacktrace
