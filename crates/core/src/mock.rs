@@ -111,6 +111,31 @@ impl MockTelegramBackend {
                 messages.sort_by_key(|message| (message.timestamp_unix, message.id));
                 Ok(vec![CoreEvent::MessagesLoaded { chat_id, messages }])
             }
+            CoreCommand::LoadMessagesPage {
+                chat_id,
+                before_message_id,
+                limit,
+            } => {
+                let messages = self
+                    .chats
+                    .iter()
+                    .filter(|chat| chat.id == chat_id)
+                    .filter_map(|chat| chat.last_message.clone())
+                    .filter(|message| {
+                        before_message_id
+                            .map(|before| message.id < before)
+                            .unwrap_or(true)
+                    })
+                    .take(limit)
+                    .collect::<Vec<_>>();
+                Ok(vec![CoreEvent::MessagesPageLoaded {
+                    chat_id,
+                    before_message_id,
+                    messages,
+                    next_before_message_id: None,
+                    has_more: false,
+                }])
+            }
             CoreCommand::MarkRead {
                 chat_id,
                 max_message_id,

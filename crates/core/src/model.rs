@@ -156,6 +156,30 @@ pub struct MediaAttachment {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MessageHistoryState {
+    pub loading: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requested_before_message_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_before_message_id: Option<i64>,
+    pub has_more: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+impl Default for MessageHistoryState {
+    fn default() -> Self {
+        Self {
+            loading: false,
+            requested_before_message_id: None,
+            next_before_message_id: None,
+            has_more: true,
+            error: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AccountState {
     pub authorization: AuthorizationState,
     pub chats: Vec<ChatSummary>,

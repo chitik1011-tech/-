@@ -1,11 +1,11 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
 use crate::{
     connection::ConnectionState,
     event::CoreEvent,
-    model::{AccountState, ChatSummary, MessageSummary},
+    model::{AccountState, ChatSummary, MessageHistoryState, MessageSummary},
 };
 
 pub const MAX_CACHED_MESSAGES_PER_CHAT: usize = 512;
@@ -18,6 +18,8 @@ pub struct CoreState {
     #[serde(default)]
     pub connection_state: ConnectionState,
     pub messages: BTreeMap<i64, Vec<MessageSummary>>,
+    #[serde(default)]
+    pub message_history: BTreeMap<i64, MessageHistoryState>,
     pub last_error: Option<String>,
 }
 
@@ -28,6 +30,7 @@ impl Default for CoreState {
             account: AccountState::default(),
             connection_state: ConnectionState::Disconnected,
             messages: BTreeMap::new(),
+            message_history: BTreeMap::new(),
             last_error: None,
         }
     }
@@ -52,39 +55,64 @@ impl CoreState {
                 self.last_error = None;
             }
             CoreEvent::MessagesLoaded { chat_id, messages } => {
-                for message in messages {
-                    if message.chat_id == *chat_id {
-                        self.upsert_message(message.clone());
-                    }
-                }
-
-                if let Some(latest) = self
-                    .messages_for_chat(*chat_id)
-                    .iter()
-                    .max_by_key(|message| (message.timestamp_unix, message.id))
-                    .cloned()
-                {
-                    if let Some(chat) = self
-                        .account
-                        .chats
-                        .iter_mut()
-                        .find(|chat| chat.id == *chat_id)
-                    {
-                        let replace = chat
-                            .last_message
-                            .as_ref()
-                            .map(|current| {
-                                (latest.timestamp_unix, latest.id)
-                                    > (current.timestamp_unix, current.id)
-                            })
-                            .unwrap_or(true);
-                        if replace {
-                            chat.last_message = Some(latest);
-                        }
-                    }
-                }
-
+                self.merge_messages(*chat_id, messages);
                 self.last_error = None;
+            }
+            CoreEvent::MessagesPageLoading {
+                chat_id,
+                before_message_id,
+            } => {
+                let history = self.message_history.entry(*chat_id).or_default();
+                history.loading = true;
+                history.requested_before_message_id = *before_message_id;
+                history.error = None;
+            }
+            CoreEvent::MessagesPageLoaded {
+                chat_id,
+                before_message_id,
+                messages,
+                next_before_message_id,
+                has_more,
+            } => {
+                let accepts_page = self.message_history.get(chat_id).is_some_and(|history| {
+                    history.loading && history.requested_before_message_id == *before_message_id
+                });
+                if !accepts_page {
+                    return;
+                }
+
+                self.merge_message_page(*chat_id, messages);
+
+                let next_cursor = (*next_before_message_id)
+                    .filter(|message_id| *message_id > 0)
+                    .filter(|message_id| {
+                        before_message_id.is_none_or(|cursor| *message_id < cursor)
+                    });
+                let history = self.message_history.entry(*chat_id).or_default();
+                history.loading = false;
+                history.requested_before_message_id = None;
+                history.has_more = *has_more && next_cursor.is_some();
+                history.next_before_message_id = if history.has_more { next_cursor } else { None };
+                history.error = None;
+                self.last_error = None;
+            }
+            CoreEvent::MessagesPageLoadFailed {
+                chat_id,
+                before_message_id,
+                error,
+            } => {
+                let accepts_failure = self.message_history.get(chat_id).is_some_and(|history| {
+                    history.loading && history.requested_before_message_id == *before_message_id
+                });
+                if !accepts_failure {
+                    return;
+                }
+
+                let history = self.message_history.entry(*chat_id).or_default();
+                history.loading = false;
+                history.requested_before_message_id = None;
+                history.error = Some(error.clone());
+                self.last_error = Some(error.clone());
             }
             CoreEvent::ChatRead {
                 chat_id,
@@ -161,12 +189,86 @@ impl CoreState {
             .unwrap_or(&[])
     }
 
+    pub fn message_history_for_chat(&self, chat_id: i64) -> Option<&MessageHistoryState> {
+        self.message_history.get(&chat_id)
+    }
+
     pub fn total_unread_count(&self) -> u64 {
         self.account
             .chats
             .iter()
             .map(|chat| u64::from(chat.unread_count))
             .sum()
+    }
+
+    fn merge_messages(&mut self, chat_id: i64, messages: &[MessageSummary]) {
+        for message in messages {
+            if message.chat_id == chat_id {
+                self.upsert_message(message.clone());
+            }
+        }
+
+        self.refresh_chat_preview(chat_id);
+    }
+
+    fn merge_message_page(&mut self, chat_id: i64, messages: &[MessageSummary]) {
+        let mut page_ids = BTreeSet::new();
+        let cache = self.messages.entry(chat_id).or_default();
+
+        for message in messages.iter().filter(|message| message.chat_id == chat_id) {
+            page_ids.insert(message.id);
+            if let Some(index) = cache.iter().position(|cached| cached.id == message.id) {
+                cache[index] = message.clone();
+            } else {
+                cache.push(message.clone());
+            }
+        }
+
+        cache.sort_by_key(|message| (message.timestamp_unix, message.id));
+
+        // When an older page arrives into a full cache, preserve the page the
+        // caller just requested. Evict newer cached messages from the tail;
+        // those can be loaded again by paging from the latest end.
+        let excess = cache.len().saturating_sub(MAX_CACHED_MESSAGES_PER_CHAT);
+        if excess > 0 {
+            let evicted_ids = cache
+                .iter()
+                .rev()
+                .filter(|message| !page_ids.contains(&message.id))
+                .take(excess)
+                .map(|message| message.id)
+                .collect::<BTreeSet<_>>();
+            cache.retain(|message| !evicted_ids.contains(&message.id));
+        }
+
+        self.refresh_chat_preview(chat_id);
+    }
+
+    fn refresh_chat_preview(&mut self, chat_id: i64) {
+        if let Some(latest) = self
+            .messages_for_chat(chat_id)
+            .iter()
+            .max_by_key(|message| (message.timestamp_unix, message.id))
+            .cloned()
+        {
+            if let Some(chat) = self
+                .account
+                .chats
+                .iter_mut()
+                .find(|chat| chat.id == chat_id)
+            {
+                let replace = chat
+                    .last_message
+                    .as_ref()
+                    .map(|current| {
+                        (latest.timestamp_unix, latest.id) > (current.timestamp_unix, current.id)
+                    })
+                    .unwrap_or(true);
+                if replace {
+                    chat.last_message = Some(latest);
+                }
+            }
+        }
     }
 
     fn upsert_message(&mut self, message: MessageSummary) -> bool {

@@ -93,6 +93,66 @@ pub(crate) async fn load_messages(
     Ok(messages)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MessagePage {
+    pub messages: Vec<MessageSummary>,
+    pub next_before_message_id: Option<i64>,
+    pub has_more: bool,
+}
+
+pub(crate) async fn load_messages_page(
+    client: &Client,
+    peer: PeerRef,
+    before_message_id: Option<i64>,
+    limit: usize,
+) -> tg_mobile_core::Result<MessagePage> {
+    let offset_id = before_message_id
+        .map(|message_id| {
+            i32::try_from(message_id).map_err(|_| {
+                CoreError::InvalidInput("message page cursor exceeds Telegram range".into())
+            })
+        })
+        .transpose()?;
+
+    let fetch_limit = limit.saturating_add(1);
+    let mut iterator = client.iter_messages(peer);
+    if let Some(offset_id) = offset_id {
+        iterator = iterator.offset_id(offset_id);
+    }
+    iterator = iterator.limit(fetch_limit);
+
+    let mut messages = Vec::with_capacity(fetch_limit.min(201));
+    while let Some(message) = iterator
+        .next()
+        .await
+        .map_err(|error| api_error("load message page", error))?
+    {
+        messages.push(message_to_summary(&message));
+    }
+
+    Ok(finalize_message_page(messages, limit))
+}
+
+fn finalize_message_page(mut messages: Vec<MessageSummary>, limit: usize) -> MessagePage {
+    let has_extra = messages.len() > limit;
+    if has_extra {
+        messages.truncate(limit);
+    }
+
+    let next_before_message_id = has_extra
+        .then(|| messages.last().map(|message| message.id))
+        .flatten()
+        .filter(|message_id| *message_id > 0);
+    let has_more = next_before_message_id.is_some();
+    messages.reverse();
+
+    MessagePage {
+        messages,
+        next_before_message_id,
+        has_more,
+    }
+}
+
 pub(crate) async fn mark_read(
     client: &Client,
     peer: PeerRef,
@@ -192,7 +252,9 @@ impl MessageDeduplicator {
 
 #[cfg(test)]
 mod tests {
-    use super::{MessageDeduplicator, MessageFields, message_summary_from_fields};
+    use super::{
+        MessageDeduplicator, MessageFields, finalize_message_page, message_summary_from_fields,
+    };
 
     #[test]
     fn maps_message_fields_without_losing_identifiers() {
@@ -211,6 +273,43 @@ mod tests {
         assert_eq!(summary.text, "hello");
         assert_eq!(summary.timestamp_unix, 1_700_000_000);
         assert!(summary.outgoing);
+    }
+
+    #[test]
+    fn page_finalization_uses_one_extra_message_for_has_more() {
+        let summary = |id| {
+            message_summary_from_fields(MessageFields {
+                id,
+                chat_id: 1,
+                sender_id: 1,
+                text: "page",
+                timestamp_unix: id,
+                outgoing: false,
+            })
+        };
+
+        let page = finalize_message_page(vec![summary(5), summary(4), summary(3)], 2);
+        assert_eq!(
+            page.messages
+                .iter()
+                .map(|message| message.id)
+                .collect::<Vec<_>>(),
+            vec![4, 5]
+        );
+        assert_eq!(page.next_before_message_id, Some(4));
+        assert!(page.has_more);
+
+        let final_page = finalize_message_page(vec![summary(2), summary(1)], 2);
+        assert_eq!(
+            final_page
+                .messages
+                .iter()
+                .map(|message| message.id)
+                .collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+        assert_eq!(final_page.next_before_message_id, None);
+        assert!(!final_page.has_more);
     }
 
     #[tokio::test]

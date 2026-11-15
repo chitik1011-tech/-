@@ -12,10 +12,27 @@ pub enum CoreCommand {
     SetPhoneNumber(String),
     SubmitCode(String),
     SubmitPassword(String),
-    LoadChats { limit: usize },
-    LoadMessages { chat_id: i64, limit: usize },
-    MarkRead { chat_id: i64, max_message_id: i64 },
-    SendText { chat_id: i64, text: String },
+    LoadChats {
+        limit: usize,
+    },
+    LoadMessages {
+        chat_id: i64,
+        limit: usize,
+    },
+    /// Fetch one page older than `before_message_id` (exclusive).
+    LoadMessagesPage {
+        chat_id: i64,
+        before_message_id: Option<i64>,
+        limit: usize,
+    },
+    MarkRead {
+        chat_id: i64,
+        max_message_id: i64,
+    },
+    SendText {
+        chat_id: i64,
+        text: String,
+    },
     Shutdown,
 }
 
@@ -28,6 +45,7 @@ impl CoreCommand {
             Self::SubmitPassword(_) => "submit_password",
             Self::LoadChats { .. } => "load_chats",
             Self::LoadMessages { .. } => "load_messages",
+            Self::LoadMessagesPage { .. } => "load_messages_page",
             Self::MarkRead { .. } => "mark_read",
             Self::SendText { .. } => "send_text",
             Self::Shutdown => "shutdown",
@@ -50,6 +68,20 @@ impl CoreCommand {
             Self::LoadMessages { chat_id, limit } => {
                 validate_chat_id(*chat_id)?;
                 validate_limit("message load", *limit, MAX_MESSAGE_LOAD_LIMIT)
+            }
+            Self::LoadMessagesPage {
+                chat_id,
+                before_message_id,
+                limit,
+            } => {
+                validate_chat_id(*chat_id)?;
+                validate_limit("message page", *limit, MAX_MESSAGE_LOAD_LIMIT)?;
+                if before_message_id.is_some_and(|message_id| message_id <= 0) {
+                    return Err(CoreError::InvalidInput(
+                        "message page cursor must be positive".into(),
+                    ));
+                }
+                Ok(())
             }
             Self::MarkRead {
                 chat_id,
