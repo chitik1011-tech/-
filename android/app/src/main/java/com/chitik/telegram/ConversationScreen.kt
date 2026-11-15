@@ -109,6 +109,7 @@ data class ConversationScreenState(
     val sending: Boolean = false,
     val error: String? = null,
     val forwardingError: String? = null,
+    val forwardSuccessCount: Long = 0,
 )
 
 internal fun selectedForwardMessageIds(messages: List<ConversationMessageUi>, selectedIds: Set<Long>): List<Long> =
@@ -136,6 +137,10 @@ fun ConversationScreen(
     val listState = rememberLazyListState()
     var viewerKey by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedMessageIds by remember(state.chatId) { mutableStateOf<Set<Long>>(emptySet()) }
+    // Only a server-confirmed, fully successful forward ends selection mode.
+    LaunchedEffect(state.forwardSuccessCount) {
+        if (state.forwardSuccessCount > 0L) selectedMessageIds = emptySet()
+    }
     val contentMode = resolveAsyncContentMode(
         isLoading = state.loading,
         isEmpty = state.messages.isEmpty(),
@@ -189,7 +194,6 @@ fun ConversationScreen(
                         TextButton(onClick = {
                             val ordered = selectedForwardMessageIds(state.messages, selectedMessageIds)
                             state.chatId.toLongOrNull()?.let { onForward(it, ordered) }
-                            selectedMessageIds = emptySet()
                         }) { Text("Переслать (${selectedMessageIds.size})") }
                     }
                 },
