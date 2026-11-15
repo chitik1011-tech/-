@@ -46,6 +46,58 @@ fn message_update_reorders_cache_when_timestamp_changes() {
 }
 
 #[test]
+fn incoming_message_increments_unread_only_when_first_inserted() {
+    let mut state = CoreState::default();
+    state.account.chats.push(ChatSummary {
+        id: 77,
+        title: "existing".into(),
+        unread_count: 4,
+        last_message: None,
+    });
+
+    let incoming = message(10, 100);
+    state.reduce(&CoreEvent::MessageAdded(incoming.clone()));
+    assert_eq!(state.chat(77).unwrap().unread_count, 5);
+
+    let mut updated = incoming;
+    updated.text = "edited payload".into();
+    state.reduce(&CoreEvent::MessageAdded(updated));
+    assert_eq!(state.chat(77).unwrap().unread_count, 5);
+}
+
+#[test]
+fn outgoing_message_does_not_increment_unread() {
+    let mut state = CoreState::default();
+    state.account.chats.push(ChatSummary {
+        id: 77,
+        title: "existing".into(),
+        unread_count: 4,
+        last_message: None,
+    });
+
+    let mut outgoing = message(11, 101);
+    outgoing.outgoing = true;
+    state.reduce(&CoreEvent::MessageAdded(outgoing));
+
+    assert_eq!(state.chat(77).unwrap().unread_count, 4);
+}
+
+#[test]
+fn unread_increment_saturates_at_u32_max() {
+    let mut state = CoreState::default();
+    state.account.chats.push(ChatSummary {
+        id: 77,
+        title: "existing".into(),
+        unread_count: u32::MAX,
+        last_message: None,
+    });
+
+    state.reduce(&CoreEvent::MessageAdded(message(12, 102)));
+
+    assert_eq!(state.chat(77).unwrap().unread_count, u32::MAX);
+}
+
+#[test]
 fn message_cache_is_bounded_to_mobile_limit() {
     let mut state = CoreState::default();
 
