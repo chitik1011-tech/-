@@ -6,6 +6,7 @@ pub mod error;
 pub mod event;
 pub mod mock;
 pub mod model;
+pub mod outgoing;
 pub mod runtime;
 pub mod state;
 pub mod storage;
@@ -20,7 +21,10 @@ pub use error::{CoreError, Result};
 pub use event::CoreEvent;
 pub use mock::MockTelegramBackend;
 pub use model::{AccountState, AuthorizationState, ChatSummary, MessageSummary};
+pub use outgoing::{
+    OutgoingMessage, OutgoingMessageCommand, OutgoingMessageStatus, MAX_CLIENT_MESSAGE_ID_LENGTH,
+};
 pub use runtime::{spawn_core, spawn_core_with_store, CoreHandle, PERSISTENCE_FLUSH_INTERVAL_MS};
 pub use state::{CoreState, MAX_CACHED_MESSAGES_PER_CHAT};
 pub use storage::{JsonFileStateStore, MemoryStateStore, NoopStateStore, StateStore};
-pub use wire::{decode_command, encode_event, encode_state};
+pub use wire::{decode_command, decode_outgoing_command, encode_event, encode_state};
