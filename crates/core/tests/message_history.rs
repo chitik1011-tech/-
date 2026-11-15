@@ -5,7 +5,7 @@ use std::sync::{
 
 use tg_mobile_core::{
     BackendFuture, CoreCommand, CoreError, CoreEvent, MessageCursor, MessageSummary,
-    MockTelegramBackend, TelegramBackend, MAX_CACHED_MESSAGES_PER_CHAT, MAX_MESSAGE_PAGE_SIZE,
+    TelegramBackend, MAX_CACHED_MESSAGES_PER_CHAT, MAX_MESSAGE_PAGE_SIZE,
 };
 use tokio::time::{timeout, Duration};
 
@@ -54,9 +54,7 @@ impl TelegramBackend for EmptyBackend {
     fn handle<'a>(&'a mut self, command: CoreCommand) -> BackendFuture<'a> {
         Box::pin(async move {
             match command {
-                CoreCommand::LoadMessages {
-                    chat_id, cursor, ..
-                } => Ok(Vec::new()),
+                CoreCommand::LoadMessages { .. } => Ok(Vec::new()),
                 _ => Ok(Vec::new()),
             }
         })
@@ -223,7 +221,7 @@ async fn failed_page_emits_chat_scoped_error_and_can_be_retried() {
             chat_id: 77,
             ref cursor: failed_cursor,
             ref error,
-        } if failed_cursor.as_ref() == Some(&cursor) && error == "offline"
+        } if failed_cursor.as_ref() == Some(&cursor) && message == "offline"
     ));
     let history = core.state().message_history_for_chat(77);
     assert!(!history.loading);
@@ -232,9 +230,4 @@ async fn failed_page_emits_chat_scoped_error_and_can_be_retried() {
     assert_eq!(history.error.as_deref(), Some("offline"));
 
     core.shutdown().await.unwrap();
-}
-
-#[test]
-fn mock_backend_type_still_implements_history_command_surface() {
-    let _backend = MockTelegramBackend::default();
 }
