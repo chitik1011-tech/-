@@ -31,6 +31,14 @@ impl CoreHandle {
         self.send(decode_command(input)?).await
     }
 
+    pub async fn shutdown(&self) -> Result<()> {
+        self.send(CoreCommand::Shutdown).await
+    }
+
+    pub fn is_closed(&self) -> bool {
+        self.commands.is_closed()
+    }
+
     pub fn subscribe(&self) -> broadcast::Receiver<CoreEvent> {
         self.events.subscribe()
     }
@@ -113,7 +121,7 @@ where
                     break;
                 }
                 RuntimeInput::Update(Some(Ok(event))) => {
-                    let stopped = matches!(event, CoreEvent::Stopped);
+                    let stopped = event.is_terminal();
                     apply_event(event, &store, &mut reduced_state, &state_tx, &event_tx_task).await;
 
                     if stopped {
@@ -198,7 +206,7 @@ async fn apply_events<S: StateStore>(
     let mut stopped = false;
 
     for event in events {
-        stopped |= matches!(event, CoreEvent::Stopped);
+        stopped |= event.is_terminal();
         apply_event(event, store, state, state_tx, event_tx).await;
     }
 
