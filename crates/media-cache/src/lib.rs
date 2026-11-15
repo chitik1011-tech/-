@@ -138,6 +138,29 @@ impl MediaCache {
         })
     }
 
+    /// Remove one completed cache entry by its opaque reference.
+    ///
+    /// Temporary files are not considered entries, and a leased file is never removed.
+    pub fn remove(&self, reference: &str) -> Result<bool, CacheError> {
+        let key = cache_key(reference);
+        let path = self.final_path(&key);
+        let mut state = self.lock_state()?;
+        if state.leases.get(&key).copied().unwrap_or(0) > 0 {
+            return Err(CacheError::InUse);
+        }
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) if metadata.file_type().is_file() => metadata,
+            Ok(_) => return Ok(false),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(error.into()),
+        };
+        let _ = metadata;
+        self.ensure_confined(&path)?;
+        fs::remove_file(path)?;
+        state.last_access.remove(&key);
+        Ok(true)
+    }
+
     /// Current total bytes occupied by regular cache files.
     pub fn used_bytes(&self) -> Result<u64, CacheError> {
         Ok(self.entries()?.iter().map(|entry| entry.size).sum())
@@ -461,6 +484,23 @@ mod tests {
             .expect("hit");
         assert_eq!(lease.path(), second.path());
         assert_eq!(cache.used_bytes().expect("size"), 11);
+    }
+
+    #[test]
+    fn explicit_removal_is_confined_and_respects_leases() {
+        let (_dir, cache) = cache(128);
+        let mut writer = cache.begin_write("../unsafe-name").expect("writer");
+        writer.write_all(b"safe").expect("write");
+        let lease = writer.commit().expect("commit");
+        assert!(lease.path().starts_with(cache.inner.root.as_path()));
+        assert!(matches!(
+            cache.remove("../unsafe-name"),
+            Err(CacheError::InUse)
+        ));
+        drop(lease);
+        assert!(cache.remove("../unsafe-name").expect("remove"));
+        assert!(cache.get("../unsafe-name").expect("get").is_none());
+        assert!(!cache.remove("../unsafe-name").expect("second remove"));
     }
 
     #[test]

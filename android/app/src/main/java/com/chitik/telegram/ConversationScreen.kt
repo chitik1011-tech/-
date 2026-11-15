@@ -1,13 +1,18 @@
 package com.chitik.telegram
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -23,6 +28,7 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
@@ -36,14 +42,19 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import coil3.compose.AsyncImage
 import kotlin.math.roundToInt
 
 data class ConversationPollOptionUi(
@@ -80,6 +91,7 @@ data class ConversationMessageUi(
     val text: String,
     val timestamp: String,
     val isOutgoing: Boolean,
+    val attachments: List<MediaAttachmentUi> = emptyList(),
     val poll: ConversationPollUi? = null,
     val pollVoting: Boolean = false,
     val pollError: String? = null,
@@ -108,9 +120,13 @@ fun ConversationScreen(
     onSend: (chatId: String, text: String) -> Unit,
     onPollVote: (poll: ConversationPollUi, optionIds: List<List<Int>>) -> Unit,
     onRetry: () -> Unit,
+    onDownloadMedia: (messageId: Long, attachmentIndex: Int, retry: Boolean) -> Unit,
+    onCancelMedia: (messageId: Long, attachmentIndex: Int) -> Unit,
+    onOpenDocument: (MediaAttachmentUi) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val listState = rememberLazyListState()
+    var viewerKey by rememberSaveable { mutableStateOf<String?>(null) }
     val contentMode = resolveAsyncContentMode(
         isLoading = state.loading,
         isEmpty = state.messages.isEmpty(),
@@ -213,6 +229,20 @@ fun ConversationScreen(
                             MessageBubble(
                                 message = message,
                                 onPollVote = onPollVote,
+                                onDownloadMedia = { attachmentIndex, retry ->
+                                    message.id.toLongOrNull()?.let { messageId ->
+                                        onDownloadMedia(messageId, attachmentIndex, retry)
+                                    }
+                                },
+                                onCancelMedia = { attachmentIndex ->
+                                    message.id.toLongOrNull()?.let { messageId ->
+                                        onCancelMedia(messageId, attachmentIndex)
+                                    }
+                                },
+                                onOpenViewer = { attachment ->
+                                    viewerKey = "${message.id}:${attachment.index}"
+                                },
+                                onOpenDocument = onOpenDocument,
                             )
                         }
 
@@ -236,12 +266,40 @@ fun ConversationScreen(
             }
         }
     }
+
+    val viewerSelection = remember(state.messages, viewerKey) {
+        val key = viewerKey ?: return@remember null
+        val separator = key.lastIndexOf(':')
+        if (separator <= 0) return@remember null
+        val messageId = key.substring(0, separator)
+        val attachmentIndex = key.substring(separator + 1).toIntOrNull() ?: return@remember null
+        state.messages
+            .firstOrNull { it.id == messageId }
+            ?.attachments
+            ?.firstOrNull { it.index == attachmentIndex }
+            ?.let { attachment -> messageId.toLongOrNull()?.let { it to attachment } }
+    }
+
+    viewerSelection?.let { (messageId, attachment) ->
+        MediaViewerDialog(
+            attachment = attachment,
+            onDismiss = { viewerKey = null },
+            onRetry = {
+                onDownloadMedia(messageId, attachment.index, true)
+                viewerKey = null
+            },
+        )
+    }
 }
 
 @Composable
 private fun MessageBubble(
     message: ConversationMessageUi,
     onPollVote: (ConversationPollUi, List<List<Int>>) -> Unit,
+    onDownloadMedia: (attachmentIndex: Int, retry: Boolean) -> Unit,
+    onCancelMedia: (attachmentIndex: Int) -> Unit,
+    onOpenViewer: (MediaAttachmentUi) -> Unit,
+    onOpenDocument: (MediaAttachmentUi) -> Unit,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -267,6 +325,17 @@ private fun MessageBubble(
             },
         ) {
             Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                message.attachments.forEach { attachment ->
+                    MediaAttachmentCard(
+                        attachment = attachment,
+                        onDownload = { retry -> onDownloadMedia(attachment.index, retry) },
+                        onCancel = { onCancelMedia(attachment.index) },
+                        onOpenViewer = { onOpenViewer(attachment) },
+                        onOpenDocument = { onOpenDocument(attachment) },
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
+
                 if (message.text.isNotBlank()) {
                     Text(
                         text = message.text,
@@ -462,6 +531,302 @@ internal fun pollPercent(voterCount: Int?, totalVoters: Int?): Int? {
     return ((votes.toDouble() / total.toDouble()) * 100.0)
         .roundToInt()
         .coerceIn(0, 100)
+}
+
+@Composable
+private fun MediaAttachmentCard(
+    attachment: MediaAttachmentUi,
+    onDownload: (retry: Boolean) -> Unit,
+    onCancel: () -> Unit,
+    onOpenViewer: () -> Unit,
+    onOpenDocument: () -> Unit,
+) {
+    when (attachment.kind) {
+        MediaKindUi.Photo -> PhotoAttachmentCard(
+            attachment = attachment,
+            onDownload = onDownload,
+            onCancel = onCancel,
+            onOpen = onOpenViewer,
+        )
+
+        MediaKindUi.Video,
+        MediaKindUi.VideoNote,
+        -> VideoAttachmentCard(
+            attachment = attachment,
+            onDownload = onDownload,
+            onCancel = onCancel,
+            onOpen = onOpenViewer,
+        )
+
+        else -> DocumentAttachmentCard(
+            attachment = attachment,
+            onDownload = onDownload,
+            onCancel = onCancel,
+            onOpen = onOpenDocument,
+        )
+    }
+}
+
+@Composable
+private fun PhotoAttachmentCard(
+    attachment: MediaAttachmentUi,
+    onDownload: (retry: Boolean) -> Unit,
+    onCancel: () -> Unit,
+    onOpen: () -> Unit,
+) {
+    val file = attachment.downloadedFile
+    var decodeFailed by remember(file?.absolutePath) { mutableStateOf(false) }
+    val ratio = attachment.aspectRatio?.coerceIn(0.25f, 4f) ?: (4f / 3f)
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .aspectRatio(ratio)
+            .heightIn(min = 120.dp, max = 360.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.35f))
+            .clickable(enabled = file != null && !decodeFailed, onClick = onOpen),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (file != null && !decodeFailed) {
+            AsyncImage(
+                model = file,
+                contentDescription = "Фото",
+                contentScale = ContentScale.Crop,
+                onSuccess = { decodeFailed = false },
+                onError = { decodeFailed = true },
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
+            )
+        } else {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+            ) {
+                Text(if (decodeFailed) "Изображение повреждено" else "Фото")
+            }
+        }
+
+        MediaTransferOverlay(
+            attachment = attachment,
+            localFileMissing = attachment.downloadState is MediaDownloadUiState.Downloaded && file == null,
+            localDecodeFailed = decodeFailed,
+            onDownload = onDownload,
+            onCancel = onCancel,
+        )
+    }
+}
+
+@Composable
+private fun VideoAttachmentCard(
+    attachment: MediaAttachmentUi,
+    onDownload: (retry: Boolean) -> Unit,
+    onCancel: () -> Unit,
+    onOpen: () -> Unit,
+) {
+    val file = attachment.downloadedFile
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(180.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color.Black.copy(alpha = 0.72f))
+            .clickable(enabled = file != null, onClick = onOpen),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(
+                text = if (file != null) "▶" else "Видео",
+                style = MaterialTheme.typography.headlineMedium,
+                color = Color.White,
+            )
+            formatMediaDuration(attachment.durationMs)?.let {
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Color.White,
+                )
+            }
+        }
+
+        MediaTransferOverlay(
+            attachment = attachment,
+            localFileMissing = attachment.downloadState is MediaDownloadUiState.Downloaded && file == null,
+            onDownload = onDownload,
+            onCancel = onCancel,
+        )
+    }
+}
+
+@Composable
+private fun DocumentAttachmentCard(
+    attachment: MediaAttachmentUi,
+    onDownload: (retry: Boolean) -> Unit,
+    onCancel: () -> Unit,
+    onOpen: () -> Unit,
+) {
+    val file = attachment.downloadedFile
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(enabled = file != null, onClick = onOpen),
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.38f),
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(
+                text = sanitizeDisplayFilename(attachment.filename),
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            val details = listOfNotNull(
+                formatMediaSize(attachment.sizeBytes),
+                attachment.mimeType?.takeIf { it.isNotBlank() },
+                formatMediaDuration(attachment.durationMs),
+            ).joinToString(" • ")
+            if (details.isNotBlank()) {
+                Text(
+                    text = details,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (file != null) {
+                Text(
+                    text = "Нажмите, чтобы открыть",
+                    style = MaterialTheme.typography.labelMedium,
+                )
+            }
+            MediaTransferControls(
+                attachment = attachment,
+                localFileMissing = attachment.downloadState is MediaDownloadUiState.Downloaded && file == null,
+                onDownload = onDownload,
+                onCancel = onCancel,
+            )
+        }
+    }
+}
+
+@Composable
+private fun MediaTransferOverlay(
+    attachment: MediaAttachmentUi,
+    localFileMissing: Boolean,
+    localDecodeFailed: Boolean = false,
+    onDownload: (retry: Boolean) -> Unit,
+    onCancel: () -> Unit,
+) {
+    val showOverlay = attachment.downloadState !is MediaDownloadUiState.Downloaded ||
+        localFileMissing ||
+        localDecodeFailed
+    if (!showOverlay) return
+
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = Color.Black.copy(alpha = 0.56f),
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            MediaTransferControls(
+                attachment = attachment,
+                localFileMissing = localFileMissing,
+                localDecodeFailed = localDecodeFailed,
+                onDownload = onDownload,
+                onCancel = onCancel,
+                lightContent = true,
+            )
+        }
+    }
+}
+
+@Composable
+private fun MediaTransferControls(
+    attachment: MediaAttachmentUi,
+    localFileMissing: Boolean,
+    localDecodeFailed: Boolean = false,
+    onDownload: (retry: Boolean) -> Unit,
+    onCancel: () -> Unit,
+    lightContent: Boolean = false,
+) {
+    val textColor = if (lightContent) Color.White else MaterialTheme.colorScheme.onSurface
+    Column(
+        modifier = Modifier.padding(10.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        when (val download = attachment.downloadState) {
+            MediaDownloadUiState.NotDownloaded -> {
+                Button(onClick = { onDownload(false) }) {
+                    Text("Скачать")
+                }
+            }
+
+            MediaDownloadUiState.Queued -> {
+                CircularProgressIndicator(modifier = Modifier.width(28.dp))
+                Text("В очереди", color = textColor)
+                TextButton(onClick = onCancel) { Text("Отмена") }
+            }
+
+            is MediaDownloadUiState.Downloading -> {
+                val total = download.totalBytes
+                val fraction = total
+                    ?.takeIf { it > 0L }
+                    ?.let { (download.bytesTransferred.toDouble() / it).coerceIn(0.0, 1.0).toFloat() }
+                if (fraction != null) {
+                    LinearProgressIndicator(
+                        progress = { fraction },
+                        modifier = Modifier.fillMaxWidth(0.72f),
+                    )
+                    Text("${(fraction * 100).toInt()}%", color = textColor)
+                } else {
+                    CircularProgressIndicator(modifier = Modifier.width(28.dp))
+                    Text(
+                        formatMediaSize(download.bytesTransferred) ?: "Загрузка…",
+                        color = textColor,
+                    )
+                }
+                TextButton(onClick = onCancel) { Text("Отмена") }
+            }
+
+            is MediaDownloadUiState.Failed -> {
+                Text(download.reason ?: "Не удалось скачать", color = textColor)
+                Button(onClick = { onDownload(true) }) {
+                    Text("Повторить")
+                }
+            }
+
+            MediaDownloadUiState.Cancelled -> {
+                Text("Загрузка отменена", color = textColor)
+                Button(onClick = { onDownload(true) }) {
+                    Text("Повторить")
+                }
+            }
+
+            is MediaDownloadUiState.Downloaded -> {
+                if (localFileMissing || localDecodeFailed) {
+                    Text(
+                        if (localDecodeFailed) "Файл не удалось прочитать" else "Файл удалён из кэша",
+                        color = textColor,
+                    )
+                    Button(onClick = { onDownload(localDecodeFailed) }) {
+                        Text("Скачать заново")
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable

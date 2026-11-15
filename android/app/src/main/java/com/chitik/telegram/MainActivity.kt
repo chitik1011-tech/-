@@ -1,6 +1,7 @@
 package com.chitik.telegram
 
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -26,6 +27,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -70,6 +72,7 @@ private fun TelegramRustApp(
     viewModel: NativeSessionViewModel = viewModel(),
 ) {
     val state by viewModel.state.collectAsState()
+    val context = LocalContext.current
     var selectedChatId by rememberSaveable { mutableLongStateOf(0L) }
     var draft by rememberSaveable { mutableStateOf("") }
     var confirmedJoinIntent by remember(incomingLink) { mutableStateOf<TelegramJoinInviteIntent?>(null) }
@@ -146,6 +149,46 @@ private fun TelegramRustApp(
                 },
                 onPollVote = viewModel::votePoll,
                 onRetry = { viewModel.loadMessages(selectedChatId) },
+                onDownloadMedia = { messageId, attachmentIndex, retry ->
+                    viewModel.downloadMedia(
+                        chatId = selectedChatId,
+                        messageId = messageId,
+                        attachmentIndex = attachmentIndex,
+                        retry = retry,
+                    )
+                },
+                onCancelMedia = { messageId, attachmentIndex ->
+                    viewModel.cancelMediaDownload(
+                        chatId = selectedChatId,
+                        messageId = messageId,
+                        attachmentIndex = attachmentIndex,
+                    )
+                },
+                onOpenDocument = { attachment ->
+                    when (MediaFileOpener.open(context, attachment)) {
+                        OpenMediaResult.Opened -> Unit
+                        OpenMediaResult.MissingFile -> Toast.makeText(
+                            context,
+                            "Файл больше не находится в кэше",
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                        OpenMediaResult.UnsafePath -> Toast.makeText(
+                            context,
+                            "Открытие файла заблокировано",
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                        OpenMediaResult.NoHandler -> Toast.makeText(
+                            context,
+                            "Нет приложения для этого типа файла",
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                        is OpenMediaResult.Failed -> Toast.makeText(
+                            context,
+                            "Не удалось открыть файл",
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                },
             )
         }
     }

@@ -178,7 +178,12 @@ impl AttachmentThumbnail {
 pub enum AttachmentDownloadState {
     #[default]
     NotDownloaded,
-    Downloading,
+    Queued,
+    Downloading {
+        bytes_transferred: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        total_bytes: Option<u64>,
+    },
     Downloaded {
         local_path: PathBuf,
     },
@@ -186,6 +191,7 @@ pub enum AttachmentDownloadState {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reason: Option<String>,
     },
+    Cancelled,
 }
 
 /// Backend-neutral metadata for one Telegram attachment.
