@@ -10,7 +10,7 @@ use crate::ids::{PeerClass, encode_peer};
 const POLL_REGISTRY_CAPACITY: usize = MAX_CACHED_POLLS;
 
 #[derive(Debug, Default)]
-struct PollRegistryState {
+pub(crate) struct PollRegistryState {
     polls: HashMap<i64, PollSummary>,
     order: VecDeque<i64>,
 }
@@ -65,7 +65,7 @@ pub(crate) fn poll_from_message(message: &Message) -> tg_mobile_core::Result<Opt
     };
 
     let chat_id = crate::ids::peer_id_to_core(message.peer_id());
-    let mut summary = poll_summary_from_raw(
+    let summary = poll_summary_from_raw(
         chat_id,
         i64::from(message.id()),
         &poll.raw,
@@ -121,7 +121,7 @@ pub(crate) async fn poll_from_update(
 
     let explicit_identity = match (&update.peer, update.msg_id) {
         (Some(peer), Some(message_id)) => {
-            raw_peer_to_core(peer).map(|chat_id| (chat_id, i64::from(message_id)))
+            Some((raw_peer_to_core(peer), i64::from(message_id)))
         }
         _ => None,
     };
@@ -225,12 +225,11 @@ fn text_with_entities_text(text: &tl::enums::TextWithEntities) -> &str {
     }
 }
 
-fn raw_peer_to_core(peer: &tl::enums::Peer) -> Option<i64> {
+fn raw_peer_to_core(peer: &tl::enums::Peer) -> i64 {
     match peer {
-        tl::enums::Peer::User(peer) => Some(encode_peer(PeerClass::User, peer.user_id)),
-        tl::enums::Peer::Chat(peer) => Some(encode_peer(PeerClass::Chat, peer.chat_id)),
-        tl::enums::Peer::Channel(peer) => Some(encode_peer(PeerClass::Channel, peer.channel_id)),
-        _ => None,
+        tl::enums::Peer::User(peer) => encode_peer(PeerClass::User, peer.user_id),
+        tl::enums::Peer::Chat(peer) => encode_peer(PeerClass::Chat, peer.chat_id),
+        tl::enums::Peer::Channel(peer) => encode_peer(PeerClass::Channel, peer.channel_id),
     }
 }
 
