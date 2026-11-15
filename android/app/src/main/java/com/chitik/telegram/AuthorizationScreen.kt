@@ -96,6 +96,13 @@ fun AuthorizationScreen(
         state.authorization == AuthorizationUiStep.WaitingForCode ||
         state.authorization == AuthorizationUiStep.WaitingForPassword
 
+    LaunchedEffect(state.isTelegramConfigured) {
+        if (state.isTelegramConfigured) {
+            apiId = ""
+            apiHash = ""
+        }
+    }
+
     BackHandler(enabled = true) {
         keyboard?.hide()
         onBack()
