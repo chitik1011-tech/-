@@ -32,8 +32,7 @@ impl TelegramBackend for PagedBackend {
                         .min(self.messages.len());
                     let start = end.saturating_sub(limit);
                     let messages = self.messages[start..end].to_vec();
-                    let next_cursor =
-                        (start > 0).then(|| MessageCursor::new(start.to_string()));
+                    let next_cursor = (start > 0).then(|| MessageCursor::new(start.to_string()));
                     let has_more = next_cursor.is_some();
                     Ok(vec![CoreEvent::MessagesLoaded {
                         chat_id,
@@ -189,9 +188,7 @@ async fn failed_page_emits_chat_scoped_error_and_can_be_retried() {
         fn handle<'a>(&'a mut self, command: CoreCommand) -> BackendFuture<'a> {
             Box::pin(async move {
                 match command {
-                    CoreCommand::LoadMessages { .. } => {
-                        Err(CoreError::Backend("offline".into()))
-                    }
+                    CoreCommand::LoadMessages { .. } => Err(CoreError::Backend("offline".into())),
                     _ => Ok(Vec::new()),
                 }
             })
