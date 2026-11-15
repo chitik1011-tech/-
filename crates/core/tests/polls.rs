@@ -7,6 +7,7 @@ const CHAT_ID: i64 = 42;
 fn option(text: &str, voters: Option<u32>, chosen: bool) -> PollOption {
     PollOption {
         text: text.to_owned(),
+        option_id: text.as_bytes().to_vec(),
         voter_count: voters,
         chosen,
         correct: None,
@@ -28,6 +29,7 @@ fn poll(id: i64, message_id: i64) -> PollSummary {
         multiple_choice: false,
         quiz: false,
         closed: false,
+        explanation: None,
     }
 }
 
@@ -290,4 +292,54 @@ fn older_persisted_state_defaults_to_no_polls() {
     let decoded: CoreState = serde_json::from_value(json).unwrap();
 
     assert!(decoded.polls.is_empty());
+}
+
+
+#[test]
+fn vote_selection_validates_single_and_multiple_choice() {
+    let single = poll(10, 20);
+    assert!(single
+        .validate_vote_selection(&[b"Pizza".to_vec()])
+        .is_ok());
+    assert!(single
+        .validate_vote_selection(&[b"Pizza".to_vec(), b"Soup".to_vec()])
+        .is_err());
+
+    let mut multiple = poll(11, 21);
+    multiple.multiple_choice = true;
+    assert!(multiple
+        .validate_vote_selection(&[b"Pizza".to_vec(), b"Soup".to_vec()])
+        .is_ok());
+}
+
+#[test]
+fn vote_selection_rejects_invalid_option_and_closed_poll() {
+    let poll = poll(12, 22);
+    assert!(poll
+        .validate_vote_selection(&[b"Unknown".to_vec()])
+        .is_err());
+
+    let mut closed = poll(13, 23);
+    closed.closed = true;
+    assert!(closed
+        .validate_vote_selection(&[b"Pizza".to_vec()])
+        .is_err());
+}
+
+#[test]
+fn legacy_poll_without_option_ids_and_explanation_still_deserializes() {
+    let mut json = serde_json::to_value(poll(14, 24)).unwrap();
+    let object = json.as_object_mut().unwrap();
+    object.remove("explanation");
+    for option in object["options"].as_array_mut().unwrap() {
+        option.as_object_mut().unwrap().remove("option_id");
+    }
+
+    let restored: PollSummary = serde_json::from_value(json).unwrap();
+    assert!(restored.options.iter().all(|option| option.option_id.is_empty()));
+    assert_eq!(restored.explanation, None);
+    assert!(restored.validate().is_ok());
+    assert!(restored
+        .validate_vote_selection(&[b"Pizza".to_vec()])
+        .is_err());
 }
