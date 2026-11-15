@@ -78,6 +78,27 @@ impl CoreState {
 
                 self.last_error = None;
             }
+            CoreEvent::ChatRead {
+                chat_id,
+                max_message_id,
+            } => {
+                if let Some(chat) = self
+                    .account
+                    .chats
+                    .iter_mut()
+                    .find(|chat| chat.id == *chat_id)
+                {
+                    let covers_latest = chat
+                        .last_message
+                        .as_ref()
+                        .map(|message| message.id <= *max_message_id)
+                        .unwrap_or(true);
+                    if covers_latest {
+                        chat.unread_count = 0;
+                    }
+                }
+                self.last_error = None;
+            }
             CoreEvent::MessageAdded(message) => {
                 let inserted = self.upsert_message(message.clone());
 
