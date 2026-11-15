@@ -40,15 +40,25 @@ impl CoreCommand {
             Self::SetPhoneNumber(value) => require_non_blank("phone number", value),
             Self::SubmitCode(value) => require_non_blank("login code", value),
             Self::SubmitPassword(password) => {
-                if password.is_empty() { Err(CoreError::InvalidInput("password is empty".into())) } else { Ok(()) }
+                if password.is_empty() {
+                    Err(CoreError::InvalidInput("password is empty".into()))
+                } else {
+                    Ok(())
+                }
             }
             Self::LoadChats { limit } => {
-                if (1..=MAX_CHAT_LOAD_LIMIT).contains(limit) { Ok(()) } else {
-                    Err(CoreError::InvalidInput(format!("chat load limit must be in 1..={MAX_CHAT_LOAD_LIMIT}")))
+                if (1..=MAX_CHAT_LOAD_LIMIT).contains(limit) {
+                    Ok(())
+                } else {
+                    Err(CoreError::InvalidInput(format!(
+                        "chat load limit must be in 1..={MAX_CHAT_LOAD_LIMIT}"
+                    )))
                 }
             }
             Self::SendText { chat_id, text } => {
-                if *chat_id == 0 { return Err(CoreError::InvalidInput("chat id must be non-zero".into())); }
+                if *chat_id == 0 {
+                    return Err(CoreError::InvalidInput("chat id must be non-zero".into()));
+                }
                 require_non_blank("message text", text)
             }
             Self::ForwardMessages(request) => request.validate(),
