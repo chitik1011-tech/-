@@ -30,9 +30,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import java.time.Instant
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
 
 /**
  * UI projection of a Rust ChatSummary and its optional last MessageSummary.
@@ -281,7 +278,7 @@ private fun ChatListRow(
                     chat.lastMessage?.let { preview ->
                         Spacer(Modifier.width(8.dp))
                         Text(
-                            text = formatChatTime(preview.timestampUnix),
+                            text = MessageTimestampFormatter.format(preview.timestampUnix),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -318,13 +315,4 @@ private fun ChatListRow(
             }
         }
     }
-}
-
-private fun formatChatTime(timestampUnix: Long): String {
-    if (timestampUnix <= 0L) return ""
-    return runCatching {
-        DateTimeFormatter.ofPattern("HH:mm")
-            .withZone(ZoneId.systemDefault())
-            .format(Instant.ofEpochSecond(timestampUnix))
-    }.getOrDefault("")
 }
