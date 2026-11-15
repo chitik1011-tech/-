@@ -186,3 +186,133 @@ impl CoreState {
         inserted
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::{CoreState, MAX_CACHED_MESSAGES_PER_CHAT};
+    use crate::{CoreEvent, MessageCursor, MessageSummary};
+
+    fn message(id: i64, text: &str) -> MessageSummary {
+        MessageSummary {
+            id,
+            chat_id: 7,
+            sender_id: 3,
+            text: text.into(),
+            timestamp_unix: id,
+            outgoing: false,
+        }
+    }
+
+    #[test]
+    fn pages_merge_chronologically_and_deduplicate_by_message_id() {
+        let mut state = CoreState::default();
+        let cursor = MessageCursor::new("before-3");
+
+        state.reduce(&CoreEvent::MessagesLoading {
+            chat_id: 7,
+            cursor: None,
+        });
+        state.reduce(&CoreEvent::MessagesLoaded {
+            chat_id: 7,
+            cursor: None,
+            messages: vec![message(3, "three"), message(2, "two")],
+            next_cursor: Some(cursor.clone()),
+            has_more: true,
+        });
+        state.reduce(&CoreEvent::MessagesLoading {
+            chat_id: 7,
+            cursor: Some(cursor.clone()),
+        });
+        state.reduce(&CoreEvent::MessagesLoaded {
+            chat_id: 7,
+            cursor: Some(cursor),
+            messages: vec![message(1, "one"), message(2, "two-updated")],
+            next_cursor: None,
+            has_more: true,
+        });
+
+        let messages = state.messages_for_chat(7);
+        assert_eq!(messages.iter().map(|item| item.id).collect::<Vec<_>>(), [1, 2, 3]);
+        assert_eq!(messages[1].text, "two-updated");
+
+        let history = state.message_history_for_chat(7);
+        assert!(!history.loading);
+        assert!(!history.has_more);
+        assert_eq!(history.next_cursor, None);
+        assert_eq!(history.error, None);
+    }
+
+    #[test]
+    fn empty_page_finishes_loading_and_stops_pagination() {
+        let mut state = CoreState::default();
+        let cursor = MessageCursor::new("cursor-1");
+        state.reduce(&CoreEvent::MessagesLoading {
+            chat_id: 7,
+            cursor: Some(cursor.clone()),
+        });
+        state.reduce(&CoreEvent::MessagesLoaded {
+            chat_id: 7,
+            cursor: Some(cursor),
+            messages: Vec::new(),
+            next_cursor: Some(MessageCursor::new("cursor-2")),
+            has_more: true,
+        });
+
+        let history = state.message_history_for_chat(7);
+        assert!(!history.loading);
+        assert!(!history.has_more);
+        assert_eq!(history.next_cursor, None);
+    }
+
+    #[test]
+    fn older_pages_keep_the_cache_bounded_and_preserve_the_older_window() {
+        let mut state = CoreState::default();
+        let latest: Vec<_> = (512..1024).map(|id| message(id, "latest")).collect();
+        state.reduce(&CoreEvent::MessagesLoaded {
+            chat_id: 7,
+            cursor: None,
+            messages: latest,
+            next_cursor: Some(MessageCursor::new("512")),
+            has_more: true,
+        });
+        let older: Vec<_> = (0..100).map(|id| message(id, "older")).collect();
+        state.reduce(&CoreEvent::MessagesLoaded {
+            chat_id: 7,
+            cursor: Some(MessageCursor::new("512")),
+            messages: older,
+            next_cursor: Some(MessageCursor::new("0")),
+            has_more: true,
+        });
+
+        let messages = state.messages_for_chat(7);
+        assert_eq!(messages.len(), MAX_CACHED_MESSAGES_PER_CHAT);
+        assert_eq!(messages.first().map(|item| item.id), Some(0));
+        assert_eq!(
+            messages.last().map(|item| item.id),
+            Some(MAX_CACHED_MESSAGES_PER_CHAT as i64 - 1)
+        );
+        assert!(messages.windows(2).all(|pair| pair[0].timestamp_unix <= pair[1].timestamp_unix));
+    }
+
+    #[test]
+    fn history_failure_clears_loading_and_keeps_cursor_retryable() {
+        let mut state = CoreState::default();
+        let cursor = MessageCursor::new("cursor-1");
+        state.reduce(&CoreEvent::MessagesLoading {
+            chat_id: 7,
+            cursor: Some(cursor.clone()),
+        });
+        state.reduce(&CoreEvent::MessageHistoryLoadFailed {
+            chat_id: 7,
+            cursor: Some(cursor.clone()),
+            error: "offline".into(),
+        });
+
+        let history = state.message_history_for_chat(7);
+        assert!(!history.loading);
+        assert!(history.has_more);
+        assert_eq!(history.error.as_deref(), Some("offline"));
+        assert_eq!(history.next_cursor, None);
+    }
+}
