@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-/** Opaque backend cursor for fetching the next older page of a chat history. */
+/// Opaque backend cursor for fetching the next older page of a chat history.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct MessageCursor(String);
@@ -14,7 +14,6 @@ impl MessageCursor {
         &self.0
     }
 }
-
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AuthorizationState {
@@ -44,7 +43,7 @@ pub struct MessageSummary {
     pub outgoing: bool,
 }
 
-/** Per-chat pagination state for backend-neutral message history. */
+/// Per-chat pagination state for backend-neutral message history.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MessageHistoryState {
     pub loading: bool,
