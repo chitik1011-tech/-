@@ -187,9 +187,12 @@ impl TelegramBackend for TypedForwardingBackend {
         Box::pin(async { Err(tg_mobile_core::CoreError::Backend("generic handler must not receive forward command".into())) })
     }
 
-    fn forward_messages<'a>(&'a mut self, request: ForwardMessagesRequest) -> BackendFuture<'a> {
+    fn forward_messages<'a>(
+        &'a mut self,
+        request: ForwardMessagesRequest,
+    ) -> tg_mobile_core::backend::ForwardMessagesFuture<'a> {
         Box::pin(async move {
-            Ok(vec![CoreEvent::MessagesForwarded(ForwardMessagesResult {
+            Ok(ForwardMessagesResult {
                 request_id: request.request_id,
                 destination_chat_id: request.destination_chat_id,
                 outcomes: vec![
@@ -197,7 +200,7 @@ impl TelegramBackend for TypedForwardingBackend {
                     ForwardOutcome::Forwarded { source: request.sources[1].clone(), destination_message_id: 999 },
                     ForwardOutcome::Failed { source: request.sources[0].clone(), error: "restricted".into() },
                 ],
-            })])
+            })
         })
     }
 }
