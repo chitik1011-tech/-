@@ -36,6 +36,7 @@ fn incoming_message(id: i64) -> MessageSummary {
         text: format!("incoming-{id}"),
         timestamp_unix: id,
         outgoing: false,
+        service: None,
     }
 }
 
