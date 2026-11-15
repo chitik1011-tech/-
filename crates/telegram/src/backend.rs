@@ -324,6 +324,12 @@ impl GrammersBackend {
             for attachment in &mut message.attachments {
                 match self.media_cache.get(&attachment.file_reference) {
                     Ok(Some(lease)) => {
+                        attachment.download_generation = self
+                            .transfers
+                            .get_by_key(TransferDirection::Download, &attachment.file_reference)
+                            .ok()
+                            .flatten()
+                            .map_or(0, |snapshot| snapshot.token.generation);
                         attachment.download_state = AttachmentDownloadState::Downloaded {
                             local_path: lease.path().to_path_buf(),
                         };
@@ -404,8 +410,14 @@ impl GrammersBackend {
             .get(&target.reference)
             .map_err(|error| CoreError::Backend(format!("media cache lookup failed: {error}")))?
         {
+            let generation = self
+                .transfers
+                .get_by_key(TransferDirection::Download, &target.reference)
+                .map_err(|error| CoreError::Backend(error.to_string()))?
+                .map_or(0, |snapshot| snapshot.token.generation);
             return Ok(vec![media_event(
                 &target,
+                generation,
                 AttachmentDownloadState::Downloaded {
                     local_path: lease.path().to_path_buf(),
                 },
@@ -421,6 +433,7 @@ impl GrammersBackend {
                 {
                     return Ok(vec![media_event(
                         &target,
+                        snapshot.token.generation,
                         state_from_snapshot(&snapshot, None),
                     )]);
                 }
@@ -474,6 +487,7 @@ impl GrammersBackend {
                 } else {
                     return Ok(vec![media_event(
                         &target,
+                        failed.generation,
                         AttachmentDownloadState::Failed {
                             reason: Some("previous download was interrupted".into()),
                         },
@@ -492,12 +506,14 @@ impl GrammersBackend {
             TransferState::Download(DownloadState::Failed) => {
                 return Ok(vec![media_event(
                     &target,
+                    snapshot.token.generation,
                     AttachmentDownloadState::Failed { reason: None },
                 )]);
             }
             TransferState::Download(DownloadState::Cancelled) => {
                 return Ok(vec![media_event(
                     &target,
+                    snapshot.token.generation,
                     AttachmentDownloadState::Cancelled,
                 )]);
             }
@@ -525,7 +541,11 @@ impl GrammersBackend {
             },
         );
 
-        Ok(vec![media_event(&target, AttachmentDownloadState::Queued)])
+        Ok(vec![media_event(
+            &target,
+            queued_token.generation,
+            AttachmentDownloadState::Queued,
+        )])
     }
 
     fn cancel_media_download(
@@ -548,20 +568,25 @@ impl GrammersBackend {
             reference: active.reference.clone(),
             total_bytes: None,
         };
+        let mut generation = 0;
         if let Some(snapshot) = self
             .transfers
             .get_by_key(TransferDirection::Download, &active.reference)
             .map_err(|error| CoreError::Backend(error.to_string()))?
         {
+            generation = snapshot.token.generation;
             if !snapshot.state.is_terminal() {
-                self.transfers
+                generation = self
+                    .transfers
                     .cancel(snapshot.token)
-                    .map_err(|error| CoreError::Backend(error.to_string()))?;
+                    .map_err(|error| CoreError::Backend(error.to_string()))?
+                    .generation;
             }
         }
 
         Ok(vec![media_event(
             &target,
+            generation,
             AttachmentDownloadState::Cancelled,
         )])
     }

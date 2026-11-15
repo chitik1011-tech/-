@@ -88,6 +88,8 @@ pub enum CoreEvent {
         chat_id: i64,
         message_id: i64,
         attachment_index: usize,
+        #[serde(default)]
+        generation: u64,
         state: AttachmentDownloadState,
     },
     MessagesDeleted {

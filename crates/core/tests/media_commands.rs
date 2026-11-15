@@ -23,6 +23,7 @@ fn message_with_photo() -> MessageSummary {
             duration_ms: None,
             filename: None,
             thumbnail: None,
+            download_generation: 0,
             download_state: AttachmentDownloadState::NotDownloaded,
         }],
         forwarded_from: None,
@@ -108,6 +109,7 @@ fn media_transfer_events_update_only_the_target_attachment() {
         chat_id: 42,
         message_id: 7,
         attachment_index: 0,
+        generation: 0,
         state: AttachmentDownloadState::Downloading {
             bytes_transferred: 25,
             total_bytes: Some(100),
@@ -126,6 +128,7 @@ fn media_transfer_events_update_only_the_target_attachment() {
         chat_id: 42,
         message_id: 7,
         attachment_index: 0,
+        generation: 0,
         state: AttachmentDownloadState::Downloaded {
             local_path: path.clone(),
         },
@@ -139,10 +142,62 @@ fn media_transfer_events_update_only_the_target_attachment() {
         chat_id: 42,
         message_id: 7,
         attachment_index: 0,
+        generation: 1,
         state: AttachmentDownloadState::NotDownloaded,
     });
     assert_eq!(
         state.messages_for_chat(42)[0].attachments[0].download_state,
         AttachmentDownloadState::NotDownloaded
+    );
+}
+
+#[test]
+fn stale_progress_cannot_overwrite_cancellation_or_a_newer_retry() {
+    let mut state = CoreState::default();
+    state.reduce(&CoreEvent::MessageAdded(message_with_photo()));
+
+    state.reduce(&CoreEvent::MediaTransferUpdated {
+        chat_id: 42,
+        message_id: 7,
+        attachment_index: 0,
+        generation: 2,
+        state: AttachmentDownloadState::Cancelled,
+    });
+    state.reduce(&CoreEvent::MediaTransferUpdated {
+        chat_id: 42,
+        message_id: 7,
+        attachment_index: 0,
+        generation: 1,
+        state: AttachmentDownloadState::Downloading {
+            bytes_transferred: 40,
+            total_bytes: Some(100),
+        },
+    });
+    assert_eq!(
+        state.messages_for_chat(42)[0].attachments[0].download_state,
+        AttachmentDownloadState::Cancelled
+    );
+
+    state.reduce(&CoreEvent::MediaTransferUpdated {
+        chat_id: 42,
+        message_id: 7,
+        attachment_index: 0,
+        generation: 3,
+        state: AttachmentDownloadState::Queued,
+    });
+    state.reduce(&CoreEvent::MediaTransferUpdated {
+        chat_id: 42,
+        message_id: 7,
+        attachment_index: 0,
+        generation: 2,
+        state: AttachmentDownloadState::Cancelled,
+    });
+    assert_eq!(
+        state.messages_for_chat(42)[0].attachments[0].download_state,
+        AttachmentDownloadState::Queued
+    );
+    assert_eq!(
+        state.messages_for_chat(42)[0].attachments[0].download_generation,
+        3
     );
 }

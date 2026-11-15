@@ -394,12 +394,14 @@ impl CoreState {
                 chat_id,
                 message_id,
                 attachment_index,
+                generation,
                 state,
             } => {
                 if self.update_attachment_download_state(
                     *chat_id,
                     *message_id,
                     *attachment_index,
+                    *generation,
                     state,
                 ) {
                     self.last_error = None;
@@ -697,6 +699,7 @@ impl CoreState {
         chat_id: i64,
         message_id: i64,
         attachment_index: usize,
+        generation: u64,
         state: &AttachmentDownloadState,
     ) -> bool {
         let mut updated = false;
@@ -706,7 +709,8 @@ impl CoreState {
             .and_then(|messages| messages.iter_mut().find(|message| message.id == message_id))
         {
             if let Some(attachment) = message.attachments.get_mut(attachment_index) {
-                if attachment.download_state != *state {
+                if accept_media_transfer_update(attachment, generation, state) {
+                    attachment.download_generation = generation;
                     attachment.download_state = state.clone();
                     updated = true;
                 }
@@ -725,7 +729,8 @@ impl CoreState {
                 .filter(|message| message.id == message_id)
             {
                 if let Some(attachment) = message.attachments.get_mut(attachment_index) {
-                    if attachment.download_state != *state {
+                    if accept_media_transfer_update(attachment, generation, state) {
+                        attachment.download_generation = generation;
                         attachment.download_state = state.clone();
                         updated = true;
                     }
@@ -858,6 +863,50 @@ impl CoreState {
 
         inserted
     }
+}
+
+fn accept_media_transfer_update(
+    attachment: &crate::model::MediaAttachment,
+    generation: u64,
+    incoming: &AttachmentDownloadState,
+) -> bool {
+    if generation < attachment.download_generation {
+        return false;
+    }
+    if generation > attachment.download_generation {
+        return true;
+    }
+
+    use AttachmentDownloadState as State;
+    let current = &attachment.download_state;
+    let rank = |state: &State| match state {
+        State::NotDownloaded => 0,
+        State::Queued => 1,
+        State::Downloading { .. } => 2,
+        State::Downloaded { .. } | State::Failed { .. } | State::Cancelled => 3,
+    };
+    if rank(incoming) < rank(current) {
+        return false;
+    }
+    if rank(current) == 3 && incoming != current {
+        return false;
+    }
+    if let (
+        State::Downloading {
+            bytes_transferred: old,
+            ..
+        },
+        State::Downloading {
+            bytes_transferred: new,
+            ..
+        },
+    ) = (current, incoming)
+    {
+        if new < old {
+            return false;
+        }
+    }
+    current != incoming
 }
 
 #[cfg(test)]

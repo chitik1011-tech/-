@@ -21,6 +21,7 @@ fn media(kind: AttachmentKind) -> MediaAttachment {
             width: Some(32),
             height: Some(24),
         }),
+        download_generation: 0,
         download_state: AttachmentDownloadState::NotDownloaded,
     }
 }
