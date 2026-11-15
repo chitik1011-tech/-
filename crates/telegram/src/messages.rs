@@ -1,7 +1,11 @@
 use std::collections::{HashSet, VecDeque};
 
-use grammers_client::message::Message;
-use tg_mobile_core::MessageSummary;
+use grammers_client::{
+    message::Message,
+    session::types::{PeerKind, PeerRef},
+    tl, Client,
+};
+use tg_mobile_core::{CoreError, MessageSummary};
 use tokio::sync::Mutex;
 
 use crate::{error::api_error, ids::peer_id_to_core};
@@ -38,8 +42,8 @@ fn message_summary_from_fields(fields: MessageFields<'_>) -> MessageSummary {
 }
 
 pub(crate) async fn load_messages(
-    client: &grammers_client::Client,
-    peer: grammers_client::session::types::PeerRef,
+    client: &Client,
+    peer: PeerRef,
     limit: usize,
 ) -> tg_mobile_core::Result<Vec<MessageSummary>> {
     let mut iterator = client.iter_messages(peer).limit(limit);
@@ -57,13 +61,41 @@ pub(crate) async fn load_messages(
     Ok(messages)
 }
 
+pub(crate) async fn mark_read(
+    client: &Client,
+    peer: PeerRef,
+    max_message_id: i64,
+) -> tg_mobile_core::Result<()> {
+    let max_id = i32::try_from(max_message_id)
+        .map_err(|_| CoreError::InvalidInput("max message id exceeds Telegram range".into()))?;
+
+    match peer.id.kind() {
+        PeerKind::Channel => {
+            let channel: tl::enums::InputChannel = peer.into();
+            client
+                .invoke(&tl::functions::channels::ReadHistory { channel, max_id })
+                .await
+                .map_err(|error| api_error("mark channel read", error))?;
+        }
+        PeerKind::User | PeerKind::Chat => {
+            let peer: tl::enums::InputPeer = peer.into();
+            client
+                .invoke(&tl::functions::messages::ReadHistory { peer, max_id })
+                .await
+                .map_err(|error| api_error("mark chat read", error))?;
+        }
+    }
+
+    Ok(())
+}
+
 pub(crate) async fn send_text(
-    client: &grammers_client::Client,
-    peer: grammers_client::session::types::PeerRef,
+    client: &Client,
+    peer: PeerRef,
     text: String,
 ) -> tg_mobile_core::Result<MessageSummary> {
     if text.is_empty() {
-        return Err(tg_mobile_core::CoreError::InvalidInput(
+        return Err(CoreError::InvalidInput(
             "message text must not be empty".into(),
         ));
     }
