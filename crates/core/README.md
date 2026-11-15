@@ -33,6 +33,26 @@ State snapshots are available through:
 
 Raw events are available through `CoreHandle::subscribe`.
 
+## Telegram backend updates
+
+`TelegramBackend::handle` is the request/response path for `CoreCommand` values.
+
+Real Telegram clients also receive updates while no command is running. A backend can expose that stream by overriding `TelegramBackend::take_updates` and returning a `BackendUpdateReceiver`.
+
+The runtime listens to the command queue and backend update stream concurrently. Each successful backend update is reduced into `CoreState`, broadcast as a `CoreEvent`, and persisted through the configured `StateStore`.
+
+An error sent through the backend update channel is translated into `CoreEvent::Error`. Closing the update channel only disables unsolicited updates; command handling continues.
+
+A backend should transfer ownership of its update receiver only once:
+
+```rust
+fn take_updates(&mut self) -> Option<BackendUpdateReceiver> {
+    self.updates.take()
+}
+```
+
+This is the intended path for Telegram updates such as incoming messages, chat changes, connection/auth changes, and later typing/media updates.
+
 ## State stores
 
 The core exposes three storage implementations:
@@ -80,7 +100,7 @@ This wire format is intended for the Android/JNI bridge. Keep it backward compat
 
 `CoreState` is updated only from `CoreEvent` values.
 
-Incoming `MessageAdded` events are cached per chat and deduplicated by message ID. This prevents an optimistic/send result and the corresponding Telegram update from creating duplicate cached messages.
+Incoming `MessageAdded` events are cached per chat and deduplicated by message ID. The cache is bounded per chat for mobile memory safety.
 
 ## Safety
 
