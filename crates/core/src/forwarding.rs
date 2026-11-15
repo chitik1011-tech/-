@@ -98,24 +98,27 @@ pub fn normalize_forward_events(
                 && result.destination_chat_id == request.destination_chat_id
             {
                 for outcome in result.outcomes {
-                    let source = outcome.source();
-                    if request.sources.contains(source) && !first.contains_key(source) {
-                        let normalized = match outcome {
-                            ForwardOutcome::Forwarded {
-                                source,
-                                destination_message_id,
-                            } if destination_message_id > 0 => ForwardOutcome::Forwarded {
-                                source,
-                                destination_message_id,
-                            },
-                            ForwardOutcome::Forwarded { source, .. } => ForwardOutcome::Failed {
-                                source,
-                                error: "backend returned an invalid destination message id".into(),
-                            },
-                            failed => failed,
-                        };
-                        first.insert(source.clone(), normalized);
+                    let source = outcome.source().clone();
+                    if !request.sources.contains(&source) || first.contains_key(&source) {
+                        continue;
                     }
+                    let normalized = match outcome {
+                        ForwardOutcome::Forwarded {
+                            destination_message_id,
+                            ..
+                        } if destination_message_id > 0 => ForwardOutcome::Forwarded {
+                            source: source.clone(),
+                            destination_message_id,
+                        },
+                        ForwardOutcome::Forwarded { .. } => ForwardOutcome::Failed {
+                            source: source.clone(),
+                            error: "backend returned an invalid destination message id".into(),
+                        },
+                        ForwardOutcome::Failed { error, .. } => {
+                            ForwardOutcome::Failed { source: source.clone(), error }
+                        }
+                    };
+                    first.insert(source, normalized);
                 }
             }
         } else {
