@@ -136,4 +136,3 @@ Incoming `MessageAdded` events are cached per chat and deduplicated by message I
 ## Safety
 
 This crate forbids unsafe Rust. FFI-specific unsafe code belongs in a narrow Android or protocol bridge crate, not in core.
-
