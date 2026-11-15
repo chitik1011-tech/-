@@ -190,8 +190,14 @@ mod tests {
         let now = Instant::now();
         let mut tracker = ChatActivityTracker::default();
         tracker.apply(&changed(1, 7, 1, ChatActivityKind::Typing, 50), now);
-        tracker.apply(&changed(1, 8, 1, ChatActivityKind::RecordingVoice, 100), now);
-        tracker.apply(&changed(2, 7, 1, ChatActivityKind::UploadingMedia, 150), now);
+        tracker.apply(
+            &changed(1, 8, 1, ChatActivityKind::RecordingVoice, 100),
+            now,
+        );
+        tracker.apply(
+            &changed(2, 7, 1, ChatActivityKind::UploadingMedia, 150),
+            now,
+        );
 
         tracker.apply(
             &CoreEvent::ChatActivityEnded {
@@ -300,7 +306,10 @@ mod tests {
         let now = Instant::now();
         let mut tracker = ChatActivityTracker::default();
 
-        tracker.apply(&changed(4, 5, 2, ChatActivityKind::UploadingMedia, 100), now);
+        tracker.apply(
+            &changed(4, 5, 2, ChatActivityKind::UploadingMedia, 100),
+            now,
+        );
         tracker.apply(
             &changed(4, 5, 1, ChatActivityKind::Typing, 100),
             now + Duration::from_millis(1),
