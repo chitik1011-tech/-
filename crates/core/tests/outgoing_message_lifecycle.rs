@@ -118,7 +118,8 @@ async fn failed_send_can_retry_with_the_same_stable_id() {
             OutgoingMessageStatus::Failed,
         ]
     );
-    let failed = core.state().outgoing_message("pending-7d2a").unwrap();
+    let snapshot = core.state();
+    let failed = snapshot.outgoing_message("pending-7d2a").unwrap();
     assert_eq!(failed.status, OutgoingMessageStatus::Failed);
     assert!(failed.error.as_deref().unwrap().contains("network timeout"));
 
