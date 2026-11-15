@@ -44,6 +44,16 @@ impl CoreState {
                 self.last_error = None;
             }
             CoreEvent::MessageAdded(message) => {
+                let mut message = message.clone();
+                if message.reactions.is_empty() {
+                    if let Some(previous) = self
+                        .messages
+                        .get(&message.chat_id)
+                        .and_then(|messages| messages.iter().find(|item| item.id == message.id))
+                    {
+                        message.reactions = previous.reactions.clone();
+                    }
+                }
                 let inserted = self.upsert_message(message.clone());
 
                 if let Some(chat) = self
@@ -288,6 +298,30 @@ mod reaction_tests {
             operation: ReactionOperation::Add,
         });
         assert_eq!(state.messages_for_chat(1)[0].reactions, expected);
+    }
+
+    #[test]
+    fn duplicate_message_updates_preserve_the_current_reaction_snapshot() {
+        let mut state = CoreState::default();
+        add_message(&mut state, 1, 10);
+        state.reduce(&CoreEvent::MessageReactionsUpdated {
+            chat_id: 1,
+            message_id: 10,
+            reactions: vec![reaction("👍", 2, true)],
+        });
+
+        let mut updated = message(1, 10);
+        updated.text = "edited text".into();
+        state.reduce(&CoreEvent::MessageAdded(updated));
+
+        assert_eq!(
+            state.messages_for_chat(1)[0].reactions,
+            vec![reaction("👍", 2, true)]
+        );
+        assert_eq!(
+            state.chat(1).unwrap().last_message.as_ref().unwrap().reactions,
+            vec![reaction("👍", 2, true)]
+        );
     }
 
     #[test]
