@@ -248,6 +248,21 @@ class NativeSessionViewModel(application: Application) :
         )
     }
 
+    fun loadMessages(chatId: Long, limit: Int = 100) {
+        _state.update { it.copy(busy = true, error = null) }
+        sendCommand(
+            JSONObject()
+                .put("type", "load_messages")
+                .put(
+                    "payload",
+                    JSONObject()
+                        .put("chat_id", chatId)
+                        .put("limit", limit),
+                )
+                .toString(),
+        )
+    }
+
     fun sendText(chatId: Long, text: String) {
         sendCommand(
             JSONObject()
@@ -287,6 +302,16 @@ class NativeSessionViewModel(application: Application) :
             "state" -> applyStatePayload(payload)
             "authorization_changed" -> applyAuthorizationPayload(payload)
             "chats_loaded" -> applyChatsEvent(payload)
+            "messages_loaded" -> {
+                _state.update {
+                    it.copy(
+                        lastEventType = type,
+                        lastEventPayload = payload,
+                        busy = false,
+                        error = null,
+                    )
+                }
+            }
             "error" -> {
                 val message = runCatching {
                     JSONObject(payload).optString("message", payload)

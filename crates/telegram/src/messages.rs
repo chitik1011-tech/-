@@ -37,6 +37,26 @@ fn message_summary_from_fields(fields: MessageFields<'_>) -> MessageSummary {
     }
 }
 
+pub(crate) async fn load_messages(
+    client: &grammers_client::Client,
+    peer: grammers_client::session::types::PeerRef,
+    limit: usize,
+) -> tg_mobile_core::Result<Vec<MessageSummary>> {
+    let mut iterator = client.iter_messages(peer).limit(limit);
+    let mut messages = Vec::with_capacity(limit.min(100));
+
+    while let Some(message) = iterator
+        .next()
+        .await
+        .map_err(|error| api_error("load messages", error))?
+    {
+        messages.push(message_to_summary(&message));
+    }
+
+    messages.reverse();
+    Ok(messages)
+}
+
 pub(crate) async fn send_text(
     client: &grammers_client::Client,
     peer: grammers_client::session::types::PeerRef,
