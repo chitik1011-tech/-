@@ -105,8 +105,8 @@ impl StateStore for JsonFileStateStore {
 
     fn save<'a>(&'a self, state: &'a CoreState) -> StoreFuture<'a, ()> {
         let path = self.path.clone();
-        let encoded = serde_json::to_vec(state)
-            .map_err(|error| CoreError::Serialization(error.to_string()));
+        let encoded =
+            serde_json::to_vec(state).map_err(|error| CoreError::Serialization(error.to_string()));
 
         Box::pin(async move {
             let encoded = encoded?;
