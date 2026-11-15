@@ -17,9 +17,12 @@ pub struct CoreState {
     pub account: AccountState,
     pub messages: BTreeMap<i64, Vec<MessageSummary>>,
     pub last_error: Option<String>,
-    /// Recent correlated outcomes, restored from older snapshots as an empty map.
+    /// Bounded correlated outcomes; this reducer cache does not suppress backend retries.
     #[serde(default)]
     pub forwarding: BTreeMap<String, ForwardMessagesResult>,
+    /// Insertion order for deterministic FIFO eviction of forwarding outcomes.
+    #[serde(default)]
+    pub forwarding_order: Vec<String>,
 }
 
 impl Default for CoreState {
@@ -30,6 +33,7 @@ impl Default for CoreState {
             messages: BTreeMap::new(),
             last_error: None,
             forwarding: BTreeMap::new(),
+            forwarding_order: Vec::new(),
         }
     }
 }
