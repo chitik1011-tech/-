@@ -11,10 +11,18 @@ pub enum CoreCommand {
     SetPhoneNumber(String),
     SubmitCode(String),
     SubmitPassword(String),
-    LoadChats { limit: usize },
+    LoadChats {
+        limit: usize,
+    },
     /// Load one page; `cursor: None` requests the first page.
-    LoadChatsPage { cursor: Option<String>, limit: usize },
-    SendText { chat_id: i64, text: String },
+    LoadChatsPage {
+        cursor: Option<String>,
+        limit: usize,
+    },
+    SendText {
+        chat_id: i64,
+        text: String,
+    },
     Shutdown,
 }
 
@@ -47,7 +55,10 @@ impl CoreCommand {
             Self::LoadChats { limit } => validate_chat_load_limit(*limit),
             Self::LoadChatsPage { cursor, limit } => {
                 validate_chat_load_limit(*limit)?;
-                if cursor.as_ref().is_some_and(|cursor| cursor.trim().is_empty()) {
+                if cursor
+                    .as_ref()
+                    .is_some_and(|cursor| cursor.trim().is_empty())
+                {
                     Err(CoreError::InvalidInput("chat page cursor is empty".into()))
                 } else {
                     Ok(())
