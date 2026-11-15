@@ -2,7 +2,7 @@ use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
 
 use grammers_client::{
     Client, InvocationError, client::UpdateStream, sender::UpdatesConfiguration,
-    session::updates::UpdatesLike, update::Update,
+    session::updates::UpdatesLike, tl, update::Update,
 };
 pub use tg_mobile_core::ConnectionState;
 use tg_mobile_core::{
