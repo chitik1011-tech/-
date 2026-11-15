@@ -67,14 +67,24 @@ impl CoreState {
 
                 self.last_error = None;
             }
-            CoreEvent::MessageReactionsUpdated { chat_id, message_id, reactions } => {
+            CoreEvent::MessageReactionsUpdated {
+                chat_id,
+                message_id,
+                reactions,
+            } => {
                 let reactions = canonical_reactions(reactions);
                 if let Some(messages) = self.messages.get_mut(chat_id) {
-                    if let Some(message) = messages.iter_mut().find(|message| message.id == *message_id) {
+                    if let Some(message) = messages
+                        .iter_mut()
+                        .find(|message| message.id == *message_id)
+                    {
                         message.reactions = reactions.clone();
                     }
                 }
-                if let Some(message) = self.account.chats.iter_mut()
+                if let Some(message) = self
+                    .account
+                    .chats
+                    .iter_mut()
                     .filter(|chat| chat.id == *chat_id)
                     .filter_map(|chat| chat.last_message.as_mut())
                     .find(|message| message.id == *message_id)
@@ -169,13 +179,22 @@ mod reaction_tests {
 
     fn message(chat_id: i64, id: i64) -> MessageSummary {
         MessageSummary {
-            id, chat_id, sender_id: 7, text: "hello".into(), timestamp_unix: 1,
-            outgoing: false, reactions: Vec::new(),
+            id,
+            chat_id,
+            sender_id: 7,
+            text: "hello".into(),
+            timestamp_unix: 1,
+            outgoing: false,
+            reactions: Vec::new(),
         }
     }
 
     fn reaction(emoji: &str, count: u32, chosen: bool) -> MessageReaction {
-        MessageReaction { emoji: emoji.into(), count, chosen_by_current_user: chosen }
+        MessageReaction {
+            emoji: emoji.into(),
+            count,
+            chosen_by_current_user: chosen,
+        }
     }
 
     fn add_message(state: &mut CoreState, chat_id: i64, id: i64) {
@@ -189,14 +208,26 @@ mod reaction_tests {
         add_message(&mut state, 2, 10);
         add_message(&mut state, 1, 11);
         let update = CoreEvent::MessageReactionsUpdated {
-            chat_id: 1, message_id: 10, reactions: vec![reaction("👍", 2, true)],
+            chat_id: 1,
+            message_id: 10,
+            reactions: vec![reaction("👍", 2, true)],
         };
         state.reduce(&update);
         state.reduce(&update);
-        assert_eq!(state.messages_for_chat(1)[0].reactions, vec![reaction("👍", 2, true)]);
+        assert_eq!(
+            state.messages_for_chat(1)[0].reactions,
+            vec![reaction("👍", 2, true)]
+        );
         assert!(state.messages_for_chat(2)[0].reactions.is_empty());
         assert!(state.messages_for_chat(1)[1].reactions.is_empty());
-        assert_eq!(state.chat(1).and_then(|chat| chat.last_message.as_ref()).unwrap().id, 11);
+        assert_eq!(
+            state
+                .chat(1)
+                .and_then(|chat| chat.last_message.as_ref())
+                .unwrap()
+                .id,
+            11
+        );
     }
 
     #[test]
@@ -204,15 +235,27 @@ mod reaction_tests {
         let mut state = CoreState::default();
         add_message(&mut state, 1, 10);
         let add = CoreEvent::MessageReactionsUpdated {
-            chat_id: 1, message_id: 10,
+            chat_id: 1,
+            message_id: 10,
             reactions: vec![reaction("❤️", 1, true), reaction("🔥", 3, false)],
         };
         state.reduce(&add);
         state.reduce(&add);
         assert_eq!(state.messages_for_chat(1)[0].reactions.len(), 2);
-        state.reduce(&CoreEvent::MessageReactionsUpdated { chat_id: 1, message_id: 10, reactions: vec![reaction("🔥", 2, false)] });
-        assert_eq!(state.messages_for_chat(1)[0].reactions, vec![reaction("🔥", 2, false)]);
-        state.reduce(&CoreEvent::MessageReactionsUpdated { chat_id: 1, message_id: 10, reactions: vec![] });
+        state.reduce(&CoreEvent::MessageReactionsUpdated {
+            chat_id: 1,
+            message_id: 10,
+            reactions: vec![reaction("🔥", 2, false)],
+        });
+        assert_eq!(
+            state.messages_for_chat(1)[0].reactions,
+            vec![reaction("🔥", 2, false)]
+        );
+        state.reduce(&CoreEvent::MessageReactionsUpdated {
+            chat_id: 1,
+            message_id: 10,
+            reactions: vec![],
+        });
         assert!(state.messages_for_chat(1)[0].reactions.is_empty());
     }
 
@@ -221,14 +264,29 @@ mod reaction_tests {
         let mut state = CoreState::default();
         add_message(&mut state, 1, 10);
         let update = CoreEvent::MessageReactionsUpdated {
-            chat_id: 1, message_id: 10,
+            chat_id: 1,
+            message_id: 10,
             reactions: vec![reaction("👍", 2, false), reaction("👍", 1, true)],
         };
         state.reduce(&update);
         let expected = vec![reaction("👍", 3, true)];
         assert_eq!(state.messages_for_chat(1)[0].reactions, expected);
-        assert_eq!(state.chat(1).unwrap().last_message.as_ref().unwrap().reactions, expected);
-        state.reduce(&CoreEvent::ReactionOperationSucceeded { chat_id: 1, message_id: 10, emoji: "👍".into(), operation: ReactionOperation::Add });
+        assert_eq!(
+            state
+                .chat(1)
+                .unwrap()
+                .last_message
+                .as_ref()
+                .unwrap()
+                .reactions,
+            expected
+        );
+        state.reduce(&CoreEvent::ReactionOperationSucceeded {
+            chat_id: 1,
+            message_id: 10,
+            emoji: "👍".into(),
+            operation: ReactionOperation::Add,
+        });
         assert_eq!(state.messages_for_chat(1)[0].reactions, expected);
     }
 
@@ -238,7 +296,9 @@ mod reaction_tests {
         let parsed: MessageSummary = serde_json::from_str(old).unwrap();
         assert!(parsed.reactions.is_empty());
         let event = CoreEvent::MessageReactionsUpdated {
-            chat_id: 1, message_id: 10, reactions: vec![reaction("👍", 4, true)],
+            chat_id: 1,
+            message_id: 10,
+            reactions: vec![reaction("👍", 4, true)],
         };
         let wire = serde_json::to_string(&event).unwrap();
         let decoded: CoreEvent = serde_json::from_str(&wire).unwrap();
@@ -247,40 +307,93 @@ mod reaction_tests {
 
     #[test]
     fn commands_have_stable_wire_names_and_validate_reaction_targets() {
-        use crate::{command::CoreCommand, error::CoreError};
+
         use crate::command::MAX_REACTION_EMOJI_BYTES;
-        let valid = CoreCommand::AddReaction { chat_id: -1, message_id: 2, emoji: "🫶".into() };
+        use crate::{command::CoreCommand, error::CoreError};
+        let valid = CoreCommand::AddReaction {
+            chat_id: -1,
+            message_id: 2,
+            emoji: "🫶".into(),
+        };
         assert!(valid.validate().is_ok());
         assert_eq!(valid.kind(), "add_reaction");
-        assert_eq!(CoreCommand::RemoveReaction { chat_id: 1, message_id: 2, emoji: "👍".into() }.kind(), "remove_reaction");
+        assert_eq!(
+            CoreCommand::RemoveReaction {
+                chat_id: 1,
+                message_id: 2,
+                emoji: "👍".into()
+            }
+            .kind(),
+            "remove_reaction"
+        );
         for invalid in [
-            CoreCommand::AddReaction { chat_id: 0, message_id: 2, emoji: "👍".into() },
-            CoreCommand::AddReaction { chat_id: 1, message_id: 0, emoji: "👍".into() },
-            CoreCommand::RemoveReaction { chat_id: 1, message_id: 2, emoji: "  ".into() },
-            CoreCommand::RemoveReaction { chat_id: 1, message_id: 2, emoji: "é".repeat(MAX_REACTION_EMOJI_BYTES).into() },
+            CoreCommand::AddReaction {
+                chat_id: 0,
+                message_id: 2,
+                emoji: "👍".into(),
+            },
+            CoreCommand::AddReaction {
+                chat_id: 1,
+                message_id: 0,
+                emoji: "👍".into(),
+            },
+            CoreCommand::RemoveReaction {
+                chat_id: 1,
+                message_id: 2,
+                emoji: "  ".into(),
+            },
+            CoreCommand::RemoveReaction {
+                chat_id: 1,
+                message_id: 2,
+                emoji: "é".repeat(MAX_REACTION_EMOJI_BYTES).into(),
+            },
         ] {
-            assert!(matches!(invalid.validate(), Err(CoreError::InvalidInput(_))));
+            assert!(matches!(
+                invalid.validate(),
+                Err(CoreError::InvalidInput(_))
+            ));
         }
     }
 
     #[test]
     fn event_wire_includes_operation_acknowledgement_and_failure() {
         let events = [
-            CoreEvent::ReactionOperationSucceeded { chat_id: 1, message_id: 10, emoji: "👍".into(), operation: ReactionOperation::Add },
-            CoreEvent::ReactionOperationFailed { chat_id: 1, message_id: 10, emoji: "👍".into(), operation: ReactionOperation::Remove, error: "failed".into() },
+            CoreEvent::ReactionOperationSucceeded {
+                chat_id: 1,
+                message_id: 10,
+                emoji: "👍".into(),
+                operation: ReactionOperation::Add,
+            },
+            CoreEvent::ReactionOperationFailed {
+                chat_id: 1,
+                message_id: 10,
+                emoji: "👍".into(),
+                operation: ReactionOperation::Remove,
+                error: "failed".into(),
+            },
         ];
         let success = serde_json::to_string(&events[0]).unwrap();
         let failure = serde_json::to_string(&events[1]).unwrap();
         assert!(success.contains("reaction_operation_succeeded"));
         assert!(failure.contains("reaction_operation_failed"));
-        assert_eq!(serde_json::from_str::<CoreEvent>(&success).unwrap(), events[0]);
-        assert_eq!(serde_json::from_str::<CoreEvent>(&failure).unwrap(), events[1]);
+        assert_eq!(
+            serde_json::from_str::<CoreEvent>(&success).unwrap(),
+            events[0]
+        );
+        assert_eq!(
+            serde_json::from_str::<CoreEvent>(&failure).unwrap(),
+            events[1]
+        );
     }
 
     #[test]
     fn reaction_update_for_unknown_message_does_not_create_chat_or_message() {
         let mut state = CoreState::default();
-        state.reduce(&CoreEvent::MessageReactionsUpdated { chat_id: 777, message_id: 42, reactions: vec![reaction("👍", 1, true)] });
+        state.reduce(&CoreEvent::MessageReactionsUpdated {
+            chat_id: 777,
+            message_id: 42,
+            reactions: vec![reaction("👍", 1, true)],
+        });
         assert!(state.messages_for_chat(777).is_empty());
         assert!(state.chat(777).is_none());
         assert_eq!(state.account.authorization, AuthorizationState::Closed);

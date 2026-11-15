@@ -12,10 +12,23 @@ pub enum CoreCommand {
     SetPhoneNumber(String),
     SubmitCode(String),
     SubmitPassword(String),
-    LoadChats { limit: usize },
-    SendText { chat_id: i64, text: String },
-    AddReaction { chat_id: i64, message_id: i64, emoji: String },
-    RemoveReaction { chat_id: i64, message_id: i64, emoji: String },
+    LoadChats {
+        limit: usize,
+    },
+    SendText {
+        chat_id: i64,
+        text: String,
+    },
+    AddReaction {
+        chat_id: i64,
+        message_id: i64,
+        emoji: String,
+    },
+    RemoveReaction {
+        chat_id: i64,
+        message_id: i64,
+        emoji: String,
+    },
     Shutdown,
 }
 
@@ -62,10 +75,16 @@ impl CoreCommand {
 
                 require_non_blank("message text", text)
             }
-            Self::AddReaction { chat_id, message_id, emoji }
-            | Self::RemoveReaction { chat_id, message_id, emoji } => {
-                validate_reaction_target(*chat_id, *message_id, emoji)
+            Self::AddReaction {
+                chat_id,
+                message_id,
+                emoji,
             }
+            | Self::RemoveReaction {
+                chat_id,
+                message_id,
+                emoji,
+            } => validate_reaction_target(*chat_id, *message_id, emoji),
         }
     }
 }
@@ -75,7 +94,9 @@ fn validate_reaction_target(chat_id: i64, message_id: i64, emoji: &str) -> Resul
         return Err(CoreError::InvalidInput("chat id must be non-zero".into()));
     }
     if message_id <= 0 {
-        return Err(CoreError::InvalidInput("message id must be positive".into()));
+        return Err(CoreError::InvalidInput(
+            "message id must be positive".into(),
+        ));
     }
     require_non_blank("reaction emoji", emoji)?;
     if emoji.trim().len() > MAX_REACTION_EMOJI_BYTES {

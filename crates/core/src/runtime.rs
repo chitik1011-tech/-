@@ -191,12 +191,21 @@ fn reaction_failure_context(
     command: &CoreCommand,
 ) -> Option<(i64, i64, String, ReactionOperation)> {
     match command {
-        CoreCommand::AddReaction { chat_id, message_id, emoji } => {
-            Some((*chat_id, *message_id, emoji.clone(), ReactionOperation::Add))
-        }
-        CoreCommand::RemoveReaction { chat_id, message_id, emoji } => {
-            Some((*chat_id, *message_id, emoji.clone(), ReactionOperation::Remove))
-        }
+        CoreCommand::AddReaction {
+            chat_id,
+            message_id,
+            emoji,
+        } => Some((*chat_id, *message_id, emoji.clone(), ReactionOperation::Add)),
+        CoreCommand::RemoveReaction {
+            chat_id,
+            message_id,
+            emoji,
+        } => Some((
+            *chat_id,
+            *message_id,
+            emoji.clone(),
+            ReactionOperation::Remove,
+        )),
         _ => None,
     }
 }
@@ -314,15 +323,28 @@ mod reaction_failure_tests {
             message_id: 12,
             emoji: "🫶".into(),
         });
-        assert_eq!(remove, Some((3, 12, "🫶".into(), ReactionOperation::Remove)));
+        assert_eq!(
+            remove,
+            Some((3, 12, "🫶".into(), ReactionOperation::Remove))
+        );
         assert!(reaction_failure_context(&CoreCommand::Start).is_none());
 
-        let event = add.map(|(chat_id, message_id, emoji, operation)| {
-            CoreEvent::ReactionOperationFailed {
-                chat_id, message_id, emoji, operation,
-                error: CoreError::Backend("offline".into()).to_string(),
-            }
-        });
-        assert!(matches!(event, Some(CoreEvent::ReactionOperationFailed { operation: ReactionOperation::Add, .. })));
+        let event =
+            add.map(
+                |(chat_id, message_id, emoji, operation)| CoreEvent::ReactionOperationFailed {
+                    chat_id,
+                    message_id,
+                    emoji,
+                    operation,
+                    error: CoreError::Backend("offline".into()).to_string(),
+                },
+            );
+        assert!(matches!(
+            event,
+            Some(CoreEvent::ReactionOperationFailed {
+                operation: ReactionOperation::Add,
+                ..
+            })
+        ));
     }
 }
