@@ -28,7 +28,7 @@ This roadmap describes the public product direction. It is not a promise of date
 - [ ] read receipts polish
 - [ ] contacts and peer profiles
 - [ ] service messages
-- [ ] polls end-to-end, including voting and Android UI
+- [x] polls end-to-end, including voting and Android UI
 - [ ] media send/download UX
 - [ ] replies and message actions UI polish
 - [ ] robust notifications/background behavior

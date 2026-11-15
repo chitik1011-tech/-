@@ -33,7 +33,7 @@ The integrated `main` branch already includes major pieces of a usable Telegram 
 - unread badges and Android loading/empty/error states
 - generation-safe transient chat activity
 - peer reference resolution
-- poll model/state foundation
+- Telegram polls with end-to-end voting and Compose results UI
 
 Some Telegram features are still incomplete or under active development. See [ROADMAP.md](ROADMAP.md).
 
