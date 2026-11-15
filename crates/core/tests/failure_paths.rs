@@ -163,7 +163,7 @@ async fn repeated_authorization_commands_keep_a_valid_state_transition() {
         );
     }
 
-    core.send(CoreCommand::SetPhoneNumber("+10000000000".into()))
+    core.send(CoreCommand::SetPhoneNumber("test-phone".into()))
         .await
         .unwrap();
     let _ = timeout(Duration::from_secs(1), events.recv())
@@ -172,7 +172,7 @@ async fn repeated_authorization_commands_keep_a_valid_state_transition() {
         .unwrap();
 
     for _ in 0..2 {
-        core.send(CoreCommand::SubmitCode("00000".into()))
+        core.send(CoreCommand::SubmitCode("test-code".into()))
             .await
             .unwrap();
         assert_eq!(
