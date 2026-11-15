@@ -13,8 +13,8 @@ use jni::{
     JNIEnv, JavaVM,
 };
 use tg_mobile_core::{
-    backend::BackendFuture, decode_command, encode_event, encode_state, spawn_core,
-    CoreCommand, CoreError, CoreEvent, CoreHandle, TelegramBackend,
+    backend::BackendFuture, decode_command, encode_event, encode_state, spawn_core, CoreCommand,
+    CoreError, CoreEvent, CoreHandle, TelegramBackend,
 };
 use tokio::{runtime::Runtime, task::JoinHandle};
 
