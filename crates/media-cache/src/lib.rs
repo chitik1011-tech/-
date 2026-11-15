@@ -116,10 +116,10 @@ impl MediaCache {
     pub fn begin_write(&self, reference: &str) -> Result<CacheWriter, CacheError> {
         let key = cache_key(reference);
         let unique = self.inner.temp_counter.fetch_add(1, Ordering::Relaxed);
-        let temp_path = self
-            .inner
-            .root
-            .join(format!(".{key}{TEMP_MARKER}{}-{unique}", std::process::id()));
+        let temp_path = self.inner.root.join(format!(
+            ".{key}{TEMP_MARKER}{}-{unique}",
+            std::process::id()
+        ));
         let file = OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -143,7 +143,10 @@ impl MediaCache {
     }
 
     fn lock_state(&self) -> Result<MutexGuard<'_, State>, CacheError> {
-        self.inner.state.lock().map_err(|_| CacheError::LockPoisoned)
+        self.inner
+            .state
+            .lock()
+            .map_err(|_| CacheError::LockPoisoned)
     }
 
     fn ensure_confined(&self, path: &Path) -> Result<(), CacheError> {
@@ -289,7 +292,10 @@ impl CacheWriter {
     /// Atomically publish the completed file and return a lease to it.
     pub fn commit(mut self) -> Result<CacheLease, CacheError> {
         let mut file = self.file.take().ok_or_else(|| {
-            CacheError::Io(io::Error::new(io::ErrorKind::Other, "cache writer is closed"))
+            CacheError::Io(io::Error::new(
+                io::ErrorKind::Other,
+                "cache writer is closed",
+            ))
         })?;
         file.flush()?;
         file.sync_all()?;
@@ -371,12 +377,17 @@ mod tests {
     #[test]
     fn stores_and_retrieves_using_opaque_deterministic_reference_name() {
         let (_dir, cache) = cache(128);
-        let mut writer = cache.begin_write("telegram:file/reference").expect("writer");
+        let mut writer = cache
+            .begin_write("telegram:file/reference")
+            .expect("writer");
         writer.write_all(b"media bytes").expect("write");
         let lease = writer.commit().expect("commit");
         assert!(lease.path().starts_with(cache.inner.root.as_path()));
         assert_eq!(fs::read(lease.path()).expect("read"), b"media bytes");
-        let second = cache.get("telegram:file/reference").expect("get").expect("hit");
+        let second = cache
+            .get("telegram:file/reference")
+            .expect("get")
+            .expect("hit");
         assert_eq!(lease.path(), second.path());
         assert_eq!(cache.used_bytes().expect("size"), 11);
     }
