@@ -37,13 +37,25 @@ fn page(
     })
 }
 
+fn apply_page(
+    state: &mut CoreState,
+    requested_cursor: Option<&str>,
+    chats: Vec<ChatSummary>,
+    next_cursor: Option<&str>,
+) {
+    state.reduce(&CoreEvent::ChatsPageLoading {
+        cursor: requested_cursor.map(str::to_owned),
+    });
+    state.reduce(&page(requested_cursor, chats, next_cursor));
+}
+
 #[test]
 fn zero_chat_page_marks_pagination_complete() {
     let mut state = CoreState::default();
 
     state.reduce(&CoreEvent::ChatsPageLoading { cursor: None });
     assert!(state.chat_pagination.loading);
-    state.reduce(&page(None, Vec::new(), None));
+    apply_page(&mut state, None, Vec::new(), None);
 
     assert!(!state.chat_pagination.loading);
     assert!(state.account.chats.is_empty());
@@ -55,7 +67,7 @@ fn zero_chat_page_marks_pagination_complete() {
 fn one_page_exposes_no_next_cursor() {
     let mut state = CoreState::default();
 
-    state.reduce(&page(None, vec![summary(1, "one", 0, None)], None));
+    apply_page(&mut state, None, vec![summary(1, "one", 0, None)], None);
 
     assert_eq!(state.account.chats.len(), 1);
     assert_eq!(state.account.chats[0].id, 1);
@@ -68,21 +80,21 @@ fn multiple_pages_merge_duplicates_without_reordering() {
     let old_message = message(1, 2, 100, "old");
     let new_message = message(2, 2, 200, "new");
 
-    state.reduce(&page(
+    apply_page(&mut state, 
         None,
         vec![
             summary(1, "first", 0, None),
             summary(2, "second", 1, Some(old_message)),
         ],
         Some("cursor-2"),
-    ));
+    );
 
     assert_eq!(
         state.chat_pagination.next_cursor.as_deref(),
         Some("cursor-2")
     );
 
-    state.reduce(&page(
+    apply_page(&mut state, 
         Some("cursor-2"),
         vec![
             summary(2, "renamed", 2, Some(new_message.clone())),
@@ -90,7 +102,7 @@ fn multiple_pages_merge_duplicates_without_reordering() {
             summary(3, "third updated", 1, None),
         ],
         None,
-    ));
+    );
 
     assert_eq!(
         state
@@ -119,14 +131,14 @@ fn live_messages_survive_next_page_and_stale_page_summaries() {
     let live_message = message(2, 10, 200, "live");
     let new_chat_message = message(3, 30, 150, "new chat");
 
-    state.reduce(&page(
+    apply_page(&mut state, 
         None,
         vec![summary(10, "ten", 1, Some(first_message))],
         Some("cursor-2"),
-    ));
+    );
     state.reduce(&CoreEvent::MessageAdded(live_message.clone()));
     state.reduce(&CoreEvent::MessageAdded(new_chat_message.clone()));
-    state.reduce(&page(
+    apply_page(&mut state, 
         Some("cursor-2"),
         vec![
             summary(10, "ten", 1, Some(message(1, 10, 100, "stale"))),
@@ -139,7 +151,7 @@ fn live_messages_survive_next_page_and_stale_page_summaries() {
             ),
         ],
         None,
-    ));
+    );
 
     assert_eq!(
         state
@@ -167,7 +179,7 @@ fn live_message_received_before_first_page_is_preserved() {
     let live_message = message(9, 90, 900, "arrived early");
 
     state.reduce(&CoreEvent::MessageAdded(live_message.clone()));
-    state.reduce(&page(None, vec![summary(1, "server chat", 0, None)], None));
+    apply_page(&mut state, None, vec![summary(1, "server chat", 0, None)], None);
 
     assert_eq!(
         state
@@ -187,17 +199,17 @@ fn live_message_received_before_first_page_is_preserved() {
 #[test]
 fn stale_or_repeated_page_cursor_is_ignored_and_loops_stop() {
     let mut state = CoreState::default();
-    state.reduce(&page(
+    apply_page(&mut state, 
         None,
         vec![summary(1, "one", 0, None)],
         Some("cursor-2"),
-    ));
+    );
 
-    state.reduce(&page(
+    apply_page(&mut state, 
         Some("wrong-cursor"),
         vec![summary(2, "stale", 0, None)],
         None,
-    ));
+    );
     assert_eq!(
         state
             .account
@@ -212,11 +224,11 @@ fn stale_or_repeated_page_cursor_is_ignored_and_loops_stop() {
         Some("cursor-2")
     );
 
-    state.reduce(&page(
+    apply_page(&mut state, 
         Some("cursor-2"),
         vec![summary(2, "two", 0, None)],
         Some("cursor-2"),
-    ));
+    );
     assert_eq!(state.chat_pagination.next_cursor, None);
 }
 
@@ -261,11 +273,11 @@ fn page_command_validates_limit_and_nonblank_cursor() {
 #[test]
 fn failed_page_keeps_cursor_retryable_and_clears_error_on_success() {
     let mut state = CoreState::default();
-    state.reduce(&page(
+    apply_page(&mut state, 
         None,
         vec![summary(1, "one", 0, None)],
         Some("cursor-2"),
-    ));
+    );
 
     state.reduce(&CoreEvent::ChatsPageLoading {
         cursor: Some("cursor-2".into()),
@@ -294,11 +306,11 @@ fn failed_page_keeps_cursor_retryable_and_clears_error_on_success() {
     state.reduce(&CoreEvent::ChatsPageLoading {
         cursor: Some("cursor-2".into()),
     });
-    state.reduce(&page(
+    apply_page(&mut state, 
         Some("cursor-2"),
         vec![summary(2, "two", 0, None)],
         None,
-    ));
+    );
 
     assert!(!state.chat_pagination.loading);
     assert_eq!(state.chat_pagination.error, None);
@@ -308,7 +320,7 @@ fn failed_page_keeps_cursor_retryable_and_clears_error_on_success() {
 #[test]
 fn stale_first_page_cannot_replace_chats_during_next_page_request() {
     let mut state = CoreState::default();
-    state.reduce(&page(None, vec![summary(1, "one", 0, None)], Some("next")));
+    apply_page(&mut state, None, vec![summary(1, "one", 0, None)], Some("next"));
     state.reduce(&CoreEvent::ChatsPageLoading {
         cursor: Some("next".into()),
     });
@@ -334,7 +346,7 @@ fn stale_first_page_cannot_replace_chats_during_next_page_request() {
         Some("next")
     );
 
-    state.reduce(&page(Some("next"), vec![summary(2, "two", 0, None)], None));
+    apply_page(&mut state, Some("next"), vec![summary(2, "two", 0, None)], None);
     assert_eq!(
         state
             .account
