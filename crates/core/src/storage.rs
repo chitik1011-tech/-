@@ -104,7 +104,9 @@ impl StateStore for JsonFileStateStore {
             .await
             .map_err(|error| CoreError::Storage(format!("state load task failed: {error}")))??;
 
-            content.map(|content| decode_stored_state(&content)).transpose()
+            content
+                .map(|content| decode_stored_state(&content))
+                .transpose()
         })
     }
 
@@ -153,10 +155,12 @@ fn decode_stored_state(content: &str) -> Result<CoreState> {
             }
             Ok(stored.state)
         }
-        Err(versioned_error) => serde_json::from_str::<CoreState>(content).map_err(|legacy_error| {
-            CoreError::Serialization(format!(
-                "invalid persisted state: versioned={versioned_error}; legacy={legacy_error}"
-            ))
-        }),
+        Err(versioned_error) => {
+            serde_json::from_str::<CoreState>(content).map_err(|legacy_error| {
+                CoreError::Serialization(format!(
+                    "invalid persisted state: versioned={versioned_error}; legacy={legacy_error}"
+                ))
+            })
+        }
     }
 }
