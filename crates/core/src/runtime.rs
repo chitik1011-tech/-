@@ -107,7 +107,9 @@ where
                         Err(error) => vec![CoreEvent::Error(error.to_string())],
                     };
                     let events = match forward_request {
-                        Some(request) => crate::forwarding::normalize_forward_events(&request, events),
+                        Some(request) => {
+                            crate::forwarding::normalize_forward_events(&request, events)
+                        }
                         None => events,
                     };
 
