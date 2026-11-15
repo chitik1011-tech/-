@@ -278,7 +278,7 @@ fn reply_target_index_is_pruned_with_bounded_message_cache() {
 
     assert_eq!(state.messages_for_chat(2).len(), 512);
     assert_eq!(
-        state.reply_targets.get(&2).map(std::collections::BTreeMap::len),
+        state.reply_targets.get(&2).map(|targets| targets.len()),
         Some(512)
     );
     assert_eq!(state.reply_target_for_message(2, 1), None);
