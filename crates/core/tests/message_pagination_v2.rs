@@ -1,8 +1,9 @@
 use std::time::Duration;
 
 use tg_mobile_core::{
-    decode_command, spawn_core, BackendFuture, CoreCommand, CoreEvent, CoreState, MessageSummary,
-    TelegramBackend,
+    decode_command, spawn_core, spawn_core_with_store, AuthorizationState, BackendFuture,
+    CoreCommand, CoreEvent, CoreState, MemoryStateStore, MessageHistoryState, MessageSummary,
+    StateStore, TelegramBackend,
 };
 use tokio::time::timeout;
 
@@ -168,6 +169,44 @@ fn legacy_state_defaults_message_pagination_map() {
 
     let state: CoreState = serde_json::from_str(legacy).unwrap();
     assert!(state.message_history.is_empty());
+}
+
+#[tokio::test]
+async fn restore_clears_inflight_request_but_keeps_retry_cursor() {
+    let store = MemoryStateStore::default();
+    let mut persisted = CoreState::default();
+    persisted.account.authorization = AuthorizationState::Ready;
+    persisted.message_history.insert(
+        7,
+        MessageHistoryState {
+            loading: true,
+            requested_before_message_id: Some(10),
+            next_before_message_id: Some(10),
+            has_more: true,
+            error: None,
+        },
+    );
+    store.save(&persisted).await.unwrap();
+
+    let core = spawn_core_with_store(tg_mobile_core::MockTelegramBackend::default(), store);
+
+    timeout(Duration::from_secs(1), async {
+        loop {
+            let state = core.state();
+            if state.account.authorization == AuthorizationState::Ready {
+                let history = state.message_history_for_chat(7).unwrap();
+                assert!(!history.loading);
+                assert_eq!(history.requested_before_message_id, None);
+                assert_eq!(history.next_before_message_id, Some(10));
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+
+    core.shutdown().await.unwrap();
 }
 
 struct MissingCompletionBackend;
