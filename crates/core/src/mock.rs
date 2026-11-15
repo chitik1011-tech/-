@@ -12,6 +12,7 @@ pub struct MockTelegramBackend {
     authorization: AuthorizationState,
     chats: Vec<ChatSummary>,
     next_message_id: i64,
+    next_send_failure: Option<String>,
 }
 
 impl Default for MockTelegramBackend {
@@ -40,6 +41,7 @@ impl Default for MockTelegramBackend {
                 },
             ],
             next_message_id: 2,
+            next_send_failure: None,
         }
     }
 }
@@ -51,6 +53,12 @@ impl TelegramBackend for MockTelegramBackend {
 }
 
 impl MockTelegramBackend {
+    /// Configure the next outgoing text request to fail once. Useful for exercising retry UI.
+    pub fn with_next_send_failure(mut self, message: impl Into<String>) -> Self {
+        self.next_send_failure = Some(message.into());
+        self
+    }
+
     fn handle_inner(&mut self, command: CoreCommand) -> Result<Vec<CoreEvent>> {
         match command {
             CoreCommand::Start => {
@@ -94,6 +102,10 @@ impl MockTelegramBackend {
                 Ok(vec![CoreEvent::ChatsLoaded(chats)])
             }
             CoreCommand::SendText { chat_id, text } => {
+                if let Some(message) = self.next_send_failure.take() {
+                    return Err(CoreError::Backend(message));
+                }
+
                 if self.authorization != AuthorizationState::Ready {
                     return Err(CoreError::Backend("not authorized".into()));
                 }
