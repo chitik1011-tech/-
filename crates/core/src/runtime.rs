@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use tokio::{
     sync::{broadcast, mpsc, watch},
+    task::JoinHandle,
     time::{interval_at, Instant, Interval, MissedTickBehavior},
 };
 
@@ -20,6 +21,8 @@ use crate::{
 };
 
 pub const PERSISTENCE_FLUSH_INTERVAL_MS: u64 = 250;
+const BACKEND_SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(1_000);
+const BACKEND_SHUTDOWN_JOIN_TIMEOUT: Duration = Duration::from_millis(1_250);
 
 #[derive(Clone)]
 pub struct CoreHandle {
@@ -84,8 +87,16 @@ where
     let mut backend_updates = backend.take_updates();
     let (worker_tx, mut worker_rx) = mpsc::channel::<WorkerRequest>(32);
     let (result_tx, result_rx) = mpsc::channel::<BackendResult>(32);
-    let worker = tokio::spawn(async move {
-        while let Some(request) = worker_rx.recv().await {
+    let (shutdown_signal_tx, shutdown_signal_rx) = watch::channel(false);
+    let mut worker = tokio::spawn(async move {
+        let mut shutdown_signal_rx = shutdown_signal_rx;
+        loop {
+            let request = tokio::select! {
+                biased;
+                _ = shutdown_signal_rx.changed() => None,
+                request = worker_rx.recv() => request,
+            };
+            let Some(request) = request else { break };
             match request {
                 WorkerRequest::SetToken(token) => backend.set_connection_token(token),
                 WorkerRequest::Execute {
@@ -98,7 +109,12 @@ where
                     // keeps the backend token contract intact even if a token update could
                     // not be queued while the bounded operation channel was full.
                     backend.set_connection_token(generation);
-                    let result = backend.handle(command.clone()).await;
+                    let result = tokio::select! {
+                        biased;
+                        _ = shutdown_signal_rx.changed() => None,
+                        result = backend.handle(command.clone()) => Some(result),
+                    };
+                    let Some(result) = result else { break };
                     if result_tx
                         .send(BackendResult {
                             op_id,
@@ -115,6 +131,11 @@ where
                 }
             }
         }
+        let _ = tokio::time::timeout(
+            BACKEND_SHUTDOWN_TIMEOUT,
+            backend.handle(CoreCommand::Shutdown),
+        )
+        .await;
     });
 
     tokio::spawn(async move {
@@ -269,7 +290,7 @@ where
                             &mut activity_tracker,
                         );
                         persist_state(&store, &mut reduced_state, &state_tx, &event_tx_task).await;
-                        worker.abort();
+                        stop_backend_worker(&shutdown_signal_tx, &mut worker).await;
                         break;
                     }
                     if starting_session {
@@ -454,7 +475,7 @@ where
                         &mut activity_tracker,
                     );
                     persist_state(&store, &mut reduced_state, &state_tx, &event_tx_task).await;
-                    worker.abort();
+                    stop_backend_worker(&shutdown_signal_tx, &mut worker).await;
                     break;
                 }
                 RuntimeInput::Update(Some(Ok(event))) => {
@@ -541,7 +562,7 @@ where
 
                     if stopped {
                         persist_state(&store, &mut reduced_state, &state_tx, &event_tx_task).await;
-                        worker.abort();
+                        stop_backend_worker(&shutdown_signal_tx, &mut worker).await;
                         break;
                     }
                 }
@@ -590,6 +611,16 @@ enum RuntimeInput {
     BackendResult(Option<BackendResult>),
     Persist,
     ExpireActivities,
+}
+
+async fn stop_backend_worker(signal: &watch::Sender<bool>, worker: &mut JoinHandle<()>) {
+    let _ = signal.send(true);
+    if tokio::time::timeout(BACKEND_SHUTDOWN_JOIN_TIMEOUT, &mut *worker)
+        .await
+        .is_err()
+    {
+        worker.abort();
+    }
 }
 
 enum WorkerRequest {

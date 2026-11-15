@@ -14,6 +14,7 @@ struct ControlledBackend {
     started: mpsc::UnboundedSender<CoreCommand>,
     release: Arc<Mutex<Option<oneshot::Receiver<()>>>>,
     hang_first: bool,
+    hang_shutdown: bool,
     panic_first: bool,
     page_id: i64,
 }
@@ -36,6 +37,7 @@ impl ControlledBackend {
                 started,
                 release: Arc::new(Mutex::new(Some(release_rx))),
                 hang_first,
+                hang_shutdown: false,
                 panic_first: false,
                 page_id: 77,
             },
@@ -50,13 +52,21 @@ impl ControlledBackend {
         backend.panic_first = true;
         (backend, started)
     }
+
+    fn hanging_shutdown() -> (Self, mpsc::UnboundedReceiver<CoreCommand>) {
+        let (mut backend, started, release) = Self::new(false);
+        let _ = release.send(());
+        backend.hang_shutdown = true;
+        (backend, started)
+    }
 }
 
 impl TelegramBackend for ControlledBackend {
     fn handle<'a>(&'a mut self, command: CoreCommand) -> BackendFuture<'a> {
         let started = self.started.clone();
         let release = self.release.clone();
-        let should_hang = self.hang_first;
+        let should_hang =
+            self.hang_first || (self.hang_shutdown && matches!(&command, CoreCommand::Shutdown));
         self.hang_first = false;
         let should_panic = self.panic_first;
         self.panic_first = false;
@@ -68,6 +78,8 @@ impl TelegramBackend for ControlledBackend {
             if should_hang {
                 if let Some(receiver) = release.lock().await.take() {
                     let _ = receiver.await;
+                } else {
+                    std::future::pending::<()>().await;
                 }
             }
             if let CoreCommand::LoadMessagesPage {
@@ -189,6 +201,7 @@ async fn shutdown_persists_reliable_send_recovery_without_waiting_for_rpc() {
         .await
         .expect("shutdown waited for hung RPC")
         .unwrap();
+    wait_for_command(&mut started, CoreCommand::Shutdown).await;
     timeout(Duration::from_millis(500), async {
         while core.state().running {
             sleep(Duration::from_millis(5)).await;
@@ -202,6 +215,36 @@ async fn shutdown_persists_reliable_send_recovery_without_waiting_for_rpc() {
         persisted.outgoing_send(9).unwrap().state,
         tg_mobile_core::OutgoingSendState::AwaitingConfirmation { .. }
     ));
+}
+
+#[tokio::test]
+async fn idle_shutdown_is_delivered_to_backend() {
+    let (backend, mut started, _release) = ControlledBackend::new(false);
+    let core = spawn_core_with_store(backend, MemoryStateStore::default());
+    core.shutdown().await.unwrap();
+    wait_for_command(&mut started, CoreCommand::Shutdown).await;
+    timeout(Duration::from_secs(1), async {
+        while core.state().running {
+            sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("idle backend shutdown did not finish");
+}
+
+#[tokio::test]
+async fn a_hung_backend_shutdown_is_cancelled_after_its_finite_timeout() {
+    let (backend, mut started) = ControlledBackend::hanging_shutdown();
+    let core = spawn_core_with_store(backend, MemoryStateStore::default());
+    timeout(Duration::from_millis(1_400), async {
+        core.shutdown().await.unwrap();
+        wait_for_command(&mut started, CoreCommand::Shutdown).await;
+        while core.state().running {
+            sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("hung backend shutdown exceeded its finite timeout");
 }
 
 #[tokio::test]
