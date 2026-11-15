@@ -14,6 +14,9 @@ pub struct CoreState {
     pub running: bool,
     pub account: AccountState,
     pub messages: BTreeMap<i64, Vec<MessageSummary>>,
+    /// Reply references keyed by chat ID and reply message ID.
+    #[serde(default)]
+    pub reply_targets: BTreeMap<i64, BTreeMap<i64, i64>>,
     pub last_error: Option<String>,
 }
 
@@ -23,6 +26,7 @@ impl Default for CoreState {
             running: true,
             account: AccountState::default(),
             messages: BTreeMap::new(),
+            reply_targets: BTreeMap::new(),
             last_error: None,
         }
     }
@@ -66,6 +70,18 @@ impl CoreState {
                 }
 
                 self.last_error = None;
+            }
+            CoreEvent::MessageReplied {
+                message,
+                reply_to_message_id,
+            } => {
+                self.reduce(&CoreEvent::MessageAdded(message.clone()));
+                if message.id > 0 && *reply_to_message_id > 0 {
+                    self.reply_targets
+                        .entry(message.chat_id)
+                        .or_default()
+                        .insert(message.id, *reply_to_message_id);
+                }
             }
             CoreEvent::MessageEdited(message) => {
                 self.upsert_message(message.clone());
@@ -117,6 +133,13 @@ impl CoreState {
                     }
                 }
 
+                if let Some(targets) = self.reply_targets.get_mut(chat_id) {
+                    targets.remove(message_id);
+                    if targets.is_empty() {
+                        self.reply_targets.remove(chat_id);
+                    }
+                }
+
                 self.last_error = None;
             }
             CoreEvent::Error(error) => {
@@ -137,6 +160,13 @@ impl CoreState {
             .get(&chat_id)
             .map(Vec::as_slice)
             .unwrap_or(&[])
+    }
+
+    pub fn reply_target_for_message(&self, chat_id: i64, message_id: i64) -> Option<i64> {
+        self.reply_targets
+            .get(&chat_id)
+            .and_then(|targets| targets.get(&message_id))
+            .copied()
     }
 
     pub fn total_unread_count(&self) -> u64 {
