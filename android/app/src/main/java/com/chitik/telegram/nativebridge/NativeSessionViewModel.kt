@@ -43,8 +43,9 @@ class NativeSessionViewModel(application: Application) :
     private val _state = MutableStateFlow(NativeUiState())
     val state: StateFlow<NativeUiState> = _state.asStateFlow()
 
-    @Volatile
+    private val lifecycleLock = Any()
     private var handle: Long = 0L
+    private var cleared = false
 
     init {
         initializeNativeSession()
@@ -76,7 +77,10 @@ class NativeSessionViewModel(application: Application) :
                     NativeBridge.createHandle(this@NativeSessionViewModel)
                 }
                 require(newHandle != 0L) { "Rust returned an invalid native handle" }
-                handle = newHandle
+                if (!registerHandle(newHandle)) {
+                    runCatching { NativeBridge.destroyHandle(newHandle) }
+                    throw IllegalStateException("Native session owner was already cleared")
+                }
                 NativeBridge.probe(newHandle)
                 Triple(version, newHandle, config != null)
             }.onSuccess { (version, newHandle, configured) ->
@@ -97,7 +101,7 @@ class NativeSessionViewModel(application: Application) :
                 _state.update {
                     it.copy(
                         libraryLoaded = true,
-                        nativeHandle = handle,
+                        nativeHandle = currentHandle(),
                         busy = false,
                         error = error.message ?: error::class.java.simpleName,
                     )
@@ -145,14 +149,16 @@ class NativeSessionViewModel(application: Application) :
         viewModelScope.launch(Dispatchers.IO) {
             runCatching {
                 TelegramRuntimeConfigStore.clear(getApplication())
-                val oldHandle = handle
-                handle = 0L
+                val oldHandle = takeHandle()
                 if (oldHandle != 0L) {
                     NativeBridge.destroyHandle(oldHandle)
                 }
                 val newHandle = NativeBridge.createHandle(this@NativeSessionViewModel)
                 require(newHandle != 0L) { "Rust returned an invalid native handle" }
-                handle = newHandle
+                if (!registerHandle(newHandle)) {
+                    runCatching { NativeBridge.destroyHandle(newHandle) }
+                    throw IllegalStateException("Native session owner was already cleared")
+                }
                 NativeBridge.probe(newHandle)
                 newHandle
             }.onSuccess { newHandle ->
@@ -179,8 +185,7 @@ class NativeSessionViewModel(application: Application) :
     }
 
     private fun replaceWithTelegramHandle(config: TelegramRuntimeConfig): Long {
-        val oldHandle = handle
-        handle = 0L
+        val oldHandle = takeHandle()
         if (oldHandle != 0L) {
             NativeBridge.destroyHandle(oldHandle)
         }
@@ -192,24 +197,23 @@ class NativeSessionViewModel(application: Application) :
             config.sessionDatabasePath,
         )
         require(newHandle != 0L) { "Rust returned an invalid Telegram handle" }
-        handle = newHandle
+        if (!registerHandle(newHandle)) {
+            runCatching { NativeBridge.destroyHandle(newHandle) }
+            throw IllegalStateException("Native session owner was already cleared")
+        }
         NativeBridge.probe(newHandle)
         return newHandle
     }
 
     fun probeRoundTrip() {
-        val currentHandle = handle
-        if (currentHandle == 0L || !NativeLibrary.isLoaded) {
-            _state.update { it.copy(error = "Native bridge is not available") }
-            return
-        }
-
-        runCatching { NativeBridge.probe(currentHandle) }
-            .onFailure { error ->
-                _state.update {
-                    it.copy(error = error.message ?: error::class.java.simpleName)
+        withActiveHandle { currentHandle ->
+            runCatching { NativeBridge.probe(currentHandle) }
+                .onFailure { error ->
+                    _state.update {
+                        it.copy(error = error.message ?: error::class.java.simpleName)
+                    }
                 }
-            }
+        }
     }
 
     fun sendStartCommand() {
@@ -302,39 +306,31 @@ class NativeSessionViewModel(application: Application) :
     }
 
     private fun sendCommand(commandJson: String) {
-        val currentHandle = handle
-        if (currentHandle == 0L || !NativeLibrary.isLoaded) {
-            _state.update {
-                it.copy(
-                    busy = false,
-                    error = "Native bridge is not available",
-                )
-            }
-            return
-        }
-
-        runCatching { NativeBridge.sendCommand(currentHandle, commandJson) }
-            .onSuccess { accepted ->
-                if (!accepted) {
+        withActiveHandle { currentHandle ->
+            runCatching { NativeBridge.sendCommand(currentHandle, commandJson) }
+                .onSuccess { accepted ->
+                    if (!accepted) {
+                        _state.update {
+                            it.copy(
+                                busy = false,
+                                error = "Rust rejected the command",
+                            )
+                        }
+                    }
+                }
+                .onFailure { error ->
                     _state.update {
                         it.copy(
                             busy = false,
-                            error = "Rust rejected the command",
+                            error = error.message ?: error::class.java.simpleName,
                         )
                     }
                 }
-            }
-            .onFailure { error ->
-                _state.update {
-                    it.copy(
-                        busy = false,
-                        error = error.message ?: error::class.java.simpleName,
-                    )
-                }
-            }
+        }
     }
 
     override fun onNativeEvent(type: String, payload: String) {
+        if (isCleared()) return
         when (type) {
             "state" -> applyStatePayload(payload)
             "authorization_changed" -> applyAuthorizationEvent(payload)
@@ -533,9 +529,55 @@ class NativeSessionViewModel(application: Application) :
         }.getOrDefault("")
     }
 
-    override fun onCleared() {
-        val currentHandle = handle
+    private fun registerHandle(newHandle: Long): Boolean = synchronized(lifecycleLock) {
+        if (cleared) {
+            false
+        } else {
+            handle = newHandle
+            true
+        }
+    }
+
+    private fun takeHandle(): Long = synchronized(lifecycleLock) {
+        val current = handle
         handle = 0L
+        current
+    }
+
+    private fun currentHandle(): Long = synchronized(lifecycleLock) { handle }
+
+    private fun isCleared(): Boolean = synchronized(lifecycleLock) { cleared }
+
+    private fun withActiveHandle(action: (Long) -> Unit) {
+        synchronized(lifecycleLock) {
+            if (cleared) return
+
+            val current = handle
+            if (current == 0L || !NativeLibrary.isLoaded) {
+                _state.update {
+                    it.copy(
+                        busy = false,
+                        error = "Native bridge is not available",
+                    )
+                }
+                return
+            }
+            action(current)
+        }
+    }
+
+    override fun onCleared() {
+        val currentHandle = synchronized(lifecycleLock) {
+            if (cleared) {
+                0L
+            } else {
+                cleared = true
+                val current = handle
+                handle = 0L
+                _state.update { it.copy(nativeHandle = 0L) }
+                current
+            }
+        }
         if (currentHandle != 0L && NativeLibrary.isLoaded) {
             runCatching { NativeBridge.destroyHandle(currentHandle) }
         }
