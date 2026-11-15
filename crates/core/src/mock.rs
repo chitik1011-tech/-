@@ -5,7 +5,7 @@ use crate::{
     command::CoreCommand,
     error::{CoreError, Result},
     event::CoreEvent,
-    model::{AuthorizationState, ChatSummary, MessageSummary},
+    model::{AuthorizationState, ChatSummary, MessageSummary, ReactionOperation},
 };
 
 pub struct MockTelegramBackend {
@@ -121,9 +121,28 @@ impl MockTelegramBackend {
 
                 Ok(vec![CoreEvent::MessageAdded(message)])
             }
-            CoreCommand::AddReaction { .. } | CoreCommand::RemoveReaction { .. } => Err(
-                CoreError::Backend("mock backend does not implement message reactions".into()),
-            ),
+            CoreCommand::AddReaction {
+                chat_id,
+                message_id,
+                emoji,
+            } => Ok(vec![CoreEvent::ReactionOperationFailed {
+                chat_id,
+                message_id,
+                emoji,
+                operation: ReactionOperation::Add,
+                error: "mock backend does not implement message reactions".into(),
+            }]),
+            CoreCommand::RemoveReaction {
+                chat_id,
+                message_id,
+                emoji,
+            } => Ok(vec![CoreEvent::ReactionOperationFailed {
+                chat_id,
+                message_id,
+                emoji,
+                operation: ReactionOperation::Remove,
+                error: "mock backend does not implement message reactions".into(),
+            }]),
             CoreCommand::Shutdown => Ok(Vec::new()),
         }
     }

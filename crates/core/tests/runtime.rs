@@ -79,6 +79,40 @@ fn wire_protocol_round_trips_commands_events_and_state() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn unsupported_reaction_is_reported_to_subscribers_without_mutating_state() {
+    let core = spawn_core(MockTelegramBackend::default());
+    let mut events = core.subscribe();
+
+    core.send(CoreCommand::AddReaction {
+        chat_id: 2,
+        message_id: 1,
+        emoji: "👍".into(),
+    })
+    .await
+    .unwrap();
+
+    let event = timeout(Duration::from_secs(1), events.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        event,
+        CoreEvent::ReactionOperationFailed {
+            chat_id: 2,
+            message_id: 1,
+            emoji: "👍".into(),
+            operation: tg_mobile_core::ReactionOperation::Add,
+            error: "mock backend does not implement message reactions".into(),
+        }
+    );
+    assert_eq!(
+        core.state().last_error.as_deref(),
+        Some("mock backend does not implement message reactions")
+    );
+    assert!(core.state().messages_for_chat(2).is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn memory_store_restores_state_for_runtime() {
     let store = MemoryStateStore::default();
     let mut saved = CoreState::default();
