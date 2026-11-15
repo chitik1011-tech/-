@@ -44,7 +44,7 @@ impl CoreState {
                 self.last_error = None;
             }
             CoreEvent::MessageAdded(message) => {
-                self.upsert_message(message.clone());
+                let inserted = self.upsert_message(message.clone());
 
                 if let Some(chat) = self
                     .account
@@ -52,6 +52,9 @@ impl CoreState {
                     .iter_mut()
                     .find(|chat| chat.id == message.chat_id)
                 {
+                    if inserted && !message.outgoing {
+                        chat.unread_count = chat.unread_count.saturating_add(1);
+                    }
                     chat.last_message = Some(message.clone());
                 } else {
                     self.account.chats.push(ChatSummary {
@@ -92,14 +95,15 @@ impl CoreState {
             .sum()
     }
 
-    fn upsert_message(&mut self, message: MessageSummary) {
+    fn upsert_message(&mut self, message: MessageSummary) -> bool {
         let messages = self.messages.entry(message.chat_id).or_default();
-
-        if let Some(index) = messages.iter().position(|item| item.id == message.id) {
+        let inserted = if let Some(index) = messages.iter().position(|item| item.id == message.id) {
             messages[index] = message;
+            false
         } else {
             messages.push(message);
-        }
+            true
+        };
 
         messages.sort_by_key(|item| (item.timestamp_unix, item.id));
 
@@ -107,5 +111,7 @@ impl CoreState {
         if excess > 0 {
             messages.drain(..excess);
         }
+
+        inserted
     }
 }
