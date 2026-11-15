@@ -212,6 +212,7 @@ async fn restore_state<S: StateStore>(
     match store.load().await {
         Ok(Some(mut state)) => {
             state.running = true;
+            state.connection_state = crate::connection::ConnectionState::Offline;
             state.last_error = None;
             let _ = state_tx.send(state.clone());
             state
