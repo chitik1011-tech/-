@@ -45,10 +45,7 @@ pub(crate) fn api_error(context: &'static str, error: impl std::fmt::Display) ->
     TelegramBackendError::Api(format!("{context}: {error}")).into()
 }
 
-pub(crate) fn auth_api_error(
-    context: &'static str,
-    _error: impl std::fmt::Display,
-) -> CoreError {
+pub(crate) fn auth_api_error(context: &'static str, _error: impl std::fmt::Display) -> CoreError {
     TelegramBackendError::Authorization(format!("{context}: Telegram request failed")).into()
 }
 
