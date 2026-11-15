@@ -104,6 +104,25 @@ impl MockTelegramBackend {
                 messages.sort_by_key(|message| (message.timestamp_unix, message.id));
                 Ok(vec![CoreEvent::MessagesLoaded { chat_id, messages }])
             }
+            CoreCommand::MarkRead {
+                chat_id,
+                max_message_id,
+            } => {
+                if let Some(chat) = self.chats.iter_mut().find(|chat| chat.id == chat_id) {
+                    let covers_latest = chat
+                        .last_message
+                        .as_ref()
+                        .map(|message| message.id <= max_message_id)
+                        .unwrap_or(true);
+                    if covers_latest {
+                        chat.unread_count = 0;
+                    }
+                }
+                Ok(vec![CoreEvent::ChatRead {
+                    chat_id,
+                    max_message_id,
+                }])
+            }
             CoreCommand::SendText { chat_id, text } => {
                 if self.authorization != AuthorizationState::Ready {
                     return Err(CoreError::Backend("not authorized".into()));
