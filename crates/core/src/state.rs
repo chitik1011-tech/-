@@ -61,14 +61,10 @@ impl CoreState {
             } => {
                 self.merge_message_page(*chat_id, cursor.as_ref(), messages);
 
-                let page_has_messages = messages
-                    .iter()
-                    .any(|message| message.chat_id == *chat_id);
+                let page_has_messages = messages.iter().any(|message| message.chat_id == *chat_id);
                 let cursor_advanced = next_cursor.as_ref() != cursor.as_ref();
-                let has_more = *has_more
-                    && page_has_messages
-                    && cursor_advanced
-                    && next_cursor.is_some();
+                let has_more =
+                    *has_more && page_has_messages && cursor_advanced && next_cursor.is_some();
                 let history = self.message_history.entry(*chat_id).or_default();
                 history.loading = false;
                 history.has_more = has_more;
@@ -126,11 +122,11 @@ impl CoreState {
             .unwrap_or(&[])
     }
 
-    pub fn message_history_for_chat(
-        &self,
-        chat_id: i64,
-    ) -> MessageHistoryState {
-        self.message_history.get(&chat_id).cloned().unwrap_or_default()
+    pub fn message_history_for_chat(&self, chat_id: i64) -> MessageHistoryState {
+        self.message_history
+            .get(&chat_id)
+            .cloned()
+            .unwrap_or_default()
     }
 
     pub fn total_unread_count(&self) -> u64 {
@@ -238,7 +234,10 @@ mod tests {
         });
 
         let messages = state.messages_for_chat(7);
-        assert_eq!(messages.iter().map(|item| item.id).collect::<Vec<_>>(), [1, 2, 3]);
+        assert_eq!(
+            messages.iter().map(|item| item.id).collect::<Vec<_>>(),
+            [1, 2, 3]
+        );
         assert_eq!(messages[1].text, "two-updated");
 
         let history = state.message_history_for_chat(7);
