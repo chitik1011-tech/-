@@ -177,12 +177,8 @@ fn install_native_handle(
                 Ok(event) => {
                     match encode_event(&event) {
                         Ok(payload) => {
-                            let _ = emit_callback(
-                                &event_vm,
-                                &event_callback,
-                                event.kind(),
-                                &payload,
-                            );
+                            let _ =
+                                emit_callback(&event_vm, &event_callback, event.kind(), &payload);
                         }
                         Err(error) => {
                             emit_error(&event_vm, &event_callback, &error.to_string());
