@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -49,6 +49,7 @@ impl CoreState {
             }
             CoreEvent::MessageAdded(message) => {
                 let inserted = self.upsert_message(message.clone());
+                self.prune_reply_targets(message.chat_id);
 
                 if let Some(chat) = self
                     .account
@@ -76,7 +77,11 @@ impl CoreState {
                 reply_to_message_id,
             } => {
                 self.reduce(&CoreEvent::MessageAdded(message.clone()));
-                if message.id > 0 && *reply_to_message_id > 0 {
+                let reply_is_cached = self
+                    .messages_for_chat(message.chat_id)
+                    .iter()
+                    .any(|cached| cached.id == message.id);
+                if reply_is_cached && message.id > 0 && *reply_to_message_id > 0 {
                     self.reply_targets
                         .entry(message.chat_id)
                         .or_default()
@@ -85,6 +90,7 @@ impl CoreState {
             }
             CoreEvent::MessageEdited(message) => {
                 self.upsert_message(message.clone());
+                self.prune_reply_targets(message.chat_id);
 
                 if let Some(chat) = self
                     .account
@@ -175,6 +181,26 @@ impl CoreState {
             .iter()
             .map(|chat| u64::from(chat.unread_count))
             .sum()
+    }
+
+    fn prune_reply_targets(&mut self, chat_id: i64) {
+        let retained_message_ids = self
+            .messages
+            .get(&chat_id)
+            .map(|messages| {
+                messages
+                    .iter()
+                    .map(|message| message.id)
+                    .collect::<BTreeSet<_>>()
+            })
+            .unwrap_or_default();
+
+        if let Some(targets) = self.reply_targets.get_mut(&chat_id) {
+            targets.retain(|reply_id, _| retained_message_ids.contains(reply_id));
+            if targets.is_empty() {
+                self.reply_targets.remove(&chat_id);
+            }
+        }
     }
 
     fn upsert_message(&mut self, message: MessageSummary) -> bool {
