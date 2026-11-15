@@ -80,13 +80,13 @@ async fn file_persistence_drops_phone_but_keeps_other_profile_fields() {
 
     let event_json = tg_mobile_core::encode_event(&CoreEvent::ProfileUpdated(profile))
         .expect("profile event serializes");
-    assert!(event_json.contains("\\"phone\\":\\"+15551234567\\""));
+    assert!(event_json.contains("\"phone\":\"+15551234567\""));
 
     store.save(&state).await.expect("state saves");
     let persisted_json = std::fs::read_to_string(store.path()).expect("persisted JSON reads");
-    assert!(!persisted_json.contains("\\"phone\\""));
-    assert!(persisted_json.contains("\\"username\\":\\"member\\""));
-    assert!(persisted_json.contains("\\"bio\\":\\"Telegram supplied bio\\""));
+    assert!(!persisted_json.contains("\"phone\""));
+    assert!(persisted_json.contains("\"username\":\"member\""));
+    assert!(persisted_json.contains("\"bio\":\"Telegram supplied bio\""));
 
     let restored = store
         .load()
@@ -110,7 +110,11 @@ async fn memory_store_drops_phone_fields_too() {
     state.reduce(&CoreEvent::ProfileUpdated(profile));
 
     store.save(&state).await.expect("state saves");
-    let restored = store.load().await.expect("state loads").expect("state exists");
+    let restored = store
+        .load()
+        .await
+        .expect("state loads")
+        .expect("state exists");
     let restored_profile = restored.profile(74).expect("profile exists");
     assert_eq!(restored_profile.phone, None);
     assert_eq!(restored_profile.username.as_deref(), Some("cached"));
