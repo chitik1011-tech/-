@@ -19,7 +19,9 @@ pub use backend::{
 pub use command::{CoreCommand, MAX_CHAT_LOAD_LIMIT};
 pub use error::{CoreError, Result};
 pub use event::CoreEvent;
-pub use forwarding::{ForwardMessagesRequest, ForwardMessagesResult, ForwardOutcome, MAX_FORWARD_MESSAGES};
+pub use forwarding::{
+    ForwardMessagesRequest, ForwardMessagesResult, ForwardOutcome, MAX_FORWARD_MESSAGES,
+};
 pub use mock::MockTelegramBackend;
 pub use model::{AccountState, AuthorizationState, ChatSummary, MessageRef, MessageSummary};
 pub use runtime::{spawn_core, spawn_core_with_store, CoreHandle, PERSISTENCE_FLUSH_INTERVAL_MS};
