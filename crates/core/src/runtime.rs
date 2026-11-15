@@ -743,11 +743,29 @@ fn operation_error_events(command: &CoreCommand, error: CoreError) -> Vec<CoreEv
             poll_id: *poll_id,
             error: error.to_string(),
         }],
+        CoreCommand::ForwardMessages(request) => vec![CoreEvent::MessagesForwarded(
+            crate::forwarding::ForwardMessagesResult {
+                request_id: request.request_id.clone(),
+                source_chat_id: request.source_chat_id,
+                destination_chat_id: request.destination_chat_id,
+                outcomes: request
+                    .message_ids
+                    .iter()
+                    .map(|id| crate::forwarding::ForwardOutcome::Failed {
+                        source_message_id: *id,
+                        error: error.to_string(),
+                    })
+                    .collect(),
+            },
+        )],
         _ => vec![CoreEvent::Error(error.to_string())],
     }
 }
 
 fn complete_operation_events(command: &CoreCommand, events: &mut Vec<CoreEvent>) {
+    if let CoreCommand::ForwardMessages(request) = command {
+        *events = crate::forwarding::normalize_forward_events(request, std::mem::take(events));
+    }
     if let CoreCommand::LoadMessagesPage {
         chat_id,
         before_message_id,
@@ -831,6 +849,25 @@ fn recover_interrupted_operation(
                 text.clone(),
                 "connection changed while send outcome was unknown",
             )),
+            state,
+            state_tx,
+            event_tx,
+            activity_tracker,
+        ),
+        CoreCommand::ForwardMessages(request) => apply_event(
+            CoreEvent::MessagesForwarded(crate::forwarding::ForwardMessagesResult {
+                request_id: request.request_id.clone(),
+                source_chat_id: request.source_chat_id,
+                destination_chat_id: request.destination_chat_id,
+                outcomes: request
+                    .message_ids
+                    .iter()
+                    .map(|id| crate::forwarding::ForwardOutcome::Failed {
+                        source_message_id: *id,
+                        error: "forward outcome is unknown because the connection changed".into(),
+                    })
+                    .collect(),
+            }),
             state,
             state_tx,
             event_tx,

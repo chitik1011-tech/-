@@ -34,6 +34,7 @@ data class NativeUiState(
     val messages: Map<Long, List<ConversationMessageUi>> = emptyMap(),
     val votingPollIds: Set<Long> = emptySet(),
     val pollVoteErrors: Map<Long, String> = emptyMap(),
+    val forwardError: String? = null,
     val busy: Boolean = false,
     val lastEventType: String = "none",
     val lastEventPayload: String = "",
@@ -360,6 +361,23 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         )
     }
 
+    fun forwardMessages(sourceChatId: Long, messageIds: List<Long>, destinationChatId: Long) {
+        if (sourceChatId == 0L || destinationChatId == 0L || messageIds.isEmpty()) return
+        val ids = JSONArray().apply { messageIds.forEach { id -> put(id) } }
+        _state.update { it.copy(busy = true, error = null, forwardError = null) }
+        val accepted = sendCommand(
+            JSONObject()
+                .put("type", "forward_messages")
+                .put("payload", JSONObject()
+                    .put("request_id", java.util.UUID.randomUUID().toString())
+                    .put("source_chat_id", sourceChatId)
+                    .put("message_ids", ids)
+                    .put("destination_chat_id", destinationChatId))
+                .toString(),
+        )
+        if (!accepted) _state.update { it.copy(busy = false, error = "Не удалось отправить запрос пересылки") }
+    }
+
     fun votePoll(poll: ConversationPollUi, optionIds: List<List<Int>>) {
         if (poll.closed) {
             _state.update {
@@ -581,6 +599,31 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                     }
                 }
             }
+            "messages_forwarded" -> {
+                val (succeeded, failed, firstError) = runCatching {
+                    val result = JSONObject(payload).optJSONObject("payload") ?: JSONObject()
+                    val outcomes = result.optJSONArray("outcomes") ?: JSONArray()
+                    var ok = 0
+                    var errors = 0
+                    var detail: String? = null
+                    for (index in 0 until outcomes.length()) {
+                        val outcome = outcomes.optJSONObject(index) ?: continue
+                        if (outcome.optString("status") == "forwarded") ok++ else {
+                            errors++
+                            if (detail == null) detail = outcome.optString("error").takeIf(String::isNotBlank)
+                        }
+                    }
+                    Triple(ok, errors, detail)
+                }.getOrDefault(Triple(0, 1, null))
+                _state.update {
+                    it.copy(
+                        busy = false,
+                        lastEventType = type,
+                        lastEventPayload = payload,
+                        forwardError = if (failed == 0) null else "Переслано $succeeded, не удалось: $failed${firstError?.let { detail -> " — $detail" }.orEmpty()}",
+                    )
+                }
+            }
             "message_added",
             "chat_read",
             -> {
@@ -784,6 +827,11 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                     for (index in 0 until array.length()) {
                         val message = array.optJSONObject(index) ?: continue
                         val timestamp = message.optLong("timestamp_unix")
+                        val forwarded = message.optJSONObject("forwarded_from")
+                        val forwardLabel = forwarded?.optString("sender_display_name")?.takeIf(String::isNotBlank)
+                            ?: forwarded?.optLong("sender_id")?.takeIf { it != 0L }?.let { "пользователь $it" }
+                            ?: forwarded?.optLong("channel_id")?.takeIf { it != 0L }?.let { "канал $it" }
+                            ?: forwarded?.optLong("chat_id")?.takeIf { it != 0L }?.let { "чат $it" }
                         add(
                             ConversationMessageUi(
                                 id = message.optLong("id").toString(),
@@ -794,6 +842,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                                 attachments = parseMediaAttachments(
                                     message.optJSONArray("attachments") ?: JSONArray(),
                                 ),
+                                forwardedFrom = forwardLabel,
                                 poll = polls[chatId to message.optLong("id")],
                             ),
                         )

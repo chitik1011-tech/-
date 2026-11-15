@@ -15,9 +15,9 @@ use tg_media_cache::{CacheConfig, MediaCache};
 use tg_mobile_core::{
     AttachmentDownloadState, AuthorizationState, BackendFuture, BackendUpdateReceiver,
     BackendUpdateSender, ConnectionToken, CoreCommand, CoreError, CoreEvent, DownloadState,
-    MessageLinkResolution, MessagePeer, MessageSummary, OutgoingSend, PeerReference,
-    PeerResolution, TelegramBackend, TransferDirection, TransferManager, TransferState,
-    backend_update_channel,
+    ForwardMessagesResult, ForwardOutcome, MessageLinkResolution, MessagePeer, MessageSummary,
+    OutgoingSend, PeerReference, PeerResolution, TelegramBackend, TransferDirection,
+    TransferManager, TransferState, backend_update_channel,
 };
 use tokio::{
     sync::{broadcast, mpsc, watch},
@@ -798,6 +798,79 @@ impl GrammersBackend {
                 message_id,
                 attachment_index,
             } => self.cancel_media_download(chat_id, message_id, attachment_index)?,
+            CoreCommand::ForwardMessages(request) => {
+                self.require_ready().await?;
+                let source = find_peer(&self.peers, request.source_chat_id)
+                    .await
+                    .ok_or(TelegramBackendError::UnknownChat(request.source_chat_id))?;
+                let destination = find_peer(&self.peers, request.destination_chat_id)
+                    .await
+                    .ok_or(TelegramBackendError::UnknownChat(
+                        request.destination_chat_id,
+                    ))?;
+                let ids = request
+                    .message_ids
+                    .iter()
+                    .map(|id| *id as i32)
+                    .collect::<Vec<_>>();
+                match self
+                    .client
+                    .forward_messages(destination, &ids, source)
+                    .await
+                {
+                    Ok(forwarded) => {
+                        let mut events = Vec::with_capacity(forwarded.len() + 1);
+                        let mut outcomes = Vec::with_capacity(request.message_ids.len());
+                        for (source_message_id, message) in
+                            request.message_ids.iter().zip(forwarded)
+                        {
+                            match message {
+                                Some(message) => {
+                                    let summary = crate::messages::message_to_summary(&message);
+                                    if summary.chat_id != request.destination_chat_id {
+                                        outcomes.push(ForwardOutcome::Failed {
+                                            source_message_id: *source_message_id,
+                                            error: "Telegram returned a forwarded message for a different destination".into(),
+                                        });
+                                    } else {
+                                        if self.dedup.should_emit(&summary).await {
+                                            events.push(CoreEvent::MessageAdded(summary.clone()));
+                                        }
+                                        outcomes.push(ForwardOutcome::Forwarded {
+                                            source_message_id: *source_message_id,
+                                            destination_message_id: summary.id,
+                                        });
+                                    }
+                                }
+                                None => outcomes.push(ForwardOutcome::Failed {
+                                    source_message_id: *source_message_id,
+                                    error: "Telegram did not forward this message".into(),
+                                }),
+                            }
+                        }
+                        events.push(CoreEvent::MessagesForwarded(ForwardMessagesResult {
+                            request_id: request.request_id,
+                            source_chat_id: request.source_chat_id,
+                            destination_chat_id: request.destination_chat_id,
+                            outcomes,
+                        }));
+                        events
+                    }
+                    Err(error) => vec![CoreEvent::MessagesForwarded(ForwardMessagesResult {
+                        request_id: request.request_id,
+                        source_chat_id: request.source_chat_id,
+                        destination_chat_id: request.destination_chat_id,
+                        outcomes: request
+                            .message_ids
+                            .iter()
+                            .map(|id| ForwardOutcome::Failed {
+                                source_message_id: *id,
+                                error: error.to_string(),
+                            })
+                            .collect(),
+                    })],
+                }
+            }
             CoreCommand::VotePoll {
                 poll_id,
                 chat_id,

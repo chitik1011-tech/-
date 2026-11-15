@@ -10,6 +10,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.AlertDialog
@@ -75,6 +78,9 @@ private fun TelegramRustApp(
     val context = LocalContext.current
     var selectedChatId by rememberSaveable { mutableLongStateOf(0L) }
     var draft by rememberSaveable { mutableStateOf("") }
+    var showForwardTargets by remember { mutableStateOf(false) }
+    var forwardingSourceChatId by remember { mutableLongStateOf(0L) }
+    var forwardingMessageIds by remember { mutableStateOf<List<Long>>(emptyList()) }
     var confirmedJoinIntent by remember(incomingLink) { mutableStateOf<TelegramJoinInviteIntent?>(null) }
 
     when {
@@ -135,6 +141,7 @@ private fun TelegramRustApp(
                     loading = state.busy,
                     sending = false,
                     error = state.error,
+                    forwardingError = state.forwardError,
                 ),
                 onBack = {
                     selectedChatId = 0L
@@ -148,6 +155,11 @@ private fun TelegramRustApp(
                     }
                 },
                 onPollVote = viewModel::votePoll,
+                onForward = { sourceChatId, messageIds ->
+                    forwardingSourceChatId = sourceChatId
+                    forwardingMessageIds = messageIds
+                    showForwardTargets = messageIds.isNotEmpty()
+                },
                 onRetry = { viewModel.loadMessages(selectedChatId) },
                 onDownloadMedia = { messageId, attachmentIndex, retry ->
                     viewModel.downloadMedia(
@@ -191,6 +203,26 @@ private fun TelegramRustApp(
                 },
             )
         }
+    }
+    if (showForwardTargets) {
+        AlertDialog(
+            onDismissRequest = { showForwardTargets = false },
+            title = { Text("Куда переслать?") },
+            text = {
+                androidx.compose.foundation.lazy.LazyColumn(modifier = Modifier.heightIn(max = 360.dp)) {
+                    items(state.chats.filter { it.id != forwardingSourceChatId }, key = { it.id }) { target ->
+                        TextButton(
+                            onClick = {
+                                viewModel.forwardMessages(forwardingSourceChatId, forwardingMessageIds, target.id)
+                                showForwardTargets = false
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text(target.title, maxLines = 1) }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showForwardTargets = false }) { Text("Закрыть") } },
+        )
     }
     incomingLink?.let { link ->
         val title = if (link.requiresConfirmation) "Review Telegram invite" else "Telegram link received"
