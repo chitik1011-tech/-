@@ -133,7 +133,8 @@ mod tests {
         };
 
         let json = serde_json::to_string(&event).expect("serialize service event");
-        let decoded: ServiceMessage = serde_json::from_str(&json).expect("deserialize service event");
+        let decoded: ServiceMessage =
+            serde_json::from_str(&json).expect("deserialize service event");
         assert_eq!(decoded, event);
         assert_eq!(decoded.canonical_presentation().icon, ServiceIcon::Migration);
         assert!(!json.contains("text"));
@@ -161,14 +162,44 @@ mod tests {
     #[test]
     fn actions_have_stable_presentation_categories() {
         let cases = [
-            (ServiceAction::UserJoined { user_id: 1 }, ServiceIcon::People),
-            (ServiceAction::UserLeft { user_id: 1 }, ServiceIcon::PersonLeave),
-            (ServiceAction::UserAdded { user_ids: vec![1, 2] }, ServiceIcon::People),
-            (ServiceAction::TitleChanged { title: "Team".into() }, ServiceIcon::Edit),
-            (ServiceAction::PhotoChanged { photo_reference: None }, ServiceIcon::Photo),
-            (ServiceAction::MessagePinned { message_id: 4 }, ServiceIcon::Pin),
-            (ServiceAction::GroupCreated { title: None }, ServiceIcon::People),
-            (ServiceAction::ChannelCreated { title: None }, ServiceIcon::Channel),
+            (
+                ServiceAction::UserJoined { user_id: 1 },
+                ServiceIcon::People,
+            ),
+            (
+                ServiceAction::UserLeft { user_id: 1 },
+                ServiceIcon::PersonLeave,
+            ),
+            (
+                ServiceAction::UserAdded {
+                    user_ids: vec![1, 2],
+                },
+                ServiceIcon::People,
+            ),
+            (
+                ServiceAction::TitleChanged {
+                    title: "Team".into(),
+                },
+                ServiceIcon::Edit,
+            ),
+            (
+                ServiceAction::PhotoChanged {
+                    photo_reference: None,
+                },
+                ServiceIcon::Photo,
+            ),
+            (
+                ServiceAction::MessagePinned { message_id: 4 },
+                ServiceIcon::Pin,
+            ),
+            (
+                ServiceAction::GroupCreated { title: None },
+                ServiceIcon::People,
+            ),
+            (
+                ServiceAction::ChannelCreated { title: None },
+                ServiceIcon::Channel,
+            ),
             (
                 ServiceAction::GroupMigratedToSupergroup { supergroup_id: -100 },
                 ServiceIcon::Migration,
