@@ -3,21 +3,24 @@ name: Android JNI validation
 on:
   push:
     branches:
-      - agent/android-jni
-      - agent/integrate-telegram
+      - main
+      - "agent/**"
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: android-jni-${{ github.ref }}
+  group: android-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
 
@@ -26,8 +29,9 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Android SDK tools
-        uses: android-actions/setup-android@v4
+      - uses: gradle/actions/setup-gradle@v4
+
+      - uses: android-actions/setup-android@v4
         with:
           packages: ""
 
@@ -38,13 +42,17 @@ jobs:
           echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/28.2.13676358" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/28.2.13676358" >> "$GITHUB_ENV"
 
+      - name: Prepare Rust for Android
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+
       - name: Install cargo-ndk
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-ndk
-
-      - name: Prepare Android Rust target
-        run: rustup target add aarch64-linux-android
 
       - name: Check Rust workspace
         run: cargo check --workspace
@@ -52,3 +60,11 @@ jobs:
       - name: Build Android debug APK
         working-directory: android
         run: ./gradlew assembleDebug --stacktrace
+
+      - name: Verify ARM64 JNI library is packaged
+        working-directory: android
+        shell: bash
+        run: |
+          apk="app/build/outputs/apk/debug/app-debug.apk"
+          test -f "$apk"
+          unzip -Z1 "$apk" | grep -Fx "lib/arm64-v8a/libtg_android_bridge.so"
