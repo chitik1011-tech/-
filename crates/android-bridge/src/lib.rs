@@ -104,6 +104,7 @@ fn event_kind(event: &CoreEvent) -> &'static str {
         CoreEvent::AuthorizationChanged(_) => "authorization_changed",
         CoreEvent::ChatsLoaded(_) => "chats_loaded",
         CoreEvent::MessageAdded(_) => "message_added",
+        CoreEvent::ChatUnreadUpdated(_) => "chat_unread_updated",
         CoreEvent::Error(_) => "error",
         CoreEvent::Stopped => "stopped",
     }
@@ -472,6 +473,15 @@ mod tests {
     fn rejects_noncanonical_command_payload() {
         let parsed = decode_command(r#"{"type":"set_phone_number","phone_number":"123"}"#);
         assert!(parsed.is_err());
+    }
+
+    #[test]
+    fn maps_unread_update_to_stable_callback_kind() {
+        let event = CoreEvent::ChatUnreadUpdated(tg_mobile_core::ChatUnreadUpdate {
+            chat_id: 7,
+            ..Default::default()
+        });
+        assert_eq!(event_kind(&event), "chat_unread_updated");
     }
 
     #[test]
