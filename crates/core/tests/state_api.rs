@@ -1,6 +1,5 @@
 use std::{
-    fs,
-    process,
+    fs, process,
     time::{SystemTime, UNIX_EPOCH},
 };
 
