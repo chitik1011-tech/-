@@ -17,6 +17,18 @@ pub enum CoreCommand {
 }
 
 impl CoreCommand {
+    pub const fn kind(&self) -> &'static str {
+        match self {
+            Self::Start => "start",
+            Self::SetPhoneNumber(_) => "set_phone_number",
+            Self::SubmitCode(_) => "submit_code",
+            Self::SubmitPassword(_) => "submit_password",
+            Self::LoadChats { .. } => "load_chats",
+            Self::SendText { .. } => "send_text",
+            Self::Shutdown => "shutdown",
+        }
+    }
+
     pub fn validate(&self) -> Result<()> {
         match self {
             Self::Start | Self::Shutdown => Ok(()),
