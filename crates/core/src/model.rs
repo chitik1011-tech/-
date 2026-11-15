@@ -89,7 +89,6 @@ impl Default for AccountState {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
