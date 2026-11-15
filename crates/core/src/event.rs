@@ -12,3 +12,20 @@ pub enum CoreEvent {
     Error(String),
     Stopped,
 }
+
+impl CoreEvent {
+    pub const fn kind(&self) -> &'static str {
+        match self {
+            Self::State(_) => "state",
+            Self::AuthorizationChanged(_) => "authorization_changed",
+            Self::ChatsLoaded(_) => "chats_loaded",
+            Self::MessageAdded(_) => "message_added",
+            Self::Error(_) => "error",
+            Self::Stopped => "stopped",
+        }
+    }
+
+    pub const fn is_terminal(&self) -> bool {
+        matches!(self, Self::Stopped)
+    }
+}

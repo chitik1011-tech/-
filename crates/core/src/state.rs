@@ -7,6 +7,8 @@ use crate::{
     model::{AccountState, ChatSummary, MessageSummary},
 };
 
+pub const MAX_CACHED_MESSAGES_PER_CHAT: usize = 512;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CoreState {
     pub running: bool,
@@ -71,15 +73,39 @@ impl CoreState {
         }
     }
 
+    pub fn chat(&self, chat_id: i64) -> Option<&ChatSummary> {
+        self.account.chats.iter().find(|chat| chat.id == chat_id)
+    }
+
+    pub fn messages_for_chat(&self, chat_id: i64) -> &[MessageSummary] {
+        self.messages
+            .get(&chat_id)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+
+    pub fn total_unread_count(&self) -> u64 {
+        self.account
+            .chats
+            .iter()
+            .map(|chat| u64::from(chat.unread_count))
+            .sum()
+    }
+
     fn upsert_message(&mut self, message: MessageSummary) {
         let messages = self.messages.entry(message.chat_id).or_default();
 
-        if let Some(existing) = messages.iter_mut().find(|item| item.id == message.id) {
-            *existing = message;
-            return;
+        if let Some(index) = messages.iter().position(|item| item.id == message.id) {
+            messages[index] = message;
+        } else {
+            messages.push(message);
         }
 
-        messages.push(message);
         messages.sort_by_key(|item| (item.timestamp_unix, item.id));
+
+        let excess = messages.len().saturating_sub(MAX_CACHED_MESSAGES_PER_CHAT);
+        if excess > 0 {
+            messages.drain(..excess);
+        }
     }
 }

@@ -25,6 +25,8 @@ let handle = spawn_core_with_store(backend, store);
 
 Commands can be sent as Rust values with `CoreHandle::send` or through the JSON bridge with `CoreHandle::send_json`.
 
+Graceful shutdown is available through `CoreHandle::shutdown`. `CoreHandle::is_closed` reports when the command side has actually closed.
+
 State snapshots are available through:
 
 - `CoreHandle::state`
@@ -32,6 +34,36 @@ State snapshots are available through:
 - `CoreHandle::subscribe_state`
 
 Raw events are available through `CoreHandle::subscribe`.
+
+`CoreCommand::kind` and `CoreEvent::kind` return stable snake-case identifiers matching the JSON wire names. Bridges should use these helpers instead of maintaining exhaustive duplicate mappings. `CoreEvent::is_terminal` identifies terminal events.
+
+## Telegram backend updates
+
+`TelegramBackend::handle` is the request/response path for `CoreCommand` values.
+
+Real Telegram clients also receive updates while no command is running. A backend can expose that stream by overriding `TelegramBackend::take_updates` and returning a `BackendUpdateReceiver`.
+
+Create the standard bounded channel with:
+
+```rust
+let (update_tx, update_rx) = backend_update_channel();
+```
+
+The default capacity is exposed as `DEFAULT_BACKEND_UPDATE_CAPACITY`.
+
+The runtime listens to the command queue and backend update stream concurrently. Each successful backend update is reduced into `CoreState`, broadcast as a `CoreEvent`, and persisted through the configured `StateStore`.
+
+An error sent through the backend update channel is translated into `CoreEvent::Error`. Closing the update channel only disables unsolicited updates; command handling continues.
+
+A backend should transfer ownership of its update receiver only once:
+
+```rust
+fn take_updates(&mut self) -> Option<BackendUpdateReceiver> {
+    self.updates.take()
+}
+```
+
+This is the intended path for Telegram updates such as incoming messages, chat changes, connection/auth changes, and later typing/media updates.
 
 ## State stores
 
@@ -80,7 +112,7 @@ This wire format is intended for the Android/JNI bridge. Keep it backward compat
 
 `CoreState` is updated only from `CoreEvent` values.
 
-Incoming `MessageAdded` events are cached per chat and deduplicated by message ID. This prevents an optimistic/send result and the corresponding Telegram update from creating duplicate cached messages.
+Incoming `MessageAdded` events are cached per chat and deduplicated by message ID. The cache is bounded per chat for mobile memory safety.
 
 ## Safety
 

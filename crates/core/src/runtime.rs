@@ -1,7 +1,7 @@
 use tokio::sync::{broadcast, mpsc, watch};
 
 use crate::{
-    backend::TelegramBackend,
+    backend::{BackendUpdateReceiver, TelegramBackend},
     command::CoreCommand,
     error::{CoreError, Result},
     event::CoreEvent,
@@ -19,6 +19,8 @@ pub struct CoreHandle {
 
 impl CoreHandle {
     pub async fn send(&self, command: CoreCommand) -> Result<()> {
+        command.validate()?;
+
         self.commands
             .send(command)
             .await
@@ -27,6 +29,14 @@ impl CoreHandle {
 
     pub async fn send_json(&self, input: &str) -> Result<()> {
         self.send(decode_command(input)?).await
+    }
+
+    pub async fn shutdown(&self) -> Result<()> {
+        self.send(CoreCommand::Shutdown).await
+    }
+
+    pub fn is_closed(&self) -> bool {
+        self.commands.is_closed()
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<CoreEvent> {
@@ -58,50 +68,79 @@ where
     let (command_tx, mut command_rx) = mpsc::channel::<CoreCommand>(128);
     let (event_tx, _) = broadcast::channel::<CoreEvent>(256);
     let event_tx_task = event_tx.clone();
-
     let (state_tx, state_rx) = watch::channel(CoreState::default());
 
+    let mut backend_updates = backend.take_updates();
+
     tokio::spawn(async move {
-        let mut reduced_state = match store.load().await {
-            Ok(Some(mut state)) => {
-                state.running = true;
-                state.last_error = None;
-                let _ = state_tx.send(state.clone());
-                state
-            }
-            Ok(None) => CoreState::default(),
-            Err(error) => {
-                let mut state = CoreState::default();
-                let message = error.to_string();
-                state.last_error = Some(message.clone());
-                let _ = state_tx.send(state.clone());
-                let _ = event_tx_task.send(CoreEvent::Error(message));
-                state
-            }
-        };
+        let mut reduced_state = restore_state(&store, &state_tx, &event_tx_task).await;
 
-        while let Some(command) = command_rx.recv().await {
-            let stop = matches!(command, CoreCommand::Shutdown);
+        loop {
+            let input = next_runtime_input(&mut command_rx, &mut backend_updates).await;
 
-            let events = match backend.handle(command).await {
-                Ok(events) => events,
-                Err(error) => vec![CoreEvent::Error(error.to_string())],
-            };
+            match input {
+                RuntimeInput::Command(Some(command)) => {
+                    let shutdown_requested = matches!(command, CoreCommand::Shutdown);
+                    let events = match backend.handle(command).await {
+                        Ok(events) => events,
+                        Err(error) => vec![CoreEvent::Error(error.to_string())],
+                    };
 
-            for event in events {
-                reduced_state.reduce(&event);
-                let _ = state_tx.send(reduced_state.clone());
-                let _ = event_tx_task.send(event);
-                persist_state(&store, &mut reduced_state, &state_tx, &event_tx_task).await;
-            }
+                    let stopped = apply_events(
+                        events,
+                        &store,
+                        &mut reduced_state,
+                        &state_tx,
+                        &event_tx_task,
+                    )
+                    .await;
 
-            if stop {
-                let event = CoreEvent::Stopped;
-                reduced_state.reduce(&event);
-                let _ = state_tx.send(reduced_state.clone());
-                let _ = event_tx_task.send(event);
-                persist_state(&store, &mut reduced_state, &state_tx, &event_tx_task).await;
-                break;
+                    if shutdown_requested || stopped {
+                        if !stopped {
+                            apply_event(
+                                CoreEvent::Stopped,
+                                &store,
+                                &mut reduced_state,
+                                &state_tx,
+                                &event_tx_task,
+                            )
+                            .await;
+                        }
+                        break;
+                    }
+                }
+                RuntimeInput::Command(None) => {
+                    apply_event(
+                        CoreEvent::Stopped,
+                        &store,
+                        &mut reduced_state,
+                        &state_tx,
+                        &event_tx_task,
+                    )
+                    .await;
+                    break;
+                }
+                RuntimeInput::Update(Some(Ok(event))) => {
+                    let stopped = event.is_terminal();
+                    apply_event(event, &store, &mut reduced_state, &state_tx, &event_tx_task).await;
+
+                    if stopped {
+                        break;
+                    }
+                }
+                RuntimeInput::Update(Some(Err(error))) => {
+                    apply_event(
+                        CoreEvent::Error(error.to_string()),
+                        &store,
+                        &mut reduced_state,
+                        &state_tx,
+                        &event_tx_task,
+                    )
+                    .await;
+                }
+                RuntimeInput::Update(None) => {
+                    backend_updates = None;
+                }
             }
         }
     });
@@ -111,6 +150,80 @@ where
         events: event_tx,
         state: state_rx,
     }
+}
+
+enum RuntimeInput {
+    Command(Option<CoreCommand>),
+    Update(Option<Result<CoreEvent>>),
+}
+
+async fn next_runtime_input(
+    commands: &mut mpsc::Receiver<CoreCommand>,
+    updates: &mut Option<BackendUpdateReceiver>,
+) -> RuntimeInput {
+    match updates.as_mut() {
+        Some(updates) => {
+            tokio::select! {
+                command = commands.recv() => RuntimeInput::Command(command),
+                update = updates.recv() => RuntimeInput::Update(update),
+            }
+        }
+        None => RuntimeInput::Command(commands.recv().await),
+    }
+}
+
+async fn restore_state<S: StateStore>(
+    store: &S,
+    state_tx: &watch::Sender<CoreState>,
+    event_tx: &broadcast::Sender<CoreEvent>,
+) -> CoreState {
+    match store.load().await {
+        Ok(Some(mut state)) => {
+            state.running = true;
+            state.last_error = None;
+            let _ = state_tx.send(state.clone());
+            state
+        }
+        Ok(None) => CoreState::default(),
+        Err(error) => {
+            let mut state = CoreState::default();
+            let message = error.to_string();
+            state.last_error = Some(message.clone());
+            let _ = state_tx.send(state.clone());
+            let _ = event_tx.send(CoreEvent::Error(message));
+            state
+        }
+    }
+}
+
+async fn apply_events<S: StateStore>(
+    events: Vec<CoreEvent>,
+    store: &S,
+    state: &mut CoreState,
+    state_tx: &watch::Sender<CoreState>,
+    event_tx: &broadcast::Sender<CoreEvent>,
+) -> bool {
+    let mut stopped = false;
+
+    for event in events {
+        stopped |= event.is_terminal();
+        apply_event(event, store, state, state_tx, event_tx).await;
+    }
+
+    stopped
+}
+
+async fn apply_event<S: StateStore>(
+    event: CoreEvent,
+    store: &S,
+    state: &mut CoreState,
+    state_tx: &watch::Sender<CoreState>,
+    event_tx: &broadcast::Sender<CoreEvent>,
+) {
+    state.reduce(&event);
+    let _ = state_tx.send(state.clone());
+    let _ = event_tx.send(event);
+    persist_state(store, state, state_tx, event_tx).await;
 }
 
 async fn persist_state<S: StateStore>(
