@@ -139,6 +139,120 @@ pub(crate) async fn send_text(
     Ok(message_to_summary(&message))
 }
 
+pub(crate) async fn send_text_idempotent(
+    client: &Client,
+    peer: PeerRef,
+    text: String,
+    random_id: i64,
+) -> tg_mobile_core::Result<MessageSummary> {
+    if text.is_empty() {
+        return Err(CoreError::InvalidInput(
+            "message text must not be empty".into(),
+        ));
+    }
+    if random_id == 0 {
+        return Err(CoreError::InvalidInput(
+            "client message id must be non-zero".into(),
+        ));
+    }
+
+    let updates = client
+        .invoke(&tl::functions::messages::SendMessage {
+            no_webpage: false,
+            silent: false,
+            background: false,
+            clear_draft: false,
+            peer: peer.into(),
+            reply_to: None,
+            message: text,
+            random_id,
+            reply_markup: None,
+            entities: None,
+            schedule_date: None,
+            schedule_repeat_period: None,
+            send_as: None,
+            noforwards: false,
+            update_stickersets_order: false,
+            invert_media: false,
+            quick_reply_shortcut: None,
+            effect: None,
+            allow_paid_floodskip: false,
+            allow_paid_stars: None,
+            suggested_post: None,
+            rich_message: None,
+        })
+        .await
+        .map_err(|error| api_error("send idempotent message", error))?;
+
+    let message_id = sent_message_id(&updates, random_id).ok_or_else(|| {
+        CoreError::Backend(
+            "Telegram accepted send request but returned no resolvable message id".into(),
+        )
+    })?;
+
+    let mut messages = client
+        .get_messages_by_id(peer, &[message_id])
+        .await
+        .map_err(|error| api_error("fetch idempotently sent message", error))?;
+
+    let message = messages.pop().flatten().ok_or_else(|| {
+        CoreError::Backend(format!(
+            "Telegram accepted send request but message {message_id} could not be fetched"
+        ))
+    })?;
+
+    Ok(message_to_summary(&message))
+}
+
+fn sent_message_id(updates: &tl::enums::Updates, random_id: i64) -> Option<i32> {
+    match updates {
+        tl::enums::Updates::UpdateShortSentMessage(update) => Some(update.id),
+        tl::enums::Updates::Updates(updates) => {
+            sent_message_id_from_updates(&updates.updates, random_id)
+        }
+        tl::enums::Updates::Combined(updates) => {
+            sent_message_id_from_updates(&updates.updates, random_id)
+        }
+        tl::enums::Updates::UpdateShort(update) => {
+            sent_message_id_from_update(&update.update, random_id)
+        }
+        tl::enums::Updates::UpdateShortMessage(update) => Some(update.id),
+        tl::enums::Updates::UpdateShortChatMessage(update) => Some(update.id),
+        tl::enums::Updates::TooLong => None,
+    }
+}
+
+fn sent_message_id_from_updates(
+    updates: &[tl::enums::Update],
+    random_id: i64,
+) -> Option<i32> {
+    if let Some(message_id) = updates.iter().find_map(|update| match update {
+        tl::enums::Update::MessageId(update) if update.random_id == random_id => Some(update.id),
+        _ => None,
+    }) {
+        return Some(message_id);
+    }
+
+    let mut message_ids = updates.iter().filter_map(|update| match update {
+        tl::enums::Update::NewMessage(update) => Some(update.message.id()),
+        tl::enums::Update::NewChannelMessage(update) => Some(update.message.id()),
+        tl::enums::Update::NewScheduledMessage(update) => Some(update.message.id()),
+        _ => None,
+    });
+    let only = message_ids.next()?;
+    message_ids.next().is_none().then_some(only)
+}
+
+fn sent_message_id_from_update(update: &tl::enums::Update, random_id: i64) -> Option<i32> {
+    match update {
+        tl::enums::Update::MessageId(update) if update.random_id == random_id => Some(update.id),
+        tl::enums::Update::NewMessage(update) => Some(update.message.id()),
+        tl::enums::Update::NewChannelMessage(update) => Some(update.message.id()),
+        tl::enums::Update::NewScheduledMessage(update) => Some(update.message.id()),
+        _ => None,
+    }
+}
+
 #[derive(Debug)]
 struct RecentMessages {
     capacity: usize,
