@@ -20,9 +20,7 @@ impl CoreCommand {
     pub fn validate(&self) -> Result<()> {
         match self {
             Self::Start | Self::Shutdown => Ok(()),
-            Self::SetPhoneNumber(phone_number) => {
-                require_non_blank("phone number", phone_number)
-            }
+            Self::SetPhoneNumber(phone_number) => require_non_blank("phone number", phone_number),
             Self::SubmitCode(code) => require_non_blank("login code", code),
             Self::SubmitPassword(password) => {
                 if password.is_empty() {
@@ -42,9 +40,7 @@ impl CoreCommand {
             }
             Self::SendText { chat_id, text } => {
                 if *chat_id == 0 {
-                    return Err(CoreError::InvalidInput(
-                        "chat id must be non-zero".into(),
-                    ));
+                    return Err(CoreError::InvalidInput("chat id must be non-zero".into()));
                 }
 
                 require_non_blank("message text", text)
