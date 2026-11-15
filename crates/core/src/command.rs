@@ -1,4 +1,7 @@
-#[derive(Debug, Clone, PartialEq, Eq)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 pub enum CoreCommand {
     Start,
     SetPhoneNumber(String),

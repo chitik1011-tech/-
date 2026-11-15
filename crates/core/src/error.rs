@@ -13,6 +13,12 @@ pub enum CoreError {
 
     #[error("invalid input: {0}")]
     InvalidInput(String),
+
+    #[error("serialization error: {0}")]
+    Serialization(String),
+
+    #[error("storage error: {0}")]
+    Storage(String),
 }
 
 pub type Result<T> = std::result::Result<T, CoreError>;
