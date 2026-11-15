@@ -6,6 +6,7 @@ use tokio::{
 };
 
 use crate::{
+    activity::{ChatActivityTracker, CHAT_ACTIVITY_EXPIRY_CHECK_INTERVAL_MS},
     backend::{BackendUpdateReceiver, TelegramBackend},
     command::CoreCommand,
     connection_machine::{LinkEvent, LinkPhase},
@@ -88,6 +89,10 @@ where
         persistence_tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
         let mut persistence_dirty = false;
         let mut reconnect_sync_due = false;
+        let mut activity_tracker = ChatActivityTracker::default();
+        let activity_interval = Duration::from_millis(CHAT_ACTIVITY_EXPIRY_CHECK_INTERVAL_MS);
+        let mut activity_tick = interval_at(Instant::now() + activity_interval, activity_interval);
+        activity_tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
         loop {
             let input = next_runtime_input(
@@ -95,6 +100,8 @@ where
                 &mut backend_updates,
                 &mut persistence_tick,
                 persistence_dirty,
+                activity_tracker.has_active(),
+                &mut activity_tick,
             )
             .await;
 
@@ -395,13 +402,11 @@ where
                         }
                     }
 
-                    if !events.is_empty() {
-                        persistence_dirty = true;
-                    }
+                    persistence_dirty |= events.iter().any(|event| !event.is_transient());
 
                     let previous_token = reduced_state.connection_machine.token();
                     let stopped =
-                        apply_events(events, &mut reduced_state, &state_tx, &event_tx_task);
+                        apply_events(events, &mut reduced_state, &state_tx, &event_tx_task, &mut activity_tracker);
                     let current_token = reduced_state.connection_machine.token();
                     if current_token != previous_token {
                         backend.set_connection_token(current_token);
@@ -414,6 +419,7 @@ where
                                 &mut reduced_state,
                                 &state_tx,
                                 &event_tx_task,
+                                &mut activity_tracker,
                             );
                             persistence_dirty = true;
                         }
@@ -431,6 +437,7 @@ where
                         &mut reduced_state,
                         &state_tx,
                         &event_tx_task,
+                        &mut activity_tracker,
                     );
                     persist_state(&store, &mut reduced_state, &state_tx, &event_tx_task).await;
                     break;
@@ -442,7 +449,8 @@ where
                     let stopped = event.is_terminal();
                     let previous_token = reduced_state.connection_machine.token();
                     let previous_phase = reduced_state.connection_machine.phase();
-                    apply_event(event, &mut reduced_state, &state_tx, &event_tx_task);
+                    let event_is_persistent = !event.is_transient();
+                    apply_event(event, &mut reduced_state, &state_tx, &event_tx_task, &mut activity_tracker);
                     let current_phase = reduced_state.connection_machine.phase();
                     if previous_phase != LinkPhase::Reconnecting
                         && current_phase == LinkPhase::Reconnecting
@@ -480,6 +488,7 @@ where
                                             &mut reduced_state,
                                             &state_tx,
                                             &event_tx_task,
+                                            &mut activity_tracker,
                                         );
                                     }
                                 }
@@ -489,6 +498,7 @@ where
                                 &mut reduced_state,
                                 &state_tx,
                                 &event_tx_task,
+                                &mut activity_tracker,
                             ),
                         }
                         if !dialogs_refreshed
@@ -504,6 +514,7 @@ where
                                 &mut reduced_state,
                                 &state_tx,
                                 &event_tx_task,
+                                &mut activity_tracker,
                             );
                             let current_token = reduced_state.connection_machine.token();
                             if current_token != previous_token {
@@ -512,7 +523,7 @@ where
                         }
                         reconnect_sync_due = false;
                     }
-                    persistence_dirty = true;
+                    persistence_dirty |= event_is_persistent;
 
                     if stopped {
                         persist_state(&store, &mut reduced_state, &state_tx, &event_tx_task).await;
@@ -525,11 +536,23 @@ where
                         &mut reduced_state,
                         &state_tx,
                         &event_tx_task,
+                        &mut activity_tracker,
                     );
                     persistence_dirty = true;
                 }
                 RuntimeInput::Update(None) => {
                     backend_updates = None;
+                }
+                RuntimeInput::ExpireActivities => {
+                    for event in activity_tracker.expire(Instant::now().into_std()) {
+                        apply_event(
+                            event,
+                            &mut reduced_state,
+                            &state_tx,
+                            &event_tx_task,
+                            &mut activity_tracker,
+                        );
+                    }
                 }
                 RuntimeInput::Persist => {
                     persist_state(&store, &mut reduced_state, &state_tx, &event_tx_task).await;
@@ -550,6 +573,7 @@ enum RuntimeInput {
     Command(Option<CoreCommand>),
     Update(Option<Result<CoreEvent>>),
     Persist,
+    ExpireActivities,
 }
 
 async fn next_runtime_input(
@@ -557,6 +581,8 @@ async fn next_runtime_input(
     updates: &mut Option<BackendUpdateReceiver>,
     persistence_tick: &mut Interval,
     persistence_dirty: bool,
+    activity_active: bool,
+    activity_tick: &mut Interval,
 ) -> RuntimeInput {
     match updates.as_mut() {
         Some(updates) => {
@@ -564,12 +590,14 @@ async fn next_runtime_input(
                 command = commands.recv() => RuntimeInput::Command(command),
                 update = updates.recv() => RuntimeInput::Update(update),
                 _ = persistence_tick.tick(), if persistence_dirty => RuntimeInput::Persist,
+                _ = activity_tick.tick(), if activity_active => RuntimeInput::ExpireActivities,
             }
         }
         None => {
             tokio::select! {
                 command = commands.recv() => RuntimeInput::Command(command),
                 _ = persistence_tick.tick(), if persistence_dirty => RuntimeInput::Persist,
+                _ = activity_tick.tick(), if activity_active => RuntimeInput::ExpireActivities,
             }
         }
     }
@@ -673,12 +701,13 @@ fn apply_events(
     state: &mut CoreState,
     state_tx: &watch::Sender<CoreState>,
     event_tx: &broadcast::Sender<CoreEvent>,
+    activity_tracker: &mut ChatActivityTracker,
 ) -> bool {
     let mut stopped = false;
 
     for event in events {
         stopped |= event.is_terminal();
-        apply_event(event, state, state_tx, event_tx);
+        apply_event(event, state, state_tx, event_tx, activity_tracker);
     }
 
     stopped
@@ -689,12 +718,16 @@ fn apply_event(
     state: &mut CoreState,
     state_tx: &watch::Sender<CoreState>,
     event_tx: &broadcast::Sender<CoreEvent>,
+    activity_tracker: &mut ChatActivityTracker,
 ) {
     if matches!(event, CoreEvent::ConnectionStateChanged(_)) {
         return;
     }
-    state.reduce(&event);
-    let _ = state_tx.send(state.clone());
+    activity_tracker.apply(&event, Instant::now().into_std());
+    if !event.is_transient() {
+        state.reduce(&event);
+        let _ = state_tx.send(state.clone());
+    }
     let _ = event_tx.send(event);
 }
 
