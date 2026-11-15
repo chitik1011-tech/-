@@ -1,6 +1,4 @@
-use std::path::PathBuf;
-
-use serde_json::{json, Value};
+use serde_json::json;
 use tg_mobile_core::{
     AttachmentDownloadState, AttachmentKind, AttachmentThumbnail, MediaAttachment, MessageSummary,
 };
@@ -75,7 +73,11 @@ fn legacy_persisted_core_state_migrates_message_media_field() {
 
     assert!(decoded
         .as_ref()
-        .is_some_and(|state| state.messages[&3][0].attachments.is_empty()));
+        .is_some_and(|state| state
+            .messages
+            .get(&3)
+            .and_then(|messages| messages.first())
+            .is_some_and(|message| message.attachments.is_empty())));
 }
 
 #[test]
