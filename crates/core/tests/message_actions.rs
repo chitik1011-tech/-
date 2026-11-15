@@ -264,3 +264,24 @@ fn legacy_persisted_core_state_defaults_reply_targets() {
         serde_json::from_str(legacy).expect("pre-reply CoreState should still deserialize");
     assert!(state.reply_targets.is_empty());
 }
+
+#[test]
+fn reply_target_index_is_pruned_with_bounded_message_cache() {
+    let mut state = CoreState::default();
+
+    for id in 1..=513 {
+        state.reduce(&CoreEvent::MessageReplied {
+            message: message(2, id, "reply", true, id),
+            reply_to_message_id: id + 1000,
+        });
+    }
+
+    assert_eq!(state.messages_for_chat(2).len(), 512);
+    assert_eq!(
+        state.reply_targets.get(&2).map(std::collections::BTreeMap::len),
+        Some(512)
+    );
+    assert_eq!(state.reply_target_for_message(2, 1), None);
+    assert_eq!(state.reply_target_for_message(2, 2), Some(1002));
+    assert_eq!(state.reply_target_for_message(2, 513), Some(1513));
+}
