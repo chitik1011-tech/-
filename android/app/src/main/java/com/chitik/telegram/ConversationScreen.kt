@@ -335,10 +335,12 @@ private fun PollContent(
                     checked = checked,
                     enabled = enabled,
                     onCheckedChange = { value ->
-                        selected = if (value) {
-                            selected + option.optionId
-                        } else {
-                            selected - option.optionId
+                        selected = selected.toMutableSet().apply {
+                            if (value) {
+                                add(option.optionId)
+                            } else {
+                                remove(option.optionId)
+                            }
                         }
                     },
                 )
