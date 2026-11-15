@@ -6,7 +6,7 @@ This directory contains the Android/Compose shell for the Rust-first Telegram cl
 
 - JDK 17 or newer supported by Gradle/AGP
 - Android SDK Platform 37
-- Android NDK (AGP 9.5 default NDK 28.2.13676358 is supported)
+- Android NDK 28.2.13676358
 - Rust toolchain with \`rustup\`
 - \`cargo-ndk\` (the build script installs it automatically when missing)
 
@@ -49,28 +49,29 @@ Launch the app and open the **Core** screen.
 2. **Core version** is returned by Rust from \`coreVersion()\`; there is no Kotlin fallback implementation.
 3. Press **JNI round-trip**. Android calls \`NativeBridge.probe(handle)\`, Rust receives the JNI call, then invokes \`NativeEventCallback.onNativeEvent(...)\` back on Android. The latest event should become \`jni_probe\` with \`{"round_trip":true}\`.
 4. Press **CoreCommand::Start** to exercise Android → JNI → \`CoreHandle::send\` → \`CoreEvent\` → JNI callback. Until the protocol agent provides a concrete Telegram backend, the intentionally disconnected backend returns an explicit backend error rather than pretending Telegram is connected.
+5. The bridge also subscribes to \`CoreHandle::subscribe_state()\` and forwards canonical serialized \`CoreState\` snapshots as \`state\` callbacks.
 
 ## Native handle lifecycle
 
-\`NativeSessionViewModel\` owns the opaque native handle. Activity recreation reuses the ViewModel and therefore does not recreate the Rust session. When the ViewModel is permanently cleared, \`destroyHandle()\` removes the registry entry and sends \`CoreCommand::Shutdown\`.
+\`NativeSessionViewModel\` owns the opaque native handle. Activity recreation reuses the ViewModel and therefore does not recreate the Rust session. When the ViewModel is permanently cleared, \`destroyHandle()\` removes the registry entry, aborts event/state forwarding tasks, and sends \`CoreCommand::Shutdown\`.
 
 Library loading and all JNI calls are wrapped in Kotlin \`runCatching\`; JNI entry points catch Rust panics and translate bridge errors into Java exceptions. Rust does not \`unwrap()\` Android/JNI input.
 
 ## Command ABI
 
-Commands are JSON passed to \`NativeBridge.sendCommand(handle, json)\`. Current forms are:
+Commands use the canonical JSON wire format already owned by \`tg-mobile-core\`. The JNI bridge calls the core crate's \`decode_command()\` rather than defining a second command model.
 
 ~~~json
 {"type":"start"}
-{"type":"set_phone_number","phone_number":"+10000000000"}
-{"type":"submit_code","code":"12345"}
-{"type":"submit_password","password":"..."}
-{"type":"load_chats","limit":50}
-{"type":"send_text","chat_id":123,"text":"hello"}
+{"type":"set_phone_number","payload":"+10000000000"}
+{"type":"submit_code","payload":"12345"}
+{"type":"submit_password","payload":"..."}
+{"type":"load_chats","payload":{"limit":50}}
+{"type":"send_text","payload":{"chat_id":123,"text":"hello"}}
 {"type":"shutdown"}
 ~~~
 
-The bridge converts them into the existing Rust \`CoreCommand\` enum; it does not redefine core models.
+Core events are serialized by the core crate's \`encode_event()\`; state snapshots are serialized by \`encode_state()\`.
 
 ## Secrets
 
