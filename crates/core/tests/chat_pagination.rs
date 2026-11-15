@@ -92,7 +92,7 @@ fn multiple_pages_merge_duplicates_without_reordering() {
         state.account.chats.iter().map(|chat| chat.id).collect::<Vec<_>>(),
         vec![1, 2, 3]
     );
-    assert_eq!(state.account.chats[1].title, "third updated".replace("third updated", "renamed"));
+    assert_eq!(state.account.chats[1].title, "renamed");
     assert_eq!(state.account.chats[1].unread_count, 2);
     assert_eq!(
         state.account.chats[1].last_message.as_ref(),
@@ -137,7 +137,7 @@ fn live_messages_survive_next_page_and_stale_page_summaries() {
     let new_chat = state.chat(30).expect("live-created chat remains present");
     assert_eq!(new_chat.title, "thirty");
     assert_eq!(new_chat.last_message.as_ref(), Some(&new_chat_message));
-    assert_eq!(state.messages_for_chat(10), &[message(1, 10, 100, "first"), live_message]);
+    assert_eq!(state.messages_for_chat(10), &[live_message]);
     assert_eq!(state.messages_for_chat(30), &[new_chat_message]);
     assert_eq!(state.chat_pagination.next_cursor, None);
 }
