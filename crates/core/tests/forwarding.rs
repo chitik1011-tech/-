@@ -179,12 +179,15 @@ async fn unsupported_mock_backend_returns_an_error_instead_of_forward_success() 
     assert!(matches!(event, CoreEvent::Error(_)));
 }
 
-
 struct TypedForwardingBackend;
 
 impl TelegramBackend for TypedForwardingBackend {
     fn handle<'a>(&'a mut self, _command: CoreCommand) -> BackendFuture<'a> {
-        Box::pin(async { Err(tg_mobile_core::CoreError::Backend("generic handler must not receive forward command".into())) })
+        Box::pin(async {
+            Err(tg_mobile_core::CoreError::Backend(
+                "generic handler must not receive forward command".into(),
+            ))
+        })
     }
 
     fn forward_messages<'a>(
@@ -196,9 +199,18 @@ impl TelegramBackend for TypedForwardingBackend {
                 request_id: request.request_id,
                 destination_chat_id: request.destination_chat_id,
                 outcomes: vec![
-                    ForwardOutcome::Forwarded { source: request.sources[1].clone(), destination_message_id: 302 },
-                    ForwardOutcome::Forwarded { source: request.sources[1].clone(), destination_message_id: 999 },
-                    ForwardOutcome::Failed { source: request.sources[0].clone(), error: "restricted".into() },
+                    ForwardOutcome::Forwarded {
+                        source: request.sources[1].clone(),
+                        destination_message_id: 302,
+                    },
+                    ForwardOutcome::Forwarded {
+                        source: request.sources[1].clone(),
+                        destination_message_id: 999,
+                    },
+                    ForwardOutcome::Failed {
+                        source: request.sources[0].clone(),
+                        error: "restricted".into(),
+                    },
                 ],
             })
         })
@@ -209,16 +221,30 @@ impl TelegramBackend for TypedForwardingBackend {
 async fn runtime_uses_typed_forward_contract_and_emits_ordered_partial_results() {
     let runtime = spawn_core(TypedForwardingBackend);
     let mut events = runtime.subscribe();
-    runtime.send(CoreCommand::ForwardMessages(request())).await.unwrap();
+    runtime
+        .send(CoreCommand::ForwardMessages(request()))
+        .await
+        .unwrap();
 
     let event = tokio::time::timeout(std::time::Duration::from_secs(1), events.recv())
-        .await.unwrap().unwrap();
+        .await
+        .unwrap()
+        .unwrap();
     let CoreEvent::MessagesForwarded(result) = event else {
         panic!("typed backend should return the forwarding event");
     };
     assert_eq!(result.request_id, "request-1");
-    assert_eq!(result.outcomes, vec![
-        ForwardOutcome::Failed { source: source(10, 1), error: "restricted".into() },
-        ForwardOutcome::Forwarded { source: source(20, 2), destination_message_id: 302 },
-    ]);
+    assert_eq!(
+        result.outcomes,
+        vec![
+            ForwardOutcome::Failed {
+                source: source(10, 1),
+                error: "restricted".into()
+            },
+            ForwardOutcome::Forwarded {
+                source: source(20, 2),
+                destination_message_id: 302
+            },
+        ]
+    );
 }
