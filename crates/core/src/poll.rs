@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use serde::{Deserialize, Serialize};
 
 use crate::error::{CoreError, Result};
@@ -9,6 +11,13 @@ pub const MAX_POLL_OPTIONS: usize = 10;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PollOption {
     pub text: String,
+    /// Opaque Telegram option bytes used by messages.sendVote.
+    ///
+    /// Older persisted poll snapshots from before end-to-end voting do not
+    /// contain this field, so an empty value is accepted for restore but may
+    /// not be used for voting.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub option_id: Vec<u8>,
     /// Votes for this answer. `None` when Telegram hides the results.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub voter_count: Option<u32>,
@@ -42,6 +51,9 @@ pub struct PollSummary {
     pub quiz: bool,
     #[serde(default)]
     pub closed: bool,
+    /// Telegram's quiz solution/explanation, when the server reveals it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub explanation: Option<String>,
 }
 
 impl PollSummary {
@@ -83,6 +95,33 @@ impl PollSummary {
             ));
         }
 
+        let has_option_ids = self
+            .options
+            .iter()
+            .any(|option| !option.option_id.is_empty());
+        if has_option_ids
+            && self
+                .options
+                .iter()
+                .any(|option| option.option_id.is_empty())
+        {
+            return Err(CoreError::InvalidInput(
+                "poll option identifiers must be present for every option".to_owned(),
+            ));
+        }
+        if has_option_ids {
+            let mut ids = HashSet::with_capacity(self.options.len());
+            if self
+                .options
+                .iter()
+                .any(|option| !ids.insert(option.option_id.as_slice()))
+            {
+                return Err(CoreError::InvalidInput(
+                    "poll option identifiers must be unique".to_owned(),
+                ));
+            }
+        }
+
         let chosen = self.options.iter().filter(|option| option.chosen).count();
         if chosen > 1 && !self.multiple_choice {
             return Err(CoreError::InvalidInput(
@@ -108,6 +147,59 @@ impl PollSummary {
             return Err(CoreError::InvalidInput(
                 "quiz poll can have at most one correct answer".to_owned(),
             ));
+        }
+
+        Ok(())
+    }
+
+    /// Validate a vote against the latest server-confirmed poll snapshot.
+    pub fn validate_vote_selection(&self, option_ids: &[Vec<u8>]) -> Result<()> {
+        self.validate()?;
+        if self.closed {
+            return Err(CoreError::InvalidInput("poll is closed".to_owned()));
+        }
+        if option_ids.is_empty() {
+            return Err(CoreError::InvalidInput(
+                "poll vote must select at least one option".to_owned(),
+            ));
+        }
+        if !self.multiple_choice && option_ids.len() != 1 {
+            return Err(CoreError::InvalidInput(
+                "single-choice poll vote must select exactly one option".to_owned(),
+            ));
+        }
+        if option_ids.len() > self.options.len() {
+            return Err(CoreError::InvalidInput(
+                "poll vote selects too many options".to_owned(),
+            ));
+        }
+        if self.options.iter().any(|option| option.option_id.is_empty()) {
+            return Err(CoreError::InvalidInput(
+                "poll snapshot has no Telegram option identifiers".to_owned(),
+            ));
+        }
+
+        let mut unique = HashSet::with_capacity(option_ids.len());
+        for option_id in option_ids {
+            if option_id.is_empty() {
+                return Err(CoreError::InvalidInput(
+                    "poll option identifier must not be empty".to_owned(),
+                ));
+            }
+            if !unique.insert(option_id.as_slice()) {
+                return Err(CoreError::InvalidInput(
+                    "poll vote contains a duplicate option".to_owned(),
+                ));
+            }
+            if !self
+                .options
+                .iter()
+                .any(|option| option.option_id == *option_id)
+            {
+                return Err(CoreError::InvalidInput(
+                    "poll vote contains an unknown option".to_owned(),
+                ));
+            }
         }
 
         Ok(())
