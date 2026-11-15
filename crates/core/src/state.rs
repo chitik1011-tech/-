@@ -106,17 +106,8 @@ impl CoreState {
     }
 
     fn can_accept_chat_page(&self, page: &ChatPage) -> bool {
-        if self.chat_pagination.loading {
-            return self.chat_pagination.loading_cursor == page.requested_cursor;
-        }
-
-        match page.requested_cursor.as_deref() {
-            None => !self.chat_pagination.loaded,
-            Some(cursor) => {
-                self.chat_pagination.loaded
-                    && self.chat_pagination.next_cursor.as_deref() == Some(cursor)
-            }
-        }
+        self.chat_pagination.loading
+            && self.chat_pagination.loading_cursor == page.requested_cursor
     }
 
     fn merge_chat_page(&mut self, page: &ChatPage) -> bool {
