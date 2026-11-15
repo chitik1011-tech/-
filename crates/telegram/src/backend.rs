@@ -19,7 +19,10 @@ use crate::{
     chats::{PeerRegistry, find_peer, load_chats, new_peer_registry},
     config::TelegramConfig,
     error::{TelegramBackendError, session_error},
-    messages::{MessageDeduplicator, load_messages, load_messages_page, mark_read, send_text},
+    messages::{
+        MessageDeduplicator, load_messages, load_messages_page, mark_read, search_messages_page,
+        send_text,
+    },
     updates::{TelegramUpdate, UpdateWorkerInput, run_update_worker},
 };
 
@@ -265,6 +268,32 @@ impl GrammersBackend {
                     chat_id,
                     max_message_id,
                 }]
+            }
+            CoreCommand::SearchMessages(request) => {
+                self.require_ready().await?;
+                let peer = find_peer(&self.peers, request.chat_id)
+                    .await
+                    .ok_or(TelegramBackendError::UnknownChat(request.chat_id))?;
+                let page = search_messages_page(
+                    &self.client,
+                    peer,
+                    &request.query,
+                    request.before_message_id,
+                    request.limit,
+                )
+                .await?;
+
+                vec![CoreEvent::MessageSearchCompleted(
+                    tg_mobile_core::MessageSearchPage {
+                        request_id: request.request_id,
+                        chat_id: request.chat_id,
+                        query: request.query.trim().to_owned(),
+                        requested_before_message_id: request.before_message_id,
+                        messages: page.messages,
+                        next_before_message_id: page.next_before_message_id,
+                        has_more: page.has_more,
+                    },
+                )]
             }
             CoreCommand::SendText { chat_id, text } => {
                 self.require_ready().await?;

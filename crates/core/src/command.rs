@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use crate::error::{CoreError, Result};
+use crate::{
+    error::{CoreError, Result},
+    search::SearchMessagesRequest,
+};
 
 pub const MAX_CHAT_LOAD_LIMIT: usize = 500;
 pub const MAX_MESSAGE_LOAD_LIMIT: usize = 200;
@@ -29,6 +32,7 @@ pub enum CoreCommand {
         chat_id: i64,
         max_message_id: i64,
     },
+    SearchMessages(SearchMessagesRequest),
     SendText {
         chat_id: i64,
         text: String,
@@ -47,6 +51,7 @@ impl CoreCommand {
             Self::LoadMessages { .. } => "load_messages",
             Self::LoadMessagesPage { .. } => "load_messages_page",
             Self::MarkRead { .. } => "mark_read",
+            Self::SearchMessages(_) => "search_messages",
             Self::SendText { .. } => "send_text",
             Self::Shutdown => "shutdown",
         }
@@ -96,6 +101,7 @@ impl CoreCommand {
                     Ok(())
                 }
             }
+            Self::SearchMessages(request) => request.validate(),
             Self::SendText { chat_id, text } => {
                 validate_chat_id(*chat_id)?;
                 require_non_blank("message text", text)

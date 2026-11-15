@@ -9,6 +9,7 @@ pub mod event;
 pub mod mock;
 pub mod model;
 pub mod runtime;
+pub mod search;
 pub mod selection;
 pub mod state;
 pub mod storage;
@@ -34,6 +35,10 @@ pub use model::{
     ReplyMetadata,
 };
 pub use runtime::{spawn_core, spawn_core_with_store, CoreHandle, PERSISTENCE_FLUSH_INTERVAL_MS};
+pub use search::{
+    ActiveMessageSearch, ChatMessageSearchState, MessageSearchPage, MessageSearchState,
+    SearchMessagesRequest, MAX_MESSAGE_SEARCH_LIMIT, MAX_MESSAGE_SEARCH_QUERY_BYTES,
+};
 pub use selection::{MessageSelection, SelectionAction, SelectionCapabilities, SelectionError};
 pub use state::{CoreState, MAX_CACHED_MESSAGES_PER_CHAT};
 pub use storage::{JsonFileStateStore, MemoryStateStore, NoopStateStore, StateStore};
