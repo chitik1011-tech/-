@@ -245,7 +245,14 @@ async fn restore_state<S: StateStore>(
         Ok(Some(mut state)) => {
             state.running = true;
             state.last_error = None;
+            let interrupted = state.fail_interrupted_sends();
             let _ = state_tx.send(state.clone());
+            for message in &interrupted {
+                let _ = event_tx.send(CoreEvent::OutgoingMessageChanged(message.clone()));
+            }
+            if !interrupted.is_empty() {
+                persist_state(store, &mut state, state_tx, event_tx).await;
+            }
             state
         }
         Ok(None) => CoreState::default(),
