@@ -16,7 +16,8 @@ pub struct ForwardMessagesRequest {
     pub sources: Vec<MessageRef>,
     /// One destination chat for the complete ordered batch.
     pub destination_chat_id: i64,
-    /// Stable caller supplied id used to correlate and deduplicate retries.
+    /// Caller-supplied correlation ID. Runtime storage deduplication does not make
+    /// forwarding retries idempotent; adapters must provide backend idempotency first.
     pub request_id: String,
 }
 
