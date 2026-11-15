@@ -19,7 +19,6 @@ pub(crate) fn message_to_summary(message: &Message) -> MessageSummary {
         text: message.text(),
         timestamp_unix: message.date().as_second(),
         outgoing: message.outgoing(),
-        attachments: Vec::new(),
     })
 }
 
