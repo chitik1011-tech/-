@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use tg_mobile_core::{
     decode_command, encode_event, encode_state, spawn_core, AuthorizationState, CoreCommand,
-    CoreEvent, CoreState, MockTelegramBackend,
+    CoreEvent, CoreState, MessageSummary, MockTelegramBackend,
 };
 use tokio::time::timeout;
 
@@ -23,6 +23,31 @@ fn reducer_updates_authorization_and_errors() {
 
     state.reduce(&CoreEvent::Stopped);
     assert!(!state.running);
+}
+
+#[test]
+fn reducer_deduplicates_message_updates() {
+    let mut state = CoreState::default();
+    let original = MessageSummary {
+        id: 7,
+        chat_id: 99,
+        sender_id: 1,
+        text: "draft".into(),
+        timestamp_unix: 100,
+        outgoing: true,
+    };
+
+    state.reduce(&CoreEvent::MessageAdded(original.clone()));
+
+    let updated = MessageSummary {
+        text: "confirmed".into(),
+        ..original
+    };
+    state.reduce(&CoreEvent::MessageAdded(updated.clone()));
+
+    let messages = state.messages.get(&99).unwrap();
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0], updated);
 }
 
 #[test]
