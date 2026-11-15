@@ -99,6 +99,18 @@ fn with_registry<T>(
 }
 
 
+fn event_kind(event: &CoreEvent) -> &'static str {
+    match event {
+        CoreEvent::State(_) => "account_state",
+        CoreEvent::AuthorizationChanged(_) => "authorization_changed",
+        CoreEvent::ChatsLoaded(_) => "chats_loaded",
+        CoreEvent::ChatsPageLoaded(_) => "chats_page_loaded",
+        CoreEvent::MessageAdded(_) => "message_added",
+        CoreEvent::Error(_) => "error",
+        CoreEvent::Stopped => "stopped",
+    }
+}
+
 fn error_payload(message: &str) -> String {
     serde_json::json!({ "message": message }).to_string()
 }
@@ -168,12 +180,8 @@ fn create_native_handle(env: &mut JNIEnv<'_>, callback: JObject<'_>) -> Result<i
                 Ok(event) => {
                     match encode_event(&event) {
                         Ok(payload) => {
-                            let _ = emit_callback(
-                                &event_vm,
-                                &event_callback,
-                                event.kind(),
-                                &payload,
-                            );
+                            let _ =
+                                emit_callback(&event_vm, &event_callback, event_kind(&event), &payload);
                         }
                         Err(error) => {
                             emit_error(&event_vm, &event_callback, &error.to_string());
