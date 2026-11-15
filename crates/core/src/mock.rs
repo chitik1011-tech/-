@@ -37,6 +37,12 @@ impl Default for MockTelegramBackend {
                         timestamp_unix: unix_timestamp(),
                         outgoing: false,
                         attachments: Vec::new(),
+                        forwarded_from: None,
+                        edited: false,
+                        edit_timestamp_unix: None,
+                        service_message: false,
+                        media_caption: None,
+                        reply_to: None,
                     }),
                 },
             ],
@@ -142,6 +148,12 @@ impl MockTelegramBackend {
                     timestamp_unix: unix_timestamp(),
                     outgoing: true,
                     attachments: Vec::new(),
+                    forwarded_from: None,
+                    edited: false,
+                    edit_timestamp_unix: None,
+                    service_message: false,
+                    media_caption: None,
+                    reply_to: None,
                 };
                 self.next_message_id += 1;
 
