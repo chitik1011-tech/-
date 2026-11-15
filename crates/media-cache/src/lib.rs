@@ -240,6 +240,57 @@ impl MediaCache {
         }
         Ok(())
     }
+
+    fn ensure_capacity_for(
+        &self,
+        key: &str,
+        incoming_size: u64,
+        state: &State,
+    ) -> Result<(), CacheError> {
+        let entries = self.entries()?;
+        let replaced_size = entries
+            .iter()
+            .find(|entry| entry.key == key)
+            .map_or(0, |entry| entry.size);
+        let mut total = entries
+            .iter()
+            .map(|entry| entry.size)
+            .sum::<u64>()
+            .saturating_sub(replaced_size)
+            .saturating_add(incoming_size);
+        if total <= self.inner.max_bytes {
+            return Ok(());
+        }
+
+        let mut candidates: Vec<_> = entries
+            .into_iter()
+            .filter(|entry| {
+                entry.key != key && state.leases.get(&entry.key).copied().unwrap_or(0) == 0
+            })
+            .collect();
+        candidates.sort_by(|a, b| {
+            let a_access = state.last_access.get(&a.key);
+            let b_access = state.last_access.get(&b.key);
+            match (a_access, b_access) {
+                (Some(a_access), Some(b_access)) => {
+                    a_access.cmp(b_access).then_with(|| a.key.cmp(&b.key))
+                }
+                (Some(_), None) => std::cmp::Ordering::Greater,
+                (None, Some(_)) => std::cmp::Ordering::Less,
+                (None, None) => a.modified.cmp(&b.modified).then_with(|| a.key.cmp(&b.key)),
+            }
+        });
+        for entry in candidates {
+            if total <= self.inner.max_bytes {
+                break;
+            }
+            total = total.saturating_sub(entry.size);
+        }
+        if total > self.inner.max_bytes {
+            return Err(CacheError::CacheFull);
+        }
+        Ok(())
+    }
 }
 
 struct Entry {
@@ -328,6 +379,7 @@ impl CacheWriter {
         if state.leases.get(&self.key).copied().unwrap_or(0) > 0 {
             return Err(CacheError::InUse);
         }
+        self.cache.ensure_capacity_for(&self.key, size, &state)?;
         let final_path = self.cache.final_path(&self.key);
         self.cache.ensure_confined(&self.temp_path)?;
         fs::rename(&self.temp_path, &final_path)?;
@@ -455,6 +507,24 @@ mod tests {
         assert!(matches!(second.commit(), Err(CacheError::CacheFull)));
         assert_eq!(fs::read(lease.path()).expect("leased read"), b"abc");
         assert_eq!(cache.used_bytes().expect("size"), 3);
+    }
+
+    #[test]
+    fn failed_commit_preserves_existing_entries_when_leases_block_capacity() {
+        let (_dir, cache) = cache(5);
+        let mut old = cache.begin_write("old").expect("old writer");
+        old.write_all(b"ok").expect("write old");
+        drop(old.commit().expect("commit old"));
+
+        let mut leased_writer = cache.begin_write("leased").expect("leased writer");
+        leased_writer.write_all(b"123").expect("write leased");
+        let _lease = leased_writer.commit().expect("commit leased");
+
+        let mut incoming = cache.begin_write("incoming").expect("incoming writer");
+        incoming.write_all(b"456").expect("write incoming");
+        assert!(matches!(incoming.commit(), Err(CacheError::CacheFull)));
+        assert!(cache.get("old").expect("get old").is_some());
+        assert_eq!(cache.used_bytes().expect("size"), 5);
     }
 
     #[test]
