@@ -201,6 +201,41 @@ impl CoreState {
 
                 self.last_error = None;
             }
+            CoreEvent::MessageEdited(message) => {
+                if self.apply_message_edit(message) {
+                    self.last_error = None;
+                }
+            }
+            CoreEvent::MessagesDeleted {
+                chat_id,
+                message_ids,
+            } => {
+                let deleted = message_ids
+                    .iter()
+                    .copied()
+                    .filter(|message_id| *message_id > 0)
+                    .collect::<BTreeSet<_>>();
+
+                if !deleted.is_empty() {
+                    let mut updated = false;
+                    match chat_id {
+                        Some(chat_id) => {
+                            updated = self.delete_cached_messages(*chat_id, &deleted);
+                        }
+                        None => {
+                            let mut chat_ids =
+                                self.messages.keys().copied().collect::<BTreeSet<_>>();
+                            chat_ids.extend(self.account.chats.iter().map(|chat| chat.id));
+                            for chat_id in chat_ids {
+                                updated |= self.delete_cached_messages(chat_id, &deleted);
+                            }
+                        }
+                    }
+                    if updated {
+                        self.last_error = None;
+                    }
+                }
+            }
             CoreEvent::Error(error) => {
                 self.last_error = Some(error.clone());
             }
@@ -303,6 +338,92 @@ impl CoreState {
         }
     }
 
+    fn apply_message_edit(&mut self, incoming: &MessageSummary) -> bool {
+        let cached = self
+            .messages
+            .get(&incoming.chat_id)
+            .and_then(|messages| messages.iter().find(|item| item.id == incoming.id))
+            .cloned();
+        let preview = self
+            .chat(incoming.chat_id)
+            .and_then(|chat| chat.last_message.as_ref())
+            .filter(|item| item.id == incoming.id)
+            .cloned();
+
+        let Some(current) = cached
+            .iter()
+            .chain(preview.iter())
+            .max_by_key(|item| (item.edit_timestamp_unix, item.edited))
+        else {
+            return false;
+        };
+        if !message_edit_is_newer(current, incoming) {
+            return false;
+        }
+
+        let mut updated = false;
+        if let Some(messages) = self.messages.get_mut(&incoming.chat_id) {
+            if let Some(existing) = messages.iter_mut().find(|item| item.id == incoming.id) {
+                *existing = incoming.clone();
+                updated = true;
+            }
+        }
+        if let Some(chat) = self
+            .account
+            .chats
+            .iter_mut()
+            .find(|chat| chat.id == incoming.chat_id)
+        {
+            if chat
+                .last_message
+                .as_ref()
+                .is_some_and(|last| last.id == incoming.id)
+            {
+                chat.last_message = Some(incoming.clone());
+                updated = true;
+            }
+        }
+        updated
+    }
+
+    fn delete_cached_messages(&mut self, chat_id: i64, deleted: &BTreeSet<i64>) -> bool {
+        let mut updated = false;
+        let remove_entry = if let Some(messages) = self.messages.get_mut(&chat_id) {
+            let original_len = messages.len();
+            messages.retain(|message| !deleted.contains(&message.id));
+            updated = messages.len() != original_len;
+            messages.is_empty()
+        } else {
+            false
+        };
+        if remove_entry {
+            self.messages.remove(&chat_id);
+        }
+
+        let replacement = self
+            .messages_for_chat(chat_id)
+            .iter()
+            .max_by_key(|message| (message.timestamp_unix, message.id))
+            .cloned();
+
+        if let Some(chat) = self
+            .account
+            .chats
+            .iter_mut()
+            .find(|chat| chat.id == chat_id)
+        {
+            if chat
+                .last_message
+                .as_ref()
+                .is_some_and(|message| deleted.contains(&message.id))
+            {
+                chat.last_message = replacement;
+                updated = true;
+            }
+        }
+        updated
+    }
+
     fn upsert_message(&mut self, message: MessageSummary) -> bool {
         let messages = self.messages.entry(message.chat_id).or_default();
         let inserted = if let Some(index) = messages.iter().position(|item| item.id == message.id) {
@@ -378,5 +499,21 @@ mod message_ordering_tests {
             state.chat(42).unwrap().last_message.as_ref().unwrap().id,
             10
         );
+    }
+}
+
+fn message_edit_is_newer(current: &MessageSummary, incoming: &MessageSummary) -> bool {
+    if current == incoming {
+        return false;
+    }
+
+    match (current.edit_timestamp_unix, incoming.edit_timestamp_unix) {
+        (Some(current_timestamp), Some(incoming_timestamp)) => {
+            incoming_timestamp > current_timestamp
+                || (incoming_timestamp == current_timestamp && !current.edited && incoming.edited)
+        }
+        (Some(_), None) => false,
+        (None, Some(_)) => true,
+        (None, None) => !current.edited && incoming.edited,
     }
 }

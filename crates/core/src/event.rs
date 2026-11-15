@@ -51,6 +51,11 @@ pub enum CoreEvent {
         max_message_id: i64,
     },
     MessageAdded(MessageSummary),
+    MessageEdited(MessageSummary),
+    MessagesDeleted {
+        chat_id: Option<i64>,
+        message_ids: Vec<i64>,
+    },
     Error(String),
     Stopped,
 }
@@ -71,6 +76,8 @@ impl CoreEvent {
             Self::MessagesPageLoadFailed { .. } => "messages_page_load_failed",
             Self::ChatRead { .. } => "chat_read",
             Self::MessageAdded(_) => "message_added",
+            Self::MessageEdited(_) => "message_edited",
+            Self::MessagesDeleted { .. } => "messages_deleted",
             Self::Error(_) => "error",
             Self::Stopped => "stopped",
         }
