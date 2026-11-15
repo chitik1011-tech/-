@@ -1,10 +1,7 @@
 use std::sync::Arc;
 
 use grammers_client::{
-    Client,
-    client::UpdatesConfiguration,
-    session::updates::UpdatesLike,
-    update::Update,
+    Client, client::UpdatesConfiguration, session::updates::UpdatesLike, update::Update,
 };
 use tg_mobile_core::{BackendUpdateSender, CoreError, CoreEvent, MessageSummary};
 use tokio::sync::{broadcast, mpsc, watch};
