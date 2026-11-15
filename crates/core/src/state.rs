@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    event::CoreEvent,
     capabilities::ChatCapabilities,
+    event::CoreEvent,
     model::{AccountState, ChatSummary, MessageSummary},
 };
 
@@ -71,15 +71,14 @@ impl CoreState {
 
                 self.last_error = None;
             }
-            CoreEvent::ChatCapabilitiesUpdated(capabilities) => {
-                match capabilities.validate() {
-                    Ok(()) => {
-                        self.chat_capabilities.insert(capabilities.chat_id, capabilities.clone());
-                        self.last_error = None;
-                    }
-                    Err(error) => self.last_error = Some(error.to_string()),
+            CoreEvent::ChatCapabilitiesUpdated(capabilities) => match capabilities.validate() {
+                Ok(()) => {
+                    self.chat_capabilities
+                        .insert(capabilities.chat_id, capabilities.clone());
+                    self.last_error = None;
                 }
-            }
+                Err(error) => self.last_error = Some(error.to_string()),
+            },
             CoreEvent::Error(error) => {
                 self.last_error = Some(error.clone());
             }

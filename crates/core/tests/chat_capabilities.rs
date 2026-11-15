@@ -15,7 +15,10 @@ fn capabilities(chat_id: i64, chat_kind: ChatKind) -> ChatCapabilities {
 fn unknown_capabilities_never_grant_actions_or_invent_slow_mode() {
     let snapshot = capabilities(10, ChatKind::Group);
 
-    assert_eq!(snapshot.permission(ChatAction::SendMessages), CapabilityValue::Unknown);
+    assert_eq!(
+        snapshot.permission(ChatAction::SendMessages),
+        CapabilityValue::Unknown
+    );
     assert!(!snapshot.allows(ChatAction::SendMessages));
     assert_eq!(snapshot.slow_mode_seconds, CapabilityValue::Unknown);
 }

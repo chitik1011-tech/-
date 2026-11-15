@@ -1,8 +1,8 @@
 #![forbid(unsafe_code)]
 
 pub mod backend;
-pub mod command;
 pub mod capabilities;
+pub mod command;
 pub mod error;
 pub mod event;
 pub mod mock;
@@ -16,8 +16,8 @@ pub use backend::{
     backend_update_channel, BackendFuture, BackendUpdateReceiver, BackendUpdateSender,
     TelegramBackend, DEFAULT_BACKEND_UPDATE_CAPACITY,
 };
-pub use command::{CoreCommand, MAX_CHAT_LOAD_LIMIT};
 pub use capabilities::{CapabilityValue, ChatAction, ChatCapabilities, ChatKind};
+pub use command::{CoreCommand, MAX_CHAT_LOAD_LIMIT};
 pub use error::{CoreError, Result};
 pub use event::CoreEvent;
 pub use mock::MockTelegramBackend;
