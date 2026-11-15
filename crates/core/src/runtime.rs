@@ -98,10 +98,76 @@ where
             match input {
                 RuntimeInput::Command(Some(command)) => {
                     let shutdown_requested = matches!(command, CoreCommand::Shutdown);
-                    let events = match backend.handle(command).await {
-                        Ok(events) => events,
-                        Err(error) => vec![CoreEvent::Error(error.to_string())],
+                    let page_request = match &command {
+                        CoreCommand::LoadMessagesPage {
+                            chat_id,
+                            before_message_id,
+                            ..
+                        } => Some((*chat_id, *before_message_id)),
+                        _ => None,
                     };
+
+                    if let Some((chat_id, before_message_id)) = page_request {
+                        apply_event(
+                            CoreEvent::MessagesPageLoading {
+                                chat_id,
+                                before_message_id,
+                            },
+                            &mut reduced_state,
+                            &state_tx,
+                            &event_tx_task,
+                        );
+                        persistence_dirty = true;
+                    }
+
+                    let mut events = match backend.handle(command).await {
+                        Ok(events) => events,
+                        Err(error) => {
+                            if let Some((chat_id, before_message_id)) = page_request {
+                                vec![CoreEvent::MessagesPageLoadFailed {
+                                    chat_id,
+                                    before_message_id,
+                                    error: error.to_string(),
+                                }]
+                            } else {
+                                vec![CoreEvent::Error(error.to_string())]
+                            }
+                        }
+                    };
+
+                    if let Some((chat_id, before_message_id)) = page_request {
+                        let completed = events.iter().any(|event| {
+                            matches!(
+                                event,
+                                CoreEvent::MessagesPageLoaded {
+                                    chat_id: event_chat_id,
+                                    before_message_id: event_before,
+                                    ..
+                                } | CoreEvent::MessagesPageLoadFailed {
+                                    chat_id: event_chat_id,
+                                    before_message_id: event_before,
+                                    ..
+                                } if *event_chat_id == chat_id && *event_before == before_message_id
+                            )
+                        });
+
+                        if !completed {
+                            let error = events
+                                .iter()
+                                .find_map(|event| match event {
+                                    CoreEvent::Error(error) => Some(error.clone()),
+                                    _ => None,
+                                })
+                                .unwrap_or_else(|| {
+                                    "backend returned no message page completion".into()
+                                });
+                            events.push(CoreEvent::MessagesPageLoadFailed {
+                                chat_id,
+                                before_message_id,
+                                error,
+                            });
+                        }
+                    }
 
                     if !events.is_empty() {
                         persistence_dirty = true;
@@ -214,6 +280,10 @@ async fn restore_state<S: StateStore>(
             state.running = true;
             state.connection_state = crate::connection::ConnectionState::Disconnected;
             state.last_error = None;
+            for history in state.message_history.values_mut() {
+                history.loading = false;
+                history.requested_before_message_id = None;
+            }
             let _ = state_tx.send(state.clone());
             state
         }
