@@ -219,4 +219,3 @@ fn merge_chat_summary(existing: &mut ChatSummary, incoming: ChatSummary) {
         (_, next) => next,
     };
 }
-
