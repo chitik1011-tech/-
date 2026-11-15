@@ -53,6 +53,7 @@ fn incoming_message_increments_unread_only_when_first_inserted() {
         title: "existing".into(),
         unread_count: 4,
         last_message: None,
+        pinned_message: None,
     });
 
     let incoming = message(10, 100);
@@ -73,6 +74,7 @@ fn outgoing_message_does_not_increment_unread() {
         title: "existing".into(),
         unread_count: 4,
         last_message: None,
+        pinned_message: None,
     });
 
     let mut outgoing = message(11, 101);
@@ -119,18 +121,61 @@ fn state_query_helpers_return_chat_messages_and_unread_total() {
             title: "one".into(),
             unread_count: 3,
             last_message: None,
+            pinned_message: None,
         },
         ChatSummary {
             id: 2,
             title: "two".into(),
             unread_count: 4,
             last_message: None,
+            pinned_message: None,
         },
     ];
 
     assert_eq!(state.chat(2).unwrap().title, "two");
     assert!(state.messages_for_chat(404).is_empty());
     assert_eq!(state.total_unread_count(), 7);
+}
+
+#[test]
+fn pinned_message_events_update_chat_level_state() {
+    let mut state = CoreState::default();
+    state.account.chats.push(ChatSummary {
+        id: 77,
+        title: "pinned test".into(),
+        unread_count: 0,
+        last_message: None,
+        pinned_message: None,
+    });
+    let pinned = message(42, 123);
+
+    state.reduce(&CoreEvent::PinnedMessageUpdated {
+        chat_id: 77,
+        message: Some(pinned.clone()),
+    });
+    assert_eq!(
+        state.chat(77).unwrap().pinned_message.as_ref(),
+        Some(&pinned)
+    );
+
+    state.reduce(&CoreEvent::PinnedMessageUpdated {
+        chat_id: 77,
+        message: None,
+    });
+    assert_eq!(state.chat(77).unwrap().pinned_message, None);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn file_store_reads_old_chat_state_without_pinned_message() {
+    let path = temporary_path("old-pinned-chat");
+    let store = JsonFileStateStore::new(&path);
+    let old_state = r#"{"schema_version":1,"state":{"running":true,"account":{"authorization":"Ready","chats":[{"id":77,"title":"legacy","unread_count":3,"last_message":null}]},"messages":{},"last_error":null}}"#;
+    fs::write(&path, old_state).unwrap();
+
+    let loaded = store.load().await.unwrap().unwrap();
+    assert_eq!(loaded.chat(77).unwrap().pinned_message, None);
+
+    let _ = fs::remove_file(path);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

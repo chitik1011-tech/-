@@ -43,6 +43,17 @@ impl CoreState {
                 self.account.chats = chats.clone();
                 self.last_error = None;
             }
+            CoreEvent::PinnedMessageUpdated { chat_id, message } => {
+                if let Some(chat) = self
+                    .account
+                    .chats
+                    .iter_mut()
+                    .find(|chat| chat.id == *chat_id)
+                {
+                    chat.pinned_message = message.clone();
+                    self.last_error = None;
+                }
+            }
             CoreEvent::MessageAdded(message) => {
                 let inserted = self.upsert_message(message.clone());
 
@@ -62,6 +73,7 @@ impl CoreState {
                         title: format!("Chat {}", message.chat_id),
                         unread_count: if message.outgoing { 0 } else { 1 },
                         last_message: Some(message.clone()),
+                        pinned_message: None,
                     });
                 }
 

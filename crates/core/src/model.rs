@@ -16,6 +16,9 @@ pub struct ChatSummary {
     pub title: String,
     pub unread_count: u32,
     pub last_message: Option<MessageSummary>,
+    /// The chat's currently pinned message, when the backend has loaded it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pinned_message: Option<MessageSummary>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

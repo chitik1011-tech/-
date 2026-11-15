@@ -12,6 +12,12 @@ pub enum CoreCommand {
     SubmitCode(String),
     SubmitPassword(String),
     LoadChats { limit: usize },
+    /// Fetches the chat's current pinned message, if any.
+    LoadPinnedMessage { chat_id: i64 },
+    /// Pins a message in its chat.
+    PinMessage { chat_id: i64, message_id: i64 },
+    /// Removes the current pinned message from its chat.
+    UnpinMessage { chat_id: i64 },
     SendText { chat_id: i64, text: String },
     Shutdown,
 }
@@ -24,6 +30,9 @@ impl CoreCommand {
             Self::SubmitCode(_) => "submit_code",
             Self::SubmitPassword(_) => "submit_password",
             Self::LoadChats { .. } => "load_chats",
+            Self::LoadPinnedMessage { .. } => "load_pinned_message",
+            Self::PinMessage { .. } => "pin_message",
+            Self::UnpinMessage { .. } => "unpin_message",
             Self::SendText { .. } => "send_text",
             Self::Shutdown => "shutdown",
         }
@@ -50,6 +59,19 @@ impl CoreCommand {
                     )))
                 }
             }
+            Self::LoadPinnedMessage { chat_id } | Self::UnpinMessage { chat_id } => {
+                require_non_zero_chat_id(*chat_id)
+            }
+            Self::PinMessage {
+                chat_id,
+                message_id,
+            } => {
+                require_non_zero_chat_id(*chat_id)?;
+                if *message_id <= 0 {
+                    return Err(CoreError::InvalidInput("message id must be positive".into()));
+                }
+                Ok(())
+            }
             Self::SendText { chat_id, text } => {
                 if *chat_id == 0 {
                     return Err(CoreError::InvalidInput("chat id must be non-zero".into()));
@@ -58,6 +80,14 @@ impl CoreCommand {
                 require_non_blank("message text", text)
             }
         }
+    }
+}
+
+fn require_non_zero_chat_id(chat_id: i64) -> Result<()> {
+    if chat_id == 0 {
+        Err(CoreError::InvalidInput("chat id must be non-zero".into()))
+    } else {
+        Ok(())
     }
 }
 

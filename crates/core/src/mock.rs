@@ -24,6 +24,7 @@ impl Default for MockTelegramBackend {
                     title: "Saved Messages".into(),
                     unread_count: 0,
                     last_message: None,
+                    pinned_message: None,
                 },
                 ChatSummary {
                     id: 2,
@@ -37,6 +38,7 @@ impl Default for MockTelegramBackend {
                         timestamp_unix: unix_timestamp(),
                         outgoing: false,
                     }),
+                    pinned_message: None,
                 },
             ],
             next_message_id: 2,
@@ -92,6 +94,49 @@ impl MockTelegramBackend {
             CoreCommand::LoadChats { limit } => {
                 let chats = self.chats.iter().take(limit).cloned().collect();
                 Ok(vec![CoreEvent::ChatsLoaded(chats)])
+            }
+            CoreCommand::LoadPinnedMessage { chat_id } => {
+                let chat = self
+                    .chats
+                    .iter()
+                    .find(|chat| chat.id == chat_id)
+                    .ok_or_else(|| CoreError::Backend("chat not found".into()))?;
+                Ok(vec![CoreEvent::PinnedMessageUpdated {
+                    chat_id,
+                    message: chat.pinned_message.clone(),
+                }])
+            }
+            CoreCommand::PinMessage { chat_id, message_id } => {
+                let chat = self
+                    .chats
+                    .iter_mut()
+                    .find(|chat| chat.id == chat_id)
+                    .ok_or_else(|| CoreError::Backend("chat not found".into()))?;
+                let message = chat
+                    .last_message
+                    .as_ref()
+                    .filter(|message| message.id == message_id)
+                    .cloned()
+                    .ok_or_else(|| {
+                        CoreError::Backend("message not found in mock backend".into())
+                    })?;
+                chat.pinned_message = Some(message.clone());
+                Ok(vec![CoreEvent::PinnedMessageUpdated {
+                    chat_id,
+                    message: Some(message),
+                }])
+            }
+            CoreCommand::UnpinMessage { chat_id } => {
+                let chat = self
+                    .chats
+                    .iter_mut()
+                    .find(|chat| chat.id == chat_id)
+                    .ok_or_else(|| CoreError::Backend("chat not found".into()))?;
+                chat.pinned_message = None;
+                Ok(vec![CoreEvent::PinnedMessageUpdated {
+                    chat_id,
+                    message: None,
+                }])
             }
             CoreCommand::SendText { chat_id, text } => {
                 if self.authorization != AuthorizationState::Ready {

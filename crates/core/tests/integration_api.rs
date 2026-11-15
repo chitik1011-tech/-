@@ -15,6 +15,22 @@ fn command_and_event_kinds_are_stable() {
     );
     assert_eq!(CoreCommand::LoadChats { limit: 1 }.kind(), "load_chats");
     assert_eq!(
+        CoreCommand::LoadPinnedMessage { chat_id: 2 }.kind(),
+        "load_pinned_message"
+    );
+    assert_eq!(
+        CoreCommand::PinMessage {
+            chat_id: 2,
+            message_id: 4
+        }
+        .kind(),
+        "pin_message"
+    );
+    assert_eq!(
+        CoreCommand::UnpinMessage { chat_id: 2 }.kind(),
+        "unpin_message"
+    );
+    assert_eq!(
         CoreCommand::SendText {
             chat_id: 1,
             text: "hello".into(),
@@ -27,10 +43,79 @@ fn command_and_event_kinds_are_stable() {
         CoreEvent::AuthorizationChanged(AuthorizationState::Ready).kind(),
         "authorization_changed"
     );
+    assert_eq!(
+        CoreEvent::PinnedMessageUpdated {
+            chat_id: 2,
+            message: None
+        }
+        .kind(),
+        "pinned_message_updated"
+    );
     assert_eq!(CoreEvent::Error("test".into()).kind(), "error");
     assert_eq!(CoreEvent::Stopped.kind(), "stopped");
     assert!(CoreEvent::Stopped.is_terminal());
+    assert!(!CoreEvent::PinnedMessageUpdated {
+        chat_id: 2,
+        message: None
+    }
+    .is_terminal());
     assert!(!CoreEvent::Error("test".into()).is_terminal());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn mock_backend_loads_pins_and_supports_pin_unpin() {
+    let core = spawn_core(MockTelegramBackend::default());
+    let mut events = core.subscribe();
+
+    core.send(CoreCommand::PinMessage {
+        chat_id: 2,
+        message_id: 1,
+    })
+    .await
+    .unwrap();
+    let pinned_event = timeout(Duration::from_secs(1), events.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        pinned_event,
+        CoreEvent::PinnedMessageUpdated {
+            chat_id: 2,
+            message: Some(ref message)
+        } if message.id == 1
+    ));
+    assert_eq!(
+        core.state()
+            .chat(2)
+            .unwrap()
+            .pinned_message
+            .as_ref()
+            .unwrap()
+            .id,
+        1
+    );
+
+    core.send(CoreCommand::LoadPinnedMessage { chat_id: 2 })
+        .await
+        .unwrap();
+    assert!(matches!(
+        timeout(Duration::from_secs(1), events.recv()).await.unwrap().unwrap(),
+        CoreEvent::PinnedMessageUpdated {
+            chat_id: 2,
+            message: Some(ref message)
+        } if message.id == 1
+    ));
+
+    core.send(CoreCommand::UnpinMessage { chat_id: 2 })
+        .await
+        .unwrap();
+    assert!(matches!(
+        timeout(Duration::from_secs(1), events.recv()).await.unwrap().unwrap(),
+        CoreEvent::PinnedMessageUpdated { chat_id: 2, message: None }
+    ));
+    assert_eq!(core.state().chat(2).unwrap().pinned_message, None);
+
+    core.shutdown().await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

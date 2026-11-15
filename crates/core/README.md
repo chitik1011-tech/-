@@ -118,6 +118,8 @@ This wire format is intended for the Android/JNI bridge. Keep it backward compat
 
 Incoming `MessageAdded` events are cached per chat and deduplicated by message ID. The cache is bounded per chat for mobile memory safety. Newly inserted incoming messages increment unread count once; duplicate or edited updates of the same message do not.
 
+Pinned-message state belongs to each `ChatSummary`. Backends implement `LoadPinnedMessage`, `PinMessage`, and `UnpinMessage` with `PinnedMessageUpdated` events; the core remains independent of Telegram protocol types. Older persisted chat summaries deserialize with no pinned message.
+
 ## Safety
 
 This crate forbids unsafe Rust. FFI-specific unsafe code belongs in a narrow Android or protocol bridge crate, not in core.

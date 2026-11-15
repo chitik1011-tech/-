@@ -103,6 +103,7 @@ fn event_kind(event: &CoreEvent) -> &'static str {
         CoreEvent::State(_) => "account_state",
         CoreEvent::AuthorizationChanged(_) => "authorization_changed",
         CoreEvent::ChatsLoaded(_) => "chats_loaded",
+        CoreEvent::PinnedMessageUpdated { .. } => "pinned_message_updated",
         CoreEvent::MessageAdded(_) => "message_added",
         CoreEvent::Error(_) => "error",
         CoreEvent::Stopped => "stopped",

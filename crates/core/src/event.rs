@@ -8,6 +8,11 @@ pub enum CoreEvent {
     State(AccountState),
     AuthorizationChanged(AuthorizationState),
     ChatsLoaded(Vec<ChatSummary>),
+    /// Replaces a chat's pinned message; `None` means no message is pinned.
+    PinnedMessageUpdated {
+        chat_id: i64,
+        message: Option<MessageSummary>,
+    },
     MessageAdded(MessageSummary),
     Error(String),
     Stopped,
@@ -19,6 +24,7 @@ impl CoreEvent {
             Self::State(_) => "state",
             Self::AuthorizationChanged(_) => "authorization_changed",
             Self::ChatsLoaded(_) => "chats_loaded",
+            Self::PinnedMessageUpdated { .. } => "pinned_message_updated",
             Self::MessageAdded(_) => "message_added",
             Self::Error(_) => "error",
             Self::Stopped => "stopped",
