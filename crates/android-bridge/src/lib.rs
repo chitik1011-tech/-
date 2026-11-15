@@ -297,6 +297,28 @@ fn send_command(handle: i64, command_json: &str) -> Result<(), BridgeError> {
     Ok(())
 }
 
+fn send_outgoing_text_with_id(handle: i64, request_json: &str) -> Result<(), BridgeError> {
+    let (core, vm, callback) = with_registry(|registry| {
+        let native = registry
+            .get(&handle)
+            .ok_or(BridgeError::InvalidHandle(handle))?;
+        Ok((
+            native.core.clone(),
+            Arc::clone(&native.vm),
+            native.callback.clone(),
+        ))
+    })?;
+
+    let request_json = request_json.to_owned();
+    runtime()?.spawn(async move {
+        if let Err(error) = core.send_outgoing_json(&request_json).await {
+            emit_error(&vm, &callback, &error.to_string());
+        }
+    });
+
+    Ok(())
+}
+
 fn probe_handle(handle: i64) -> Result<(), BridgeError> {
     let (vm, callback) = with_registry(|registry| {
         let native = registry
@@ -398,6 +420,34 @@ pub extern "system" fn Java_com_chitik_telegram_nativebridge_NativeBridge_sendCo
     let result = catch_unwind(AssertUnwindSafe(|| {
         let command_json = read_java_string(&mut env, command_json)?;
         send_command(handle as i64, &command_json)
+    }));
+
+    match result {
+        Ok(Ok(())) => jni_bool(true),
+        Ok(Err(error)) => {
+            throw_bridge_error(&mut env, error);
+            jni_bool(false)
+        }
+        Err(_) => {
+            throw_bridge_error(
+                &mut env,
+                BridgeError::Runtime("panic caught at JNI boundary".to_owned()),
+            );
+            jni_bool(false)
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_chitik_telegram_nativebridge_NativeBridge_sendOutgoingTextWithId(
+    mut env: JNIEnv<'_>,
+    _this: JObject<'_>,
+    handle: jlong,
+    request_json: JString<'_>,
+) -> jboolean {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let request_json = read_java_string(&mut env, request_json)?;
+        send_outgoing_text_with_id(handle as i64, &request_json)
     }));
 
     match result {
