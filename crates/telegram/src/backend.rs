@@ -566,6 +566,10 @@ impl GrammersBackend {
             return Ok(Vec::new());
         }
 
+        for (_, task) in self.media_tasks.drain() {
+            task.handle.abort();
+        }
+
         if let Some(shutdown) = self.update_shutdown.take() {
             let _ = shutdown.send(true);
         }
@@ -648,7 +652,8 @@ impl GrammersBackend {
                 let peer = find_peer(&self.peers, chat_id)
                     .await
                     .ok_or(TelegramBackendError::UnknownChat(chat_id))?;
-                let messages = load_messages(&self.client, peer, limit).await?;
+                let mut messages = load_messages(&self.client, peer, limit).await?;
+                self.hydrate_cached_media(&mut messages);
                 vec![CoreEvent::MessagesLoaded { chat_id, messages }]
             }
             CoreCommand::LoadMessagesPage {
@@ -660,7 +665,9 @@ impl GrammersBackend {
                 let peer = find_peer(&self.peers, chat_id)
                     .await
                     .ok_or(TelegramBackendError::UnknownChat(chat_id))?;
-                let page = load_messages_page(&self.client, peer, before_message_id, limit).await?;
+                let mut page =
+                    load_messages_page(&self.client, peer, before_message_id, limit).await?;
+                self.hydrate_cached_media(&mut page.messages);
                 vec![CoreEvent::MessagesPageLoaded {
                     chat_id,
                     before_message_id,
@@ -688,7 +695,7 @@ impl GrammersBackend {
                 let peer = find_peer(&self.peers, request.chat_id)
                     .await
                     .ok_or(TelegramBackendError::UnknownChat(request.chat_id))?;
-                let page = search_messages_page(
+                let mut page = search_messages_page(
                     &self.client,
                     peer,
                     &request.query,
@@ -696,6 +703,7 @@ impl GrammersBackend {
                     request.limit,
                 )
                 .await?;
+                self.hydrate_cached_media(&mut page.messages);
 
                 vec![CoreEvent::MessageSearchCompleted(
                     tg_mobile_core::MessageSearchPage {
@@ -726,6 +734,27 @@ impl GrammersBackend {
                 chat_id,
                 text,
             } => self.handle_reliable_send(client_id, chat_id, text).await,
+            CoreCommand::DownloadMedia {
+                chat_id,
+                message_id,
+                attachment_index,
+            } => {
+                self.handle_media_download(chat_id, message_id, attachment_index, false)
+                    .await?
+            }
+            CoreCommand::RetryMediaDownload {
+                chat_id,
+                message_id,
+                attachment_index,
+            } => {
+                self.handle_media_download(chat_id, message_id, attachment_index, true)
+                    .await?
+            }
+            CoreCommand::CancelMediaDownload {
+                chat_id,
+                message_id,
+                attachment_index,
+            } => self.cancel_media_download(chat_id, message_id, attachment_index)?,
             CoreCommand::ArchiveChat { chat_id } | CoreCommand::UnarchiveChat { chat_id } => {
                 self.require_ready().await?;
                 let archived = matches!(command, CoreCommand::ArchiveChat { .. });
