@@ -19,7 +19,7 @@ use crate::{
     chats::{PeerRegistry, find_peer, load_chats, new_peer_registry},
     config::TelegramConfig,
     error::{TelegramBackendError, session_error},
-    messages::{MessageDeduplicator, load_messages, send_text},
+    messages::{MessageDeduplicator, load_messages, mark_read, send_text},
     updates::{TelegramUpdate, UpdateWorkerInput, run_update_worker},
 };
 
@@ -229,6 +229,20 @@ impl GrammersBackend {
                     .ok_or(TelegramBackendError::UnknownChat(chat_id))?;
                 let messages = load_messages(&self.client, peer, limit).await?;
                 vec![CoreEvent::MessagesLoaded { chat_id, messages }]
+            }
+            CoreCommand::MarkRead {
+                chat_id,
+                max_message_id,
+            } => {
+                self.require_ready().await?;
+                let peer = find_peer(&self.peers, chat_id)
+                    .await
+                    .ok_or(TelegramBackendError::UnknownChat(chat_id))?;
+                mark_read(&self.client, peer, max_message_id).await?;
+                vec![CoreEvent::ChatRead {
+                    chat_id,
+                    max_message_id,
+                }]
             }
             CoreCommand::SendText { chat_id, text } => {
                 self.require_ready().await?;
