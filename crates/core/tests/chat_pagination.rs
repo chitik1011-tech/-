@@ -336,7 +336,12 @@ fn stale_first_page_cannot_replace_chats_during_next_page_request() {
 
     state.reduce(&page(Some("next"), vec![summary(2, "two", 0, None)], None));
     assert_eq!(
-        state.account.chats.iter().map(|chat| chat.id).collect::<Vec<_>>(),
+        state
+            .account
+            .chats
+            .iter()
+            .map(|chat| chat.id)
+            .collect::<Vec<_>>(),
         vec![1, 2]
     );
     assert!(!state.chat_pagination.loading);
