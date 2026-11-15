@@ -30,12 +30,30 @@ pub enum EntityKind {
 }
 
 /// A Telegram entity range, measured in UTF-16 code units.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct TextEntity {
     offset: u32,
     length: u32,
     #[serde(flatten)]
     kind: EntityKind,
+}
+
+impl<'de> Deserialize<'de> for TextEntity {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct WireTextEntity {
+            offset: u32,
+            length: u32,
+            #[serde(flatten)]
+            kind: EntityKind,
+        }
+
+        let wire = WireTextEntity::deserialize(deserializer)?;
+        Self::new(wire.offset, wire.length, wire.kind).map_err(de::Error::custom)
+    }
 }
 
 impl TextEntity {
@@ -292,6 +310,12 @@ mod tests {
         )
         .expect_err("mid-surrogate offset must be rejected");
         assert!(error.to_string().contains("Unicode scalar"));
+
+        let empty_error = serde_json::from_str::<TextEntity>(
+            r#"{"type":"bold","offset":0,"length":0}"#,
+        )
+        .expect_err("zero-length entity must be rejected");
+        assert!(empty_error.to_string().contains("greater than zero"));
     }
 
     #[test]
