@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+pub mod activity;
 pub mod backend;
 pub mod command;
 pub mod connection;
@@ -17,6 +18,7 @@ pub mod storage;
 pub mod transfer;
 pub mod wire;
 
+pub use activity::{ChatActivityTracker, DEFAULT_CHAT_ACTIVITY_TTL_MS, MAX_CHAT_ACTIVITY_TTL_MS};
 pub use backend::{
     backend_update_channel, BackendFuture, BackendUpdateReceiver, BackendUpdateSender,
     TelegramBackend, DEFAULT_BACKEND_UPDATE_CAPACITY,
@@ -32,8 +34,8 @@ pub use event::CoreEvent;
 pub use mock::MockTelegramBackend;
 pub use model::{
     AccountState, AttachmentDownloadState, AttachmentKind, AttachmentThumbnail, AuthorizationState,
-    ChatSummary, ForwardedFrom, MediaAttachment, MessageHistoryState, MessageSummary,
-    ReplyMetadata,
+    ChatActivityKind, ChatSummary, ForwardedFrom, MediaAttachment, MessageHistoryState,
+    MessageSummary, ReplyMetadata,
 };
 pub use runtime::{spawn_core, spawn_core_with_store, CoreHandle, PERSISTENCE_FLUSH_INTERVAL_MS};
 pub use search::{
