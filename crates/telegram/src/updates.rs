@@ -75,11 +75,7 @@ pub(crate) async fn run_update_worker(mut input: UpdateWorkerInput) {
 
     let _catch_up = input.catch_up;
 
-    let mut stream = match input
-        .client
-        .stream_updates(input.network_updates, ())
-        .await
-    {
+    let mut stream = match input.client.stream_updates(input.network_updates, ()).await {
         Ok(stream) => stream,
         Err(error) => {
             emit_error(
