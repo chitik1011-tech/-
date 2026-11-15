@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="Unofficial Android Telegram client with a Rust-first core and Kotlin Jetpack Compose UI.">
+  <title>Rust Telegram Mobile</title>
+  <style>
+    :root{color-scheme:dark;background:#0b0f14;color:#e6edf3;font:16px/1.55 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+    body{margin:0}.wrap{max-width:920px;margin:auto;padding:64px 24px}.tag{display:inline-block;padding:6px 10px;border:1px solid #30363d;border-radius:999px;color:#9da7b3}
+    h1{font-size:clamp(2.5rem,8vw,5rem);line-height:.95;margin:24px 0}h2{margin-top:48px}.lead{font-size:1.25rem;color:#b8c1cc;max-width:720px}
+    .buttons{display:flex;gap:12px;flex-wrap:wrap;margin:28px 0}.btn{padding:12px 18px;border-radius:10px;text-decoration:none;background:#e6edf3;color:#0b0f14;font-weight:700}.secondary{background:#161b22;color:#e6edf3;border:1px solid #30363d}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}.card{padding:20px;border:1px solid #30363d;border-radius:14px;background:#10151c}.muted{color:#8b949e}code{color:#79c0ff}
+  </style>
+</head>
+<body><main class="wrap">
+  <span class="tag">Unofficial • Android • Rust + Kotlin</span>
+  <h1>Rust Telegram Mobile</h1>
+  <p class="lead">An experimental Android Telegram client with a Rust-first core, real MTProto integration, JNI-backed state and a Jetpack Compose UI.</p>
+  <div class="buttons">
+    <a class="btn" href="https://github.com/chitik1011-tech/-">View on GitHub</a>
+    <a class="btn secondary" href="https://github.com/chitik1011-tech/-/blob/main/ROADMAP.md">Roadmap</a>
+  </div>
+  <p class="muted">Stable public APK releases are not available yet. Development builds should not be treated as production-ready.</p>
+  <h2>What is already here</h2>
+  <div class="grid">
+    <div class="card"><strong>Rust-first core</strong><br><span class="muted">State, reducers, persistence, commands and events live in Rust.</span></div>
+    <div class="card"><strong>Real Telegram backend</strong><br><span class="muted">MTProto integration with reconnect and update synchronization foundations.</span></div>
+    <div class="card"><strong>Messaging foundation</strong><br><span class="muted">History pagination, search, reliable sending, edits and deletes.</span></div>
+    <div class="card"><strong>Android shell</strong><br><span class="muted">Kotlin, Jetpack Compose and an ARM64 JNI bridge.</span></div>
+  </div>
+  <h2>Architecture</h2>
+  <p><code>Telegram → crates/telegram → crates/core → crates/android-bridge → Android Compose</code></p>
+  <h2>Status</h2>
+  <p>The project is under active development. Reactions, pinned messages, contacts/profiles, polls end-to-end, richer media UX and other daily-driver features are still being completed.</p>
+  <h2>Contribute</h2>
+  <p>Check the existing pull requests first, then read <a href="https://github.com/chitik1011-tech/-/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a>.</p>
+  <p class="muted">Independent unofficial project. Not affiliated with or endorsed by Telegram.</p>
+</main></body></html>
