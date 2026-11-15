@@ -12,5 +12,6 @@ This project is currently pre-release. Development changes are tracked through p
 - reliable message sending
 - history pagination, search, edit/delete updates
 - drafts, folders, media cache, deep links and Android UI foundations
+- Telegram polls with server-backed voting, live results and Android Compose UI
 
 A versioned changelog will begin with the first public APK release.
