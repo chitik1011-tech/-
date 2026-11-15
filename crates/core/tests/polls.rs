@@ -311,8 +311,8 @@ fn vote_selection_validates_single_and_multiple_choice() {
 
 #[test]
 fn vote_selection_rejects_invalid_option_and_closed_poll() {
-    let poll = poll(12, 22);
-    assert!(poll
+    let open_poll = poll(12, 22);
+    assert!(open_poll
         .validate_vote_selection(&[b"Unknown".to_vec()])
         .is_err());
 
