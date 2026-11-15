@@ -8,6 +8,7 @@ use crate::{
     event::CoreEvent,
     model::{AccountState, ChatSummary, MessageHistoryState, MessageSummary},
     search::MessageSearchState,
+    send::{OutgoingSend, OutgoingSendState},
 };
 
 pub const MAX_CACHED_MESSAGES_PER_CHAT: usize = 512;
@@ -27,6 +28,15 @@ pub struct CoreState {
     pub message_history: BTreeMap<i64, MessageHistoryState>,
     #[serde(default)]
     pub message_search: MessageSearchState,
+    /// Reliable sends that are still in flight or failed and can be retried.
+    /// Older persisted state did not contain this field.
+    #[serde(default)]
+    pub outbox: BTreeMap<i64, OutgoingSend>,
+    /// Persistent client-ID binding and final result ledger. Retaining this
+    /// ledger prevents a client ID from being reused after acknowledgment or
+    /// process restart.
+    #[serde(default)]
+    pub send_ledger: BTreeMap<i64, OutgoingSend>,
     pub last_error: Option<String>,
 }
 
@@ -40,6 +50,8 @@ impl Default for CoreState {
             messages: BTreeMap::new(),
             message_history: BTreeMap::new(),
             message_search: MessageSearchState::default(),
+            outbox: BTreeMap::new(),
+            send_ledger: BTreeMap::new(),
             last_error: None,
         }
     }
@@ -256,6 +268,37 @@ impl CoreState {
                     }
                 }
             }
+            CoreEvent::MessageSendStateChanged(update) => {
+                let client_id = update.client_id;
+                if let Some(existing) = self.send_ledger.get(&client_id) {
+                    if !existing.same_request(update.chat_id, &update.text) {
+                        self.last_error = Some(format!(
+                            "client message id {client_id} was reused for a different outgoing message"
+                        ));
+                        return;
+                    }
+                }
+
+                self.send_ledger.insert(client_id, update.clone());
+                match &update.state {
+                    OutgoingSendState::Sent { .. } | OutgoingSendState::Rejected { .. } => {
+                        self.outbox.remove(&client_id);
+                    }
+                    OutgoingSendState::Sending
+                    | OutgoingSendState::AwaitingConfirmation { .. }
+                    | OutgoingSendState::FloodWait { .. }
+                    | OutgoingSendState::Failed {
+                        retryable: true, ..
+                    } => {
+                        self.outbox.insert(client_id, update.clone());
+                    }
+                    OutgoingSendState::Failed {
+                        retryable: false, ..
+                    } => {
+                        self.outbox.remove(&client_id);
+                    }
+                }
+            }
             CoreEvent::Error(error) => {
                 self.last_error = Some(error.clone());
             }
@@ -278,6 +321,10 @@ impl CoreState {
 
     pub fn message_history_for_chat(&self, chat_id: i64) -> Option<&MessageHistoryState> {
         self.message_history.get(&chat_id)
+    }
+
+    pub fn outgoing_send(&self, client_id: i64) -> Option<&OutgoingSend> {
+        self.outbox.get(&client_id)
     }
 
     pub fn total_unread_count(&self) -> u64 {

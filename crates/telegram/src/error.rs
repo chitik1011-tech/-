@@ -1,3 +1,4 @@
+use grammers_client::sender::InvocationError;
 use tg_mobile_core::CoreError;
 use thiserror::Error;
 
@@ -45,8 +46,20 @@ pub(crate) fn api_error(context: &'static str, error: impl std::fmt::Display) ->
     TelegramBackendError::Api(format!("{context}: {error}")).into()
 }
 
-pub(crate) fn auth_api_error(context: &'static str, _error: impl std::fmt::Display) -> CoreError {
-    TelegramBackendError::Authorization(format!("{context}: Telegram request failed")).into()
+pub(crate) fn auth_api_error(context: &'static str, error: InvocationError) -> CoreError {
+    match error {
+        InvocationError::Io(_) | InvocationError::Transport(_) => {
+            CoreError::TransientTransport(format!("{context}: Telegram transport unavailable"))
+        }
+        InvocationError::Rpc(error) if error.name == "FLOOD_WAIT" => CoreError::FloodWait {
+            seconds: error.value.unwrap_or_default(),
+        },
+        InvocationError::Rpc(error) if error.code >= 500 => {
+            CoreError::TransientSend(format!("{context}: Telegram server error"))
+        }
+        _ => TelegramBackendError::Authorization(format!("{context}: Telegram request failed"))
+            .into(),
+    }
 }
 
 pub(crate) fn session_error(context: &'static str, error: impl std::fmt::Display) -> CoreError {
@@ -56,6 +69,7 @@ pub(crate) fn session_error(context: &'static str, error: impl std::fmt::Display
 #[cfg(test)]
 mod tests {
     use super::TelegramBackendError;
+    use grammers_client::sender::{InvocationError, RpcError};
     use tg_mobile_core::CoreError;
 
     #[test]
@@ -74,11 +88,13 @@ mod tests {
     fn authorization_api_errors_do_not_expose_upstream_details() {
         let error = super::auth_api_error(
             "sign in with code",
-            "PHONE=+15551234567 CODE=12345 PASSWORD=secret",
+            InvocationError::Io(std::io::Error::other(
+                "PHONE=+15551234567 CODE=12345 PASSWORD=secret",
+            )),
         );
 
         match error {
-            CoreError::Backend(message) => {
+            CoreError::TransientTransport(message) => {
                 assert!(message.contains("sign in with code"));
                 assert!(!message.contains("+15551234567"));
                 assert!(!message.contains("12345"));
@@ -86,5 +102,30 @@ mod tests {
             }
             other => panic!("expected backend error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn auth_flood_wait_and_temporary_rpc_errors_keep_distinct_classes() {
+        let flood = super::auth_api_error(
+            "check authorization",
+            InvocationError::Rpc(RpcError {
+                code: 420,
+                name: "FLOOD_WAIT".into(),
+                value: Some(12),
+                caused_by: None,
+            }),
+        );
+        assert!(matches!(flood, CoreError::FloodWait { seconds: 12 }));
+
+        let temporary = super::auth_api_error(
+            "check authorization",
+            InvocationError::Rpc(RpcError {
+                code: 500,
+                name: "INTERNAL".into(),
+                value: None,
+                caused_by: None,
+            }),
+        );
+        assert!(matches!(temporary, CoreError::TransientSend(_)));
     }
 }

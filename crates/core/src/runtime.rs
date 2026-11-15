@@ -11,6 +11,7 @@ use crate::{
     connection_machine::{LinkEvent, LinkPhase},
     error::{CoreError, Result},
     event::CoreEvent,
+    send::{OutgoingSend, OutgoingSendState},
     state::CoreState,
     storage::{NoopStateStore, StateStore},
     wire::{decode_command, encode_state},
@@ -137,6 +138,74 @@ where
                         CoreCommand::SearchMessages(request) => Some(request.clone()),
                         _ => None,
                     };
+                    let mut skip_backend = false;
+
+                    if let CoreCommand::SendTextReliable {
+                        client_id,
+                        chat_id,
+                        text,
+                    } = &command
+                    {
+                        if let Some(existing) = reduced_state.send_ledger.get(client_id) {
+                            if !existing.same_request(*chat_id, text) {
+                                apply_event(
+                                    CoreEvent::Error(format!(
+                                        "client message id {client_id} was reused for a different outgoing message"
+                                    )),
+                                    &mut reduced_state,
+                                    &state_tx,
+                                    &event_tx_task,
+                                );
+                                skip_backend = true;
+                            } else if matches!(
+                                existing.state,
+                                OutgoingSendState::Sent { .. }
+                                    | OutgoingSendState::Rejected { .. }
+                                    | OutgoingSendState::Failed {
+                                        retryable: false,
+                                        ..
+                                    }
+                            ) {
+                                // A duplicate command after acknowledgment returns the original
+                                // result without issuing another RPC.
+                                apply_event(
+                                    CoreEvent::MessageSendStateChanged(existing.clone()),
+                                    &mut reduced_state,
+                                    &state_tx,
+                                    &event_tx_task,
+                                );
+                                skip_backend = true;
+                            }
+                        }
+
+                        if !skip_backend {
+                            // Write-ahead: publish and save the idempotency key before the
+                            // backend can make a network request.
+                            apply_event(
+                                CoreEvent::MessageSendStateChanged(OutgoingSend::sending(
+                                    *client_id,
+                                    *chat_id,
+                                    text.clone(),
+                                )),
+                                &mut reduced_state,
+                                &state_tx,
+                                &event_tx_task,
+                            );
+                            persistence_dirty = true;
+                            if persist_send_intent(
+                                &store,
+                                &mut reduced_state,
+                                &state_tx,
+                                &event_tx_task,
+                            )
+                            .await
+                            {
+                                persistence_dirty = false;
+                            } else {
+                                skip_backend = true;
+                            }
+                        }
+                    }
 
                     if let Some((chat_id, before_message_id)) = page_request {
                         apply_event(
@@ -160,35 +229,52 @@ where
                         persistence_dirty = true;
                     }
 
-                    let mut events = match backend.handle(command).await {
-                        Ok(events) => events,
-                        Err(error) => {
-                            if starting_session {
-                                let token = reduced_state.connection_machine.token();
-                                reduced_state.reduce(&CoreEvent::ConnectionLifecycle {
-                                    token,
-                                    event: LinkEvent::ConnectFailed { retryable: false },
-                                });
-                                let _ = state_tx.send(reduced_state.clone());
-                                backend
-                                    .set_connection_token(reduced_state.connection_machine.token());
-                            }
-                            if let Some((chat_id, before_message_id)) = page_request {
-                                vec![CoreEvent::MessagesPageLoadFailed {
+                    let mut events = if skip_backend {
+                        Vec::new()
+                    } else {
+                        match backend.handle(command.clone()).await {
+                            Ok(events) => events,
+                            Err(error) => {
+                                if starting_session {
+                                    let token = reduced_state.connection_machine.token();
+                                    reduced_state.reduce(&CoreEvent::ConnectionLifecycle {
+                                        token,
+                                        event: LinkEvent::ConnectFailed { retryable: false },
+                                    });
+                                    let _ = state_tx.send(reduced_state.clone());
+                                    backend.set_connection_token(
+                                        reduced_state.connection_machine.token(),
+                                    );
+                                }
+                                if let Some((chat_id, before_message_id)) = page_request {
+                                    vec![CoreEvent::MessagesPageLoadFailed {
+                                        chat_id,
+                                        before_message_id,
+                                        error: error.to_string(),
+                                    }]
+                                } else if let Some(request) = search_request.as_ref() {
+                                    vec![CoreEvent::MessageSearchFailed {
+                                        request_id: request.request_id,
+                                        chat_id: request.chat_id,
+                                        query: request.query.clone(),
+                                        before_message_id: request.before_message_id,
+                                        error: error.to_string(),
+                                    }]
+                                } else if let CoreCommand::SendTextReliable {
+                                    client_id,
                                     chat_id,
-                                    before_message_id,
-                                    error: error.to_string(),
-                                }]
-                            } else if let Some(request) = search_request.as_ref() {
-                                vec![CoreEvent::MessageSearchFailed {
-                                    request_id: request.request_id,
-                                    chat_id: request.chat_id,
-                                    query: request.query.clone(),
-                                    before_message_id: request.before_message_id,
-                                    error: error.to_string(),
-                                }]
-                            } else {
-                                vec![CoreEvent::Error(error.to_string())]
+                                    text,
+                                } = &command
+                                {
+                                    vec![CoreEvent::MessageSendStateChanged(send_error_state(
+                                        *client_id,
+                                        *chat_id,
+                                        text.clone(),
+                                        error,
+                                    ))]
+                                } else {
+                                    vec![CoreEvent::Error(error.to_string())]
+                                }
                             }
                         }
                     };
@@ -265,6 +351,35 @@ where
                                 before_message_id: request.before_message_id,
                                 error,
                             });
+                        }
+                    }
+
+                    if !skip_backend {
+                        if let CoreCommand::SendTextReliable {
+                            client_id,
+                            chat_id,
+                            text,
+                        } = &command
+                        {
+                            let has_send_completion = events.iter().any(|event| {
+                                matches!(
+                                    event,
+                                    CoreEvent::MessageSendStateChanged(send)
+                                        if send.client_id == *client_id
+                                            && send.same_request(*chat_id, text)
+                                            && !matches!(&send.state, OutgoingSendState::Sending)
+                                )
+                            });
+                            if !has_send_completion {
+                                events.push(CoreEvent::MessageSendStateChanged(
+                                    OutgoingSend::awaiting_confirmation(
+                                        *client_id,
+                                        *chat_id,
+                                        text.clone(),
+                                        "backend returned without confirming the send outcome",
+                                    ),
+                                ));
+                            }
                         }
                     }
 
@@ -476,6 +591,34 @@ async fn restore_state<S: StateStore>(
                 history.loading = false;
                 history.requested_before_message_id = None;
             }
+            for (client_id, send) in state.outbox.clone() {
+                state.send_ledger.entry(client_id).or_insert(send);
+            }
+            let recovering: Vec<_> = state
+                .outbox
+                .values()
+                .filter(|send| matches!(send.state, OutgoingSendState::Sending))
+                .map(|send| send.client_id)
+                .collect();
+            let mut recovered_any = false;
+            for client_id in recovering {
+                if let Some(send) = state.outbox.get(&client_id).cloned() {
+                    let recovered = OutgoingSend::awaiting_confirmation(
+                        send.client_id,
+                        send.chat_id,
+                        send.text,
+                        "process restarted while the send outcome was unknown",
+                    );
+                    state.outbox.insert(client_id, recovered.clone());
+                    state.send_ledger.insert(client_id, recovered);
+                    recovered_any = true;
+                }
+            }
+            if recovered_any {
+                if let Err(error) = store.save(&state).await {
+                    state.last_error = Some(error.to_string());
+                }
+            }
             let _ = state_tx.send(state.clone());
             state
         }
@@ -487,6 +630,40 @@ async fn restore_state<S: StateStore>(
             let _ = state_tx.send(state.clone());
             let _ = event_tx.send(CoreEvent::Error(message));
             state
+        }
+    }
+}
+
+fn send_error_state(client_id: i64, chat_id: i64, text: String, error: CoreError) -> OutgoingSend {
+    match error {
+        CoreError::SendOutcomeUnknown(reason) => {
+            OutgoingSend::awaiting_confirmation(client_id, chat_id, text, reason)
+        }
+        CoreError::FloodWait { seconds } => {
+            OutgoingSend::flood_wait(client_id, chat_id, text, seconds)
+        }
+        CoreError::TransientTransport(reason) | CoreError::TransientSend(reason) => {
+            OutgoingSend::failed(client_id, chat_id, text, reason, true)
+        }
+        CoreError::SendRejected(reason) => OutgoingSend::rejected(client_id, chat_id, text, reason),
+        other => OutgoingSend::rejected(client_id, chat_id, text, other.to_string()),
+    }
+}
+
+async fn persist_send_intent<S: StateStore>(
+    store: &S,
+    state: &mut CoreState,
+    state_tx: &watch::Sender<CoreState>,
+    event_tx: &broadcast::Sender<CoreEvent>,
+) -> bool {
+    match store.save(state).await {
+        Ok(()) => true,
+        Err(error) => {
+            let message = error.to_string();
+            state.last_error = Some(message.clone());
+            let _ = state_tx.send(state.clone());
+            let _ = event_tx.send(CoreEvent::Error(message));
+            false
         }
     }
 }
