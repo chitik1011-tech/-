@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - agent/android-jni
+      - agent/integrate-telegram
   workflow_dispatch:
 
 permissions:
