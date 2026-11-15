@@ -9,10 +9,10 @@ use tokio::time::timeout;
 
 async fn authorize(core: &tg_mobile_core::CoreHandle) {
     core.send(CoreCommand::Start).await.unwrap();
-    core.send(CoreCommand::SetPhoneNumber("+15550001111".into()))
+    core.send(CoreCommand::SetPhoneNumber("test-phone".into()))
         .await
         .unwrap();
-    core.send(CoreCommand::SubmitCode("12345".into()))
+    core.send(CoreCommand::SubmitCode("test-code".into()))
         .await
         .unwrap();
 }
