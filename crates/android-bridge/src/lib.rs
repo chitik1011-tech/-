@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     panic::{catch_unwind, AssertUnwindSafe},
+    path::PathBuf,
     sync::{
         atomic::{AtomicI64, Ordering},
         Arc, Mutex, OnceLock,
@@ -14,8 +15,8 @@ use jni::{
     JNIEnv, JavaVM,
 };
 use tg_mobile_core::{
-    decode_command, encode_event, encode_state, spawn_core, BackendFuture, CoreCommand, CoreError,
-    CoreEvent, CoreHandle, TelegramBackend,
+    decode_command, encode_event, encode_state, spawn_core, spawn_core_with_store, BackendFuture,
+    CoreCommand, CoreError, CoreEvent, CoreHandle, JsonFileStateStore, TelegramBackend,
 };
 use tg_mobile_telegram::{GrammersBackend, TelegramConfig};
 use tokio::{runtime::Runtime, task::JoinHandle, time::timeout};
@@ -259,6 +260,14 @@ fn create_native_handle(env: &mut JNIEnv<'_>, callback: JObject<'_>) -> Result<i
     install_native_handle(callback, vm, core)
 }
 
+fn core_state_path(session_path: &str) -> PathBuf {
+    let session = PathBuf::from(session_path);
+    session
+        .parent()
+        .map(|parent| parent.join("core-state.json"))
+        .unwrap_or_else(|| PathBuf::from("core-state.json"))
+}
+
 fn create_telegram_native_handle(
     env: &mut JNIEnv<'_>,
     callback: JObject<'_>,
@@ -268,13 +277,14 @@ fn create_telegram_native_handle(
 ) -> Result<i64, BridgeError> {
     let (callback, vm) = prepare_callback(env, callback)?;
     let runtime = runtime()?;
+    let state_path = core_state_path(&session_path);
     let config = TelegramConfig::new(api_id, api_hash, session_path);
     let backend = runtime
         .block_on(GrammersBackend::connect(config))
         .map_err(|error| BridgeError::Telegram(error.to_string()))?;
     let core = {
         let _guard = runtime.enter();
-        spawn_core(backend)
+        spawn_core_with_store(backend, JsonFileStateStore::new(state_path))
     };
     install_native_handle(callback, vm, core)
 }
@@ -540,6 +550,14 @@ mod tests {
     fn rejects_noncanonical_command_payload() {
         let parsed = decode_command(r#"{"type":"set_phone_number","phone_number":"123"}"#);
         assert!(parsed.is_err());
+    }
+
+    #[test]
+    fn derives_core_state_path_next_to_telegram_session() {
+        assert_eq!(
+            core_state_path("/data/user/0/com.chitik.telegram/files/telegram/session.sqlite"),
+            PathBuf::from("/data/user/0/com.chitik.telegram/files/telegram/core-state.json")
+        );
     }
 
     #[test]
