@@ -354,6 +354,35 @@ where
                         }
                     }
 
+                    if !skip_backend {
+                        if let CoreCommand::SendTextReliable {
+                            client_id,
+                            chat_id,
+                            text,
+                        } = &command
+                        {
+                            let has_send_completion = events.iter().any(|event| {
+                                matches!(
+                                    event,
+                                    CoreEvent::MessageSendStateChanged(send)
+                                        if send.client_id == *client_id
+                                            && send.same_request(*chat_id, text)
+                                            && !matches!(&send.state, OutgoingSendState::Sending)
+                                )
+                            });
+                            if !has_send_completion {
+                                events.push(CoreEvent::MessageSendStateChanged(
+                                    OutgoingSend::awaiting_confirmation(
+                                        *client_id,
+                                        *chat_id,
+                                        text.clone(),
+                                        "backend returned without confirming the send outcome",
+                                    ),
+                                ));
+                            }
+                        }
+                    }
+
                     if let Some(token) = initial_sync_token {
                         let completed = events
                             .iter()

@@ -550,6 +550,7 @@ enum SendResponseOrder {
     UpdateBeforeAck,
     AckBeforeUpdate,
     DuplicateAck,
+    MissingAck,
 }
 
 struct OrderedSendBackend {
@@ -614,6 +615,7 @@ impl TelegramBackend for OrderedSendBackend {
                 SendResponseOrder::DuplicateAck => {
                     Ok(vec![CoreEvent::MessageAdded(message), sent.clone(), sent])
                 }
+                SendResponseOrder::MissingAck => Ok(Vec::new()),
             }
         })
     }
@@ -621,6 +623,27 @@ impl TelegramBackend for OrderedSendBackend {
     fn take_updates(&mut self) -> Option<BackendUpdateReceiver> {
         self.updates_rx.take()
     }
+}
+
+#[tokio::test]
+async fn successful_backend_call_without_matching_ack_awaits_confirmation() {
+    let (backend, _, calls) = OrderedSendBackend::new(SendResponseOrder::MissingAck);
+    let core = spawn_core_with_store(backend, MemoryStateStore::default());
+    let mut state = core.subscribe_state();
+    let command = reliable_send_command();
+    core.send(command.clone()).await.unwrap();
+
+    wait_until(&mut state, |state| {
+        matches!(
+            state.send_ledger.get(&880).map(|send| &send.state),
+            Some(OutgoingSendState::AwaitingConfirmation { .. })
+        )
+    })
+    .await;
+
+    assert_eq!(*calls.lock().unwrap(), vec![command]);
+    assert!(state.borrow().outbox.contains_key(&880));
+    core.shutdown().await.unwrap();
 }
 
 fn test_message(id: i64, chat_id: i64, text: String) -> MessageSummary {
