@@ -19,12 +19,23 @@ impl Default for MockTelegramBackend {
         Self {
             authorization: AuthorizationState::Closed,
             chats: vec![
-                ChatSummary { id: 1, title: "Saved Messages".into(), unread_count: 0, last_message: None },
                 ChatSummary {
-                    id: 2, title: "Rust Telegram".into(), unread_count: 1,
+                    id: 1,
+                    title: "Saved Messages".into(),
+                    unread_count: 0,
+                    last_message: None,
+                },
+                ChatSummary {
+                    id: 2,
+                    title: "Rust Telegram".into(),
+                    unread_count: 1,
                     last_message: Some(MessageSummary {
-                        id: 1, chat_id: 2, sender_id: 42, text: "Core online".into(),
-                        timestamp_unix: unix_timestamp(), outgoing: false,
+                        id: 1,
+                        chat_id: 2,
+                        sender_id: 42,
+                        text: "Core online".into(),
+                        timestamp_unix: unix_timestamp(),
+                        outgoing: false,
                     }),
                 },
             ],
@@ -44,33 +55,55 @@ impl MockTelegramBackend {
         match command {
             CoreCommand::Start => {
                 self.authorization = AuthorizationState::WaitingForPhoneNumber;
-                Ok(vec![CoreEvent::AuthorizationChanged(self.authorization.clone())])
+                Ok(vec![CoreEvent::AuthorizationChanged(
+                    self.authorization.clone(),
+                )])
             }
             CoreCommand::SetPhoneNumber(phone) => {
-                if phone.trim().is_empty() { return Err(CoreError::InvalidInput("phone number is empty".into())); }
+                if phone.trim().is_empty() {
+                    return Err(CoreError::InvalidInput("phone number is empty".into()));
+                }
                 self.authorization = AuthorizationState::WaitingForCode;
-                Ok(vec![CoreEvent::AuthorizationChanged(self.authorization.clone())])
+                Ok(vec![CoreEvent::AuthorizationChanged(
+                    self.authorization.clone(),
+                )])
             }
             CoreCommand::SubmitCode(code) => {
-                if code.trim().is_empty() { return Err(CoreError::InvalidInput("login code is empty".into())); }
+                if code.trim().is_empty() {
+                    return Err(CoreError::InvalidInput("login code is empty".into()));
+                }
                 self.authorization = AuthorizationState::Ready;
-                Ok(vec![CoreEvent::AuthorizationChanged(self.authorization.clone())])
+                Ok(vec![CoreEvent::AuthorizationChanged(
+                    self.authorization.clone(),
+                )])
             }
             CoreCommand::SubmitPassword(password) => {
-                if password.is_empty() { return Err(CoreError::InvalidInput("password is empty".into())); }
+                if password.is_empty() {
+                    return Err(CoreError::InvalidInput("password is empty".into()));
+                }
                 self.authorization = AuthorizationState::Ready;
-                Ok(vec![CoreEvent::AuthorizationChanged(self.authorization.clone())])
+                Ok(vec![CoreEvent::AuthorizationChanged(
+                    self.authorization.clone(),
+                )])
             }
-            CoreCommand::LoadChats { limit } => {
-                Ok(vec![CoreEvent::ChatsLoaded(self.chats.iter().take(limit).cloned().collect())])
-            }
+            CoreCommand::LoadChats { limit } => Ok(vec![CoreEvent::ChatsLoaded(
+                self.chats.iter().take(limit).cloned().collect(),
+            )]),
             CoreCommand::SendText { chat_id, text } => {
-                if self.authorization != AuthorizationState::Ready { return Err(CoreError::Backend("not authorized".into())); }
+                if self.authorization != AuthorizationState::Ready {
+                    return Err(CoreError::Backend("not authorized".into()));
+                }
                 let text = text.trim().to_owned();
-                if text.is_empty() { return Err(CoreError::InvalidInput("message text is empty".into())); }
+                if text.is_empty() {
+                    return Err(CoreError::InvalidInput("message text is empty".into()));
+                }
                 let message = MessageSummary {
-                    id: self.next_message_id, chat_id, sender_id: 0, text,
-                    timestamp_unix: unix_timestamp(), outgoing: true,
+                    id: self.next_message_id,
+                    chat_id,
+                    sender_id: 0,
+                    text,
+                    timestamp_unix: unix_timestamp(),
+                    outgoing: true,
                 };
                 self.next_message_id += 1;
                 if let Some(chat) = self.chats.iter_mut().find(|chat| chat.id == chat_id) {
@@ -87,5 +120,8 @@ impl MockTelegramBackend {
 }
 
 fn unix_timestamp() -> i64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|duration| duration.as_secs() as i64).unwrap_or_default()
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs() as i64)
+        .unwrap_or_default()
 }
