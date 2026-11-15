@@ -71,13 +71,13 @@ fn legacy_persisted_core_state_migrates_message_media_field() {
     });
     let decoded = serde_json::from_value::<tg_mobile_core::CoreState>(old_state).ok();
 
-    assert!(decoded
+    let message_has_empty_attachments = decoded
         .as_ref()
-        .is_some_and(|state| state
-            .messages
-            .get(&3)
-            .and_then(|messages| messages.first())
-            .is_some_and(|message| message.attachments.is_empty())));
+        .and_then(|state| state.messages.get(&3))
+        .and_then(|messages| messages.first())
+        .map(|message| message.attachments.is_empty());
+
+    assert_eq!(message_has_empty_attachments, Some(true));
 }
 
 #[test]
