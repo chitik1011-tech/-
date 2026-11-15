@@ -4,7 +4,7 @@ use grammers_client::{
 };
 use tg_mobile_core::{AuthorizationState, CoreError};
 
-use crate::error::{TelegramBackendError, api_error};
+use crate::error::{TelegramBackendError, auth_api_error};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AuthPhase {
@@ -61,7 +61,7 @@ impl AuthFlow {
         let authorized = client
             .is_authorized()
             .await
-            .map_err(|error| api_error("check authorization", error))?;
+            .map_err(|error| auth_api_error("check authorization", error))?;
         self.phase = if authorized {
             AuthPhase::Ready
         } else {
@@ -85,7 +85,7 @@ impl AuthFlow {
         let token = client
             .request_login_code(phone.trim(), api_hash)
             .await
-            .map_err(|error| api_error("request login code", error))?;
+            .map_err(|error| auth_api_error("request login code", error))?;
         self.password_token = None;
         self.login_token = Some(token);
         self.phase = AuthPhase::WaitingForCode;
@@ -142,7 +142,7 @@ impl AuthFlow {
             Err(SignInError::Other(error)) => {
                 self.login_token = Some(token);
                 self.phase = AuthPhase::WaitingForCode;
-                Err(api_error("sign in with code", error))
+                Err(auth_api_error("sign in with code", error))
             }
         }
     }
@@ -194,7 +194,7 @@ impl AuthFlow {
                 // failures do not return a replacement token, so restart the login
                 // flow rather than pretending a retry can succeed with stale state.
                 self.phase = AuthPhase::WaitingForPhoneNumber;
-                Err(api_error("sign in with 2FA password; restart login", error))
+                Err(auth_api_error("sign in with 2FA password; restart login", error))
             }
         }
     }
