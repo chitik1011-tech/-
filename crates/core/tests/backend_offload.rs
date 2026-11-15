@@ -152,7 +152,7 @@ async fn hanging_rpc_does_not_block_updates_or_persistence_tick() {
         .await
         .unwrap();
     timeout(Duration::from_secs(1), async {
-        while core.state().chat(42).is_none() {
+        while core.state().messages_for_chat(42).is_empty() {
             sleep(Duration::from_millis(5)).await;
         }
     })
@@ -163,7 +163,7 @@ async fn hanging_rpc_does_not_block_updates_or_persistence_tick() {
             if store
                 .snapshot()
                 .unwrap()
-                .is_some_and(|state| state.chat(42).is_some())
+                .is_some_and(|state| !state.messages_for_chat(42).is_empty())
             {
                 break;
             }

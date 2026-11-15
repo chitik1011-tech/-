@@ -1,4 +1,6 @@
-use tg_mobile_core::{spawn_core, CoreCommand, CoreEvent, MockTelegramBackend};
+use tg_mobile_core::{
+    spawn_core, CoreCommand, CoreEvent, CoreState, MessageSummary, MockTelegramBackend,
+};
 
 async fn load_chats(core: &tg_mobile_core::CoreHandle) {
     core.send(CoreCommand::LoadChats { limit: 20 })
@@ -74,6 +76,29 @@ fn old_chat_payload_defaults_new_action_flags() {
     assert_eq!(chat.muted, None);
     assert_eq!(chat.pinned, None);
     assert_eq!(chat.is_unread, None);
+}
+
+#[test]
+fn incoming_message_for_unknown_chat_does_not_invent_chat_metadata() {
+    let mut state = CoreState::default();
+    state.reduce(&CoreEvent::MessageAdded(MessageSummary {
+        id: 1,
+        chat_id: 404,
+        sender_id: 9,
+        text: "hello".into(),
+        timestamp_unix: 1,
+        outgoing: false,
+        attachments: Vec::new(),
+        forwarded_from: None,
+        edited: false,
+        edit_timestamp_unix: None,
+        service_message: false,
+        media_caption: None,
+        reply_to: None,
+    }));
+
+    assert!(state.chat(404).is_none());
+    assert_eq!(state.messages_for_chat(404).len(), 1);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
