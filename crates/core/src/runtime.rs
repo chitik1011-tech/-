@@ -19,6 +19,8 @@ pub struct CoreHandle {
 
 impl CoreHandle {
     pub async fn send(&self, command: CoreCommand) -> Result<()> {
+        command.validate()?;
+
         self.commands
             .send(command)
             .await
