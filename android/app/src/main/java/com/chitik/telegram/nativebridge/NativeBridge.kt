@@ -7,6 +7,12 @@ interface NativeEventCallback {
 object NativeBridge {
     external fun coreVersion(): String
     external fun createHandle(callback: NativeEventCallback): Long
+    external fun createTelegramHandle(
+        callback: NativeEventCallback,
+        apiId: Int,
+        apiHash: String,
+        sessionPath: String,
+    ): Long
     external fun sendCommand(handle: Long, commandJson: String): Boolean
     external fun probe(handle: Long): Boolean
     external fun destroyHandle(handle: Long)

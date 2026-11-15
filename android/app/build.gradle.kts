@@ -22,6 +22,9 @@ val buildRustArm64 by tasks.registering(Exec::class) {
         fileTree(repoRoot.resolve("crates/core")) {
             include("Cargo.toml", "src/**/*.rs")
         },
+        fileTree(repoRoot.resolve("crates/telegram")) {
+            include("Cargo.toml", "src/**/*.rs")
+        },
         repoRoot.resolve("Cargo.toml"),
     )
     outputs.file(rustLibrary)
@@ -78,6 +81,7 @@ dependencies {
 
     implementation("androidx.activity:activity-compose:1.13.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.11.0")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.11.0")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")

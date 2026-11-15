@@ -43,6 +43,62 @@ impl CoreState {
                 self.account.chats = chats.clone();
                 self.last_error = None;
             }
+            CoreEvent::MessagesLoaded { chat_id, messages } => {
+                for message in messages {
+                    if message.chat_id == *chat_id {
+                        self.upsert_message(message.clone());
+                    }
+                }
+
+                if let Some(latest) = self
+                    .messages_for_chat(*chat_id)
+                    .iter()
+                    .max_by_key(|message| (message.timestamp_unix, message.id))
+                    .cloned()
+                {
+                    if let Some(chat) = self
+                        .account
+                        .chats
+                        .iter_mut()
+                        .find(|chat| chat.id == *chat_id)
+                    {
+                        let replace = chat
+                            .last_message
+                            .as_ref()
+                            .map(|current| {
+                                (latest.timestamp_unix, latest.id)
+                                    > (current.timestamp_unix, current.id)
+                            })
+                            .unwrap_or(true);
+                        if replace {
+                            chat.last_message = Some(latest);
+                        }
+                    }
+                }
+
+                self.last_error = None;
+            }
+            CoreEvent::ChatRead {
+                chat_id,
+                max_message_id,
+            } => {
+                if let Some(chat) = self
+                    .account
+                    .chats
+                    .iter_mut()
+                    .find(|chat| chat.id == *chat_id)
+                {
+                    let covers_latest = chat
+                        .last_message
+                        .as_ref()
+                        .map(|message| message.id <= *max_message_id)
+                        .unwrap_or(true);
+                    if covers_latest {
+                        chat.unread_count = 0;
+                    }
+                }
+                self.last_error = None;
+            }
             CoreEvent::MessageAdded(message) => {
                 let inserted = self.upsert_message(message.clone());
 
