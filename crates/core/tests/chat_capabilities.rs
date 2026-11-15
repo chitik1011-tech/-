@@ -20,7 +20,7 @@ fn unknown_capabilities_never_grant_actions_or_invent_slow_mode() {
         CapabilityValue::Unknown
     );
     assert!(!snapshot.allows(ChatAction::SendMessages));
-    assert_eq!(snapshot.slow_mode_seconds, CapabilityValue::Unknown);
+    assert_eq!(snapshot.slow_mode_remaining_seconds, CapabilityValue::Unknown);
 }
 
 #[test]
@@ -30,7 +30,7 @@ fn group_and_channel_snapshots_validate_and_preserve_explicit_rights() {
         snapshot.send_messages = CapabilityValue::Known(false);
         snapshot.send_media = CapabilityValue::Known(true);
         snapshot.post_messages = CapabilityValue::Known(true);
-        snapshot.slow_mode_seconds = CapabilityValue::Known(Some(30));
+        snapshot.slow_mode_remaining_seconds = CapabilityValue::Known(Some(30));
 
         assert!(snapshot.validate().is_ok());
         assert!(!snapshot.allows(ChatAction::SendMessages));
@@ -40,12 +40,12 @@ fn group_and_channel_snapshots_validate_and_preserve_explicit_rights() {
 }
 
 #[test]
-fn validation_rejects_zero_chat_id_and_zero_slow_mode() {
+fn validation_rejects_zero_chat_id_and_accepts_zero_remaining_slow_mode() {
     assert!(capabilities(0, ChatKind::Private).validate().is_err());
 
     let mut snapshot = capabilities(1, ChatKind::Supergroup);
-    snapshot.slow_mode_seconds = CapabilityValue::Known(Some(0));
-    assert!(snapshot.validate().is_err());
+    snapshot.slow_mode_remaining_seconds = CapabilityValue::Known(Some(0));
+    assert!(snapshot.validate().is_ok());
 }
 
 #[test]
@@ -69,7 +69,8 @@ fn capabilities_and_events_round_trip_through_json() {
     let mut snapshot = capabilities(-100, ChatKind::Supergroup);
     snapshot.edit_messages = CapabilityValue::Known(true);
     snapshot.edit_others_messages = CapabilityValue::Known(false);
-    snapshot.slow_mode_seconds = CapabilityValue::Known(None);
+    snapshot.slow_mode_remaining_seconds = CapabilityValue::Known(None);
+    assert!(snapshot.validate().is_ok());
     let event = CoreEvent::ChatCapabilitiesUpdated(snapshot.clone());
 
     let json = serde_json::to_value(&event).unwrap();

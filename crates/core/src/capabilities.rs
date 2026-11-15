@@ -70,14 +70,6 @@ impl ChatCapabilities {
             return Err(CoreError::InvalidInput("chat id must be non-zero".into()));
         }
 
-        if let CapabilityValue::Known(Some(seconds)) = self.slow_mode_seconds {
-            if seconds == 0 {
-                return Err(CoreError::InvalidInput(
-                    "known slow mode duration must be greater than zero".into(),
-                ));
-            }
-        }
-
         Ok(())
     }
 
@@ -118,7 +110,7 @@ impl Default for ChatCapabilities {
             manage_chat: CapabilityValue::Unknown,
             post_messages: CapabilityValue::Unknown,
             edit_others_messages: CapabilityValue::Unknown,
-            slow_mode_seconds: CapabilityValue::Unknown,
+            slow_mode_remaining_seconds: CapabilityValue::Unknown,
         }
     }
 }
