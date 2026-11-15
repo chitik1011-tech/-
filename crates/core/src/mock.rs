@@ -93,6 +93,17 @@ impl MockTelegramBackend {
                 let chats = self.chats.iter().take(limit).cloned().collect();
                 Ok(vec![CoreEvent::ChatsLoaded(chats)])
             }
+            CoreCommand::LoadMessages { chat_id, limit } => {
+                let mut messages = self
+                    .chats
+                    .iter()
+                    .filter(|chat| chat.id == chat_id)
+                    .filter_map(|chat| chat.last_message.clone())
+                    .take(limit)
+                    .collect::<Vec<_>>();
+                messages.sort_by_key(|message| (message.timestamp_unix, message.id));
+                Ok(vec![CoreEvent::MessagesLoaded { chat_id, messages }])
+            }
             CoreCommand::SendText { chat_id, text } => {
                 if self.authorization != AuthorizationState::Ready {
                     return Err(CoreError::Backend("not authorized".into()));
