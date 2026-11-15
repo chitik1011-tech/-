@@ -88,9 +88,14 @@ pub enum CoreEvent {
     /// Poll snapshot for a message. Replaces the stored snapshot with the same poll id.
     PollUpdated(PollSummary),
     /// The Telegram vote RPC completed successfully. Final choice/results still come from PollUpdated.
-    PollVoteSubmitted { poll_id: i64 },
+    PollVoteSubmitted {
+        poll_id: i64,
+    },
     /// The Telegram vote RPC failed without replacing the last server-confirmed poll snapshot.
-    PollVoteFailed { poll_id: i64, error: String },
+    PollVoteFailed {
+        poll_id: i64,
+        error: String,
+    },
     MessageSendStateChanged(OutgoingSend),
     /// `generation` must monotonically increase per (chat_id, user_id).
     ChatActivityChanged {
