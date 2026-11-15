@@ -23,7 +23,8 @@ impl TelegramBackend for PagedBackend {
                     cursor,
                     limit,
                 } => {
-                    self.largest_requested_page.fetch_max(limit, Ordering::Relaxed);
+                    self.largest_requested_page
+                        .fetch_max(limit, Ordering::Relaxed);
                     let end = cursor
                         .as_ref()
                         .and_then(|value| value.as_str().parse::<usize>().ok())
@@ -31,8 +32,8 @@ impl TelegramBackend for PagedBackend {
                         .min(self.messages.len());
                     let start = end.saturating_sub(limit);
                     let messages = self.messages[start..end].to_vec();
-                    let next_cursor = (start > 0)
-                        .then(|| MessageCursor::new(start.to_string()));
+                    let next_cursor =
+                        (start > 0).then(|| MessageCursor::new(start.to_string()));
                     let has_more = next_cursor.is_some();
                     Ok(vec![CoreEvent::MessagesLoaded {
                         chat_id,
@@ -132,7 +133,10 @@ async fn paged_history_is_capped_sorted_deduplicated_and_bounded_under_load() {
 
     let state = core.state();
     let cached = state.messages_for_chat(77);
-    assert_eq!(largest_requested_page.load(Ordering::Relaxed), MAX_MESSAGE_PAGE_SIZE);
+    assert_eq!(
+        largest_requested_page.load(Ordering::Relaxed),
+        MAX_MESSAGE_PAGE_SIZE
+    );
     assert_eq!(page_count, 12);
     assert_eq!(cached.len(), MAX_CACHED_MESSAGES_PER_CHAT);
     assert_eq!(cached.first().map(|message| message.id), Some(0));
@@ -140,7 +144,9 @@ async fn paged_history_is_capped_sorted_deduplicated_and_bounded_under_load() {
         cached.last().map(|message| message.id),
         Some(MAX_CACHED_MESSAGES_PER_CHAT as i64 - 1)
     );
-    assert!(cached.windows(2).all(|pair| pair[0].timestamp_unix <= pair[1].timestamp_unix));
+    assert!(cached
+        .windows(2)
+        .all(|pair| pair[0].timestamp_unix <= pair[1].timestamp_unix));
 
     core.shutdown().await.unwrap();
 }
