@@ -38,7 +38,9 @@ fn legacy_message_without_attachments_migrates_to_empty_list() {
     });
     let decoded = serde_json::from_value::<MessageSummary>(old_message.clone()).ok();
 
-    assert!(decoded.as_ref().is_some_and(|message| message.attachments.is_empty()));
+    assert!(decoded
+        .as_ref()
+        .is_some_and(|message| message.attachments.is_empty()));
 
     let encoded = decoded.and_then(|message| serde_json::to_value(message).ok());
     assert_eq!(encoded, Some(old_message));
