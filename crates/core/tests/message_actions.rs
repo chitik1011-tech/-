@@ -130,10 +130,10 @@ async fn mock_backend_replies_edits_and_deletes_by_chat_and_message_id() {
     send(&mut backend, CoreCommand::Start).await;
     send(
         &mut backend,
-        CoreCommand::SetPhoneNumber("+10000000000".into()),
+        CoreCommand::SetPhoneNumber("test-phone".into()),
     )
     .await;
-    send(&mut backend, CoreCommand::SubmitCode("12345".into())).await;
+    send(&mut backend, CoreCommand::SubmitCode("test-code".into())).await;
 
     let reply = send(
         &mut backend,
