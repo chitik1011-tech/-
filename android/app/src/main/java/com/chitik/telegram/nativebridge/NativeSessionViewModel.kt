@@ -4,7 +4,6 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.chitik.telegram.BuildConfig
-import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -67,13 +66,6 @@ class NativeSessionViewModel(application: Application) :
     @Volatile
     private var handle: Long = 0L
 
-    private val sessionPath: String
-        get() {
-            val directory = File(getApplication<Application>().filesDir, "telegram")
-            directory.mkdirs()
-            return File(directory, "session.sqlite").absolutePath
-        }
-
     init {
         initializeNativeSession()
     }
@@ -92,22 +84,30 @@ class NativeSessionViewModel(application: Application) :
         viewModelScope.launch(Dispatchers.IO) {
             runCatching {
                 val version = NativeBridge.coreVersion()
-                val configured = BuildConfig.TELEGRAM_API_ID > 0 &&
+                val runtimeConfig = if (
+                    BuildConfig.TELEGRAM_API_ID > 0 &&
                     BuildConfig.TELEGRAM_API_HASH.isNotBlank()
-                val newHandle = if (configured) {
-                    NativeBridge.createTelegramHandle(
-                        this@NativeSessionViewModel,
-                        BuildConfig.TELEGRAM_API_ID,
+                ) {
+                    TelegramRuntimeConfigProvider.fromUserInput(
+                        getApplication(),
+                        BuildConfig.TELEGRAM_API_ID.toString(),
                         BuildConfig.TELEGRAM_API_HASH,
-                        sessionPath,
                     )
                 } else {
-                    NativeBridge.createHandle(this@NativeSessionViewModel)
+                    null
                 }
+                val newHandle = runtimeConfig?.let { config ->
+                    NativeBridge.createTelegramHandle(
+                        this@NativeSessionViewModel,
+                        config.apiId,
+                        config.apiHash,
+                        config.sessionDatabasePath,
+                    )
+                } ?: NativeBridge.createHandle(this@NativeSessionViewModel)
                 require(newHandle != 0L) { "Rust returned an invalid native handle" }
                 handle = newHandle
                 NativeBridge.probe(newHandle)
-                Triple(version, newHandle, configured)
+                Triple(version, newHandle, runtimeConfig != null)
             }.onSuccess { (version, newHandle, configured) ->
                 _state.update { current ->
                     current.copy(
@@ -136,9 +136,16 @@ class NativeSessionViewModel(application: Application) :
     }
 
     fun configureTelegram(apiIdText: String, apiHash: String) {
-        val apiId = apiIdText.trim().toIntOrNull()
-        if (apiId == null || apiId <= 0 || apiHash.isBlank()) {
-            _state.update { it.copy(error = "Enter a valid Telegram API ID and API hash") }
+        val config = runCatching {
+            TelegramRuntimeConfigProvider.fromUserInput(
+                getApplication(),
+                apiIdText,
+                apiHash,
+            )
+        }.getOrElse { error ->
+            _state.update {
+                it.copy(error = error.message ?: "Invalid Telegram API configuration")
+            }
             return
         }
 
@@ -153,9 +160,9 @@ class NativeSessionViewModel(application: Application) :
 
                 val newHandle = NativeBridge.createTelegramHandle(
                     this@NativeSessionViewModel,
-                    apiId,
-                    apiHash.trim(),
-                    sessionPath,
+                    config.apiId,
+                    config.apiHash,
+                    config.sessionDatabasePath,
                 )
                 require(newHandle != 0L) { "Rust returned an invalid Telegram handle" }
                 handle = newHandle
