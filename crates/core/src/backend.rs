@@ -29,6 +29,10 @@ pub trait TelegramBackend: Send + 'static {
     /// Implementations must call the backend's native forward operation; copying message
     /// text does not preserve Telegram forwarding semantics. Backends without this
     /// capability return an error by default.
+    ///
+    /// The core treats the request ID as a correlation key, not an idempotency key:
+    /// callers can submit it again and the backend is invoked again. Adapters must
+    /// supply stable backend idempotency keys before retrying after ambiguous timeouts.
     fn forward_messages<'a>(
         &'a mut self,
         _request: ForwardMessagesRequest,
