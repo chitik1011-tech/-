@@ -53,6 +53,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.chitik.telegram.nativebridge.AuthorizationUiState
 import com.chitik.telegram.nativebridge.ChatUi
+import com.chitik.telegram.nativebridge.MessageUi
 import com.chitik.telegram.nativebridge.NativeSessionViewModel
 import com.chitik.telegram.nativebridge.NativeUiState
 import kotlinx.coroutines.delay
@@ -479,10 +480,29 @@ private fun ChatListScreen(
             item {
                 Spacer(Modifier.height(14.dp))
                 Text(
-                    "Send to ${chat.title}",
-                    style = MaterialTheme.typography.titleMedium,
+                    chat.title,
+                    style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.SemiBold,
                 )
+                Spacer(Modifier.height(8.dp))
+            }
+
+            val messages = state.messages[chat.id].orEmpty()
+            if (messages.isEmpty()) {
+                item {
+                    Text(
+                        "No cached messages yet. New incoming messages will appear here live.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            } else {
+                items(messages, key = MessageUi::id) { message ->
+                    MessageRow(message)
+                }
+            }
+
+            item {
                 Spacer(Modifier.height(8.dp))
                 OutlinedTextField(
                     value = messageText,
@@ -563,6 +583,33 @@ private fun ChatRow(
         }
     }
     HorizontalDivider()
+}
+
+@Composable
+private fun MessageRow(message: MessageUi) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = if (message.outgoing) Arrangement.End else Arrangement.Start,
+    ) {
+        Card(
+            shape = RoundedCornerShape(14.dp),
+            colors = if (message.outgoing) {
+                CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+            } else {
+                CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+            },
+        ) {
+            Column(Modifier.padding(horizontal = 12.dp, vertical = 9.dp)) {
+                Text(message.text, style = MaterialTheme.typography.bodyMedium)
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    if (message.outgoing) "You" else "Sender ${message.senderId}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
 }
 
 @Composable
