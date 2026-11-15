@@ -2,7 +2,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
 use grammers_client::{media::Media, message::Message, tl};
-use tg_mobile_core::{CoreError, PollOption, PollSummary, MAX_CACHED_POLLS};
+use tg_mobile_core::{CoreError, MAX_CACHED_POLLS, PollOption, PollSummary};
 use tokio::sync::Mutex;
 
 use crate::ids::{PeerClass, encode_peer};
@@ -51,7 +51,11 @@ pub(crate) async fn forget_deleted_polls(
         let chat_matches = chat_id.is_none_or(|chat_id| chat_id == poll.chat_id);
         !(chat_matches && message_ids.contains(&poll.message_id))
     });
-    let retained = state.polls.keys().copied().collect::<std::collections::HashSet<_>>();
+    let retained = state
+        .polls
+        .keys()
+        .copied()
+        .collect::<std::collections::HashSet<_>>();
     state.order.retain(|poll_id| retained.contains(poll_id));
 }
 
@@ -122,7 +126,11 @@ pub(crate) async fn poll_from_update(
         _ => None,
     };
     let (chat_id, message_id) = explicit_identity
-        .or_else(|| existing.as_ref().map(|poll| (poll.chat_id, poll.message_id)))
+        .or_else(|| {
+            existing
+                .as_ref()
+                .map(|poll| (poll.chat_id, poll.message_id))
+        })
         .ok_or_else(|| {
             CoreError::Backend(format!(
                 "poll update {} omitted message identity before the poll was known",
@@ -337,7 +345,12 @@ mod tests {
         }
     }
 
-    fn voters(option: &[u8], count: i32, chosen: bool, correct: bool) -> tl::enums::PollAnswerVoters {
+    fn voters(
+        option: &[u8],
+        count: i32,
+        chosen: bool,
+        correct: bool,
+    ) -> tl::enums::PollAnswerVoters {
         tl::types::PollAnswerVoters {
             chosen,
             correct,
@@ -373,7 +386,11 @@ mod tests {
             -42,
             7,
             &poll,
-            &results(3, vec![voters(b"a", 2, true, false), voters(b"b", 1, false, false)], None),
+            &results(
+                3,
+                vec![voters(b"a", 2, true, false), voters(b"b", 1, false, false)],
+                None,
+            ),
         )
         .unwrap();
 
@@ -396,7 +413,11 @@ mod tests {
             -42,
             7,
             &poll,
-            &results(4, vec![voters(b"a", 3, true, false), voters(b"b", 2, true, false)], None),
+            &results(
+                4,
+                vec![voters(b"a", 3, true, false), voters(b"b", 2, true, false)],
+                None,
+            ),
         )
         .unwrap();
 
@@ -412,7 +433,11 @@ mod tests {
             -42,
             7,
             &poll,
-            &results(1, vec![voters(b"a", 1, false, false), voters(b"b", 0, false, false)], None),
+            &results(
+                1,
+                vec![voters(b"a", 1, false, false), voters(b"b", 0, false, false)],
+                None,
+            ),
         )
         .unwrap();
         assert!(hidden.options.iter().all(|option| option.correct.is_none()));
@@ -422,12 +447,19 @@ mod tests {
             -42,
             7,
             &poll,
-            &results(2, vec![voters(b"a", 2, true, true), voters(b"b", 0, false, false)], Some("Paris is the capital.")),
+            &results(
+                2,
+                vec![voters(b"a", 2, true, true), voters(b"b", 0, false, false)],
+                Some("Paris is the capital."),
+            ),
         )
         .unwrap();
         assert_eq!(revealed.options[0].correct, Some(true));
         assert_eq!(revealed.options[1].correct, Some(false));
-        assert_eq!(revealed.explanation.as_deref(), Some("Paris is the capital."));
+        assert_eq!(
+            revealed.explanation.as_deref(),
+            Some("Paris is the capital.")
+        );
     }
 
     #[tokio::test]
@@ -448,7 +480,12 @@ mod tests {
             top_msg_id: None,
             poll_id: 99,
             poll: None,
-            results: results(2, vec![voters(b"a", 2, true, false), voters(b"b", 0, false, false)], None).into(),
+            results: results(
+                2,
+                vec![voters(b"a", 2, true, false), voters(b"b", 0, false, false)],
+                None,
+            )
+            .into(),
         };
 
         let first = poll_from_update(&update, &registry).await.unwrap().unwrap();
