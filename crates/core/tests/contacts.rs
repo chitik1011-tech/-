@@ -41,7 +41,7 @@ fn command_validation_rejects_bad_contacts_and_invalid_pages() {
 #[test]
 fn reducer_merges_pages_and_add_delete_events_idempotently() {
     let mut state = CoreState::default();
-    let first = contact(2, "Two", Some("TwoName"));
+    let first = contact(2, "Two", Some("TwoName")).normalized().unwrap();
     let second = contact(1, "One", None);
 
     state.reduce(&CoreEvent::ContactsLoaded {
