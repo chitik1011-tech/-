@@ -9,6 +9,11 @@ pub enum CoreEvent {
     AuthorizationChanged(AuthorizationState),
     ChatsLoaded(Vec<ChatSummary>),
     MessageAdded(MessageSummary),
+    /// Carries a sent reply together with the ID of the message it references.
+    MessageReplied {
+        message: MessageSummary,
+        reply_to_message_id: i64,
+    },
     /// Carries the current content and metadata for an edited message.
     MessageEdited(MessageSummary),
     /// Identifies a deleted message using its chat-local message ID.
@@ -27,6 +32,7 @@ impl CoreEvent {
             Self::AuthorizationChanged(_) => "authorization_changed",
             Self::ChatsLoaded(_) => "chats_loaded",
             Self::MessageAdded(_) => "message_added",
+            Self::MessageReplied { .. } => "message_replied",
             Self::MessageEdited(_) => "message_edited",
             Self::MessageDeleted { .. } => "message_deleted",
             Self::Error(_) => "error",
