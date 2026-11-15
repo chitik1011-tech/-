@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{error::{CoreError, Result}, model::MessageCursor};
+use crate::{
+    error::{CoreError, Result},
+    model::MessageCursor,
+};
 
 pub const MAX_CHAT_LOAD_LIMIT: usize = 500;
 pub const MAX_MESSAGE_PAGE_SIZE: usize = 100;
@@ -14,7 +17,11 @@ pub enum CoreCommand {
     SubmitCode(String),
     SubmitPassword(String),
     LoadChats { limit: usize },
-    LoadMessages { chat_id: i64, cursor: Option<MessageCursor>, limit: usize },
+    LoadMessages {
+        chat_id: i64,
+        cursor: Option<MessageCursor>,
+        limit: usize,
+    },
     SendText { chat_id: i64, text: String },
     Shutdown,
 }
@@ -62,7 +69,11 @@ impl CoreCommand {
                     )))
                 }
             }
-            Self::LoadMessages { chat_id, cursor, limit } => {
+            Self::LoadMessages {
+                chat_id,
+                cursor,
+                limit,
+            } => {
                 if *chat_id == 0 {
                     return Err(CoreError::InvalidInput("chat id must be non-zero".into()));
                 }
@@ -72,7 +83,8 @@ impl CoreCommand {
                     )));
                 }
                 if cursor.as_ref().is_some_and(|value| {
-                    value.as_str().is_empty() || value.as_str().len() > MAX_MESSAGE_CURSOR_LENGTH
+                    value.as_str().is_empty()
+                        || value.as_str().len() > MAX_MESSAGE_CURSOR_LENGTH
                 }) {
                     return Err(CoreError::InvalidInput(format!(
                         "message cursor must contain 1..={MAX_MESSAGE_CURSOR_LENGTH} bytes"
@@ -99,7 +111,6 @@ fn require_non_blank(field: &str, value: &str) -> Result<()> {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::{CoreCommand, MAX_MESSAGE_PAGE_SIZE};
@@ -113,7 +124,10 @@ mod tests {
             limit: MAX_MESSAGE_PAGE_SIZE + 100,
         }
         .cap_page_size();
-        assert!(matches!(command, CoreCommand::LoadMessages { limit, .. } if limit == MAX_MESSAGE_PAGE_SIZE));
+        assert!(matches!(
+            &command,
+            CoreCommand::LoadMessages { limit, .. } if *limit == MAX_MESSAGE_PAGE_SIZE
+        ));
         assert!(command.validate().is_ok());
     }
 
@@ -138,6 +152,9 @@ mod tests {
             cursor: Some(MessageCursor::new("")),
             limit: 10,
         };
-        assert!(matches!(empty_cursor.validate(), Err(CoreError::InvalidInput(_))));
+        assert!(matches!(
+            empty_cursor.validate(),
+            Err(CoreError::InvalidInput(_))
+        ));
     }
 }
