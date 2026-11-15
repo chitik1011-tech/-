@@ -72,8 +72,17 @@ async fn successful_send_emits_draft_sending_sent_and_is_idempotent() {
         .unwrap()
         .clone();
     assert_eq!(sent.status, OutgoingMessageStatus::Sent);
-    assert!(sent.server_message_id.is_some());
-    assert_eq!(core.state().messages_for_chat(2).len(), 1);
+    let server_id = sent.server_message_id.expect("mock should return server message ID");
+    let state = core.state();
+    assert_eq!(state.messages_for_chat(2).len(), 1);
+    assert!(state
+        .messages_for_chat(2)
+        .iter()
+        .any(|message| message.id == server_id));
+    assert!(
+        state.visible_outgoing_messages_for_chat(2).is_empty(),
+        "the accepted outbox status stays queryable without rendering a duplicate row"
+    );
 
     // Replaying the same stable ID after success must not call the backend twice.
     core.send_outgoing(request).await.unwrap();
