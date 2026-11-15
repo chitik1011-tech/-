@@ -5,7 +5,8 @@ use std::{
 
 use tg_mobile_core::{
     AuthorizationState, ChatSummary, CoreEvent, CoreState, JsonFileStateStore, MessageSummary,
-    StateStore, MAX_CACHED_MESSAGES_PER_CHAT,
+    ServiceAction, ServiceIcon, ServiceMessage, ServicePresentation, StateStore,
+    MAX_CACHED_MESSAGES_PER_CHAT,
 };
 
 fn message(id: i64, timestamp_unix: i64) -> MessageSummary {
@@ -132,6 +133,63 @@ fn state_query_helpers_return_chat_messages_and_unread_total() {
     assert_eq!(state.chat(2).unwrap().title, "two");
     assert!(state.messages_for_chat(404).is_empty());
     assert_eq!(state.total_unread_count(), 7);
+}
+
+
+#[test]
+fn service_message_metadata_round_trips_through_event_and_persisted_state() {
+    let mut message = message(81, 123);
+    message.text.clear();
+    let action = ServiceAction::UserJoined { user_id: 900 };
+    message.service = Some(ServiceMessage {
+        action: action.clone(),
+        actor_id: Some(900),
+        presentation: ServicePresentation::for_action(&action),
+    });
+
+    let event = CoreEvent::MessageAdded(message.clone());
+    let event_json = tg_mobile_core::encode_event(&event).unwrap();
+    let decoded_event: CoreEvent = serde_json::from_str(&event_json).unwrap();
+    assert_eq!(decoded_event, event);
+
+    let mut state = CoreState::default();
+    state.reduce(&decoded_event);
+    let persisted_json = tg_mobile_core::encode_state(&state).unwrap();
+    let restored: CoreState = serde_json::from_str(&persisted_json).unwrap();
+    let restored_message = &restored.messages_for_chat(77)[0];
+
+    assert_eq!(restored_message, &message);
+    assert!(restored_message.text.is_empty());
+    let service = restored_message.service.as_ref().unwrap();
+    assert_eq!(service.action, action);
+    assert_eq!(service.presentation.icon, ServiceIcon::People);
+}
+
+#[test]
+fn legacy_persisted_messages_default_optional_service_metadata() {
+    let legacy = serde_json::json!({
+        "running": true,
+        "account": {
+            "authorization": "Closed",
+            "chats": []
+        },
+        "messages": {
+            "77": [{
+                "id": 5,
+                "chat_id": 77,
+                "sender_id": 10,
+                "text": "older message",
+                "timestamp_unix": 50,
+                "outgoing": false
+            }]
+        },
+        "last_error": null
+    });
+
+    let restored: CoreState = serde_json::from_value(legacy).unwrap();
+    let restored_message = &restored.messages_for_chat(77)[0];
+    assert_eq!(restored_message.service, None);
+    assert_eq!(restored_message.text, "older message");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
