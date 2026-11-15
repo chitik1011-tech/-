@@ -63,8 +63,9 @@ impl TransferState {
     pub fn is_terminal(self) -> bool {
         matches!(
             self,
-            Self::Download(DownloadState::Downloaded | DownloadState::Failed | DownloadState::Cancelled)
-                | Self::Upload(UploadState::Uploaded | UploadState::Failed | UploadState::Cancelled)
+            Self::Download(
+                DownloadState::Downloaded | DownloadState::Failed | DownloadState::Cancelled
+            ) | Self::Upload(UploadState::Uploaded | UploadState::Failed | UploadState::Cancelled)
         )
     }
 
@@ -157,7 +158,10 @@ impl TransferManager {
             return Ok(snapshot(id, record));
         }
 
-        let id = inner.next_id.checked_add(1).ok_or(TransferError::IdExhausted)?;
+        let id = inner
+            .next_id
+            .checked_add(1)
+            .ok_or(TransferError::IdExhausted)?;
         inner.next_id = id;
         let state = match direction {
             TransferDirection::Download => TransferState::Download(DownloadState::Remote),
@@ -177,15 +181,27 @@ impl TransferManager {
     }
 
     pub fn queue_download(&self, token: TransferToken) -> Result<TransferToken, TransferError> {
-        self.transition(token, TransferState::Download(DownloadState::Remote), TransferState::Download(DownloadState::Queued))
+        self.transition(
+            token,
+            TransferState::Download(DownloadState::Remote),
+            TransferState::Download(DownloadState::Queued),
+        )
     }
 
     pub fn start_download(&self, token: TransferToken) -> Result<TransferToken, TransferError> {
-        self.transition(token, TransferState::Download(DownloadState::Queued), TransferState::Download(DownloadState::Downloading))
+        self.transition(
+            token,
+            TransferState::Download(DownloadState::Queued),
+            TransferState::Download(DownloadState::Downloading),
+        )
     }
 
     pub fn start_upload(&self, token: TransferToken) -> Result<TransferToken, TransferError> {
-        self.transition(token, TransferState::Upload(UploadState::Pending), TransferState::Upload(UploadState::Uploading))
+        self.transition(
+            token,
+            TransferState::Upload(UploadState::Pending),
+            TransferState::Upload(UploadState::Uploading),
+        )
     }
 
     /// Record absolute transferred bytes. Out-of-order updates are harmless:
@@ -364,7 +380,10 @@ mod tests {
         assert_eq!(snapshot.bytes_transferred, 7);
         assert_eq!(snapshot.state, TransferState::Download(DownloadState::Downloaded));
         assert!(snapshot.state.is_terminal());
-        assert!(matches!(manager.report_progress(completed, 8), Err(TransferError::InvalidTransition { .. })));
+        assert!(matches!(
+            manager.report_progress(completed, 8),
+            Err(TransferError::InvalidTransition { .. })
+        ));
     }
 
     #[test]
@@ -376,7 +395,10 @@ mod tests {
         let failed = manager.fail(active).unwrap();
         let retry = manager.retry(failed).unwrap();
         assert_eq!(retry.generation, failed.generation + 1);
-        assert_eq!(manager.get(retry).unwrap().state, TransferState::Upload(UploadState::Pending));
+        assert_eq!(
+            manager.get(retry).unwrap().state,
+            TransferState::Upload(UploadState::Pending)
+        );
         assert_eq!(manager.get(retry).unwrap().bytes_transferred, 8);
         assert_eq!(manager.report_progress(failed, 9), Err(TransferError::StaleToken));
         let active_retry = manager.start_upload(retry).unwrap();
@@ -411,12 +433,21 @@ mod tests {
                 let manager = Arc::clone(&manager);
                 thread::spawn(move || {
                     (0..100)
-                        .map(|_| manager.request(TransferDirection::Download, "shared", None).unwrap().token.id)
+                        .map(|_| {
+                            manager
+                                .request(TransferDirection::Download, "shared", None)
+                                .unwrap()
+                                .token
+                                .id
+                        })
                         .collect::<Vec<_>>()
                 })
             })
             .collect::<Vec<_>>();
-        let ids = workers.into_iter().flat_map(|worker| worker.join().unwrap()).collect::<Vec<_>>();
+        let ids = workers
+            .into_iter()
+            .flat_map(|worker| worker.join().unwrap())
+            .collect::<Vec<_>>();
         assert!(ids.iter().all(|id| *id == ids[0]));
     }
 
@@ -426,10 +457,14 @@ mod tests {
         let remote = manager.request(TransferDirection::Download, "progress", Some(1_000)).unwrap();
         let queued = manager.queue_download(remote.token).unwrap();
         let active = manager.start_download(queued).unwrap();
-        let workers = (1..=1_000)
-            .map(|bytes| {
+        let workers = (0..8)
+            .map(|worker_index| {
                 let manager = Arc::clone(&manager);
-                thread::spawn(move || manager.report_progress(active, bytes).unwrap())
+                thread::spawn(move || {
+                    for bytes in (worker_index + 1..=1_000).step_by(8).rev() {
+                        manager.report_progress(active, bytes).unwrap();
+                    }
+                })
             })
             .collect::<Vec<_>>();
         for worker in workers {
