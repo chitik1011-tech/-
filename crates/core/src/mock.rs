@@ -172,11 +172,6 @@ impl MockTelegramBackend {
             CoreCommand::SearchMessages(_) => Err(CoreError::Backend(
                 "message search is not implemented by the mock backend".into(),
             )),
-            CoreCommand::DownloadMedia { .. }
-            | CoreCommand::RetryMediaDownload { .. }
-            | CoreCommand::CancelMediaDownload { .. } => Err(CoreError::Backend(
-                "media downloads are not implemented by the mock backend".into(),
-            )),
             CoreCommand::SendText { chat_id, text } => {
                 if self.authorization != AuthorizationState::Ready {
                     return Err(CoreError::Backend("not authorized".into()));
@@ -293,6 +288,14 @@ impl MockTelegramBackend {
                     )),
                 ])
             }
+            CoreCommand::VotePoll { .. } => Err(CoreError::Backend(
+                "poll voting is not implemented by the mock backend".into(),
+            )),
+            CoreCommand::DownloadMedia { .. }
+            | CoreCommand::RetryMediaDownload { .. }
+            | CoreCommand::CancelMediaDownload { .. } => Err(CoreError::Backend(
+                "media downloads are not implemented by the mock backend".into(),
+            )),
             CoreCommand::ArchiveChat { chat_id } => self.set_chat_action(
                 chat_id,
                 |chat| chat.archived = Some(true),
