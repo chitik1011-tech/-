@@ -14,9 +14,7 @@ pub(crate) fn encode_peer(class: PeerClass, bare_id: i64) -> i64 {
     match class {
         PeerClass::User => bare_id,
         PeerClass::Chat => bare_id.saturating_neg(),
-        PeerClass::Channel => CHANNEL_ID_OFFSET
-            .saturating_add(bare_id)
-            .saturating_neg(),
+        PeerClass::Channel => CHANNEL_ID_OFFSET.saturating_add(bare_id).saturating_neg(),
     }
 }
 
