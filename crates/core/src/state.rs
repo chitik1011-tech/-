@@ -56,7 +56,11 @@ impl CoreState {
                     .max_by_key(|message| (message.timestamp_unix, message.id))
                     .cloned()
                 {
-                    if let Some(chat) = self.account.chats.iter_mut().find(|chat| chat.id == *chat_id)
+                    if let Some(chat) = self
+                        .account
+                        .chats
+                        .iter_mut()
+                        .find(|chat| chat.id == *chat_id)
                     {
                         let replace = chat
                             .last_message
