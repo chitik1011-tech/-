@@ -125,7 +125,9 @@ mod tests {
 
     #[test]
     fn action_round_trips_as_typed_data_with_presentation() {
-        let action = ServiceAction::GroupMigratedToSupergroup { supergroup_id: -10042 };
+        let action = ServiceAction::GroupMigratedToSupergroup {
+            supergroup_id: -10042,
+        };
         let event = ServiceMessage {
             action: action.clone(),
             actor_id: Some(7),
@@ -136,7 +138,10 @@ mod tests {
         let decoded: ServiceMessage =
             serde_json::from_str(&json).expect("deserialize service event");
         assert_eq!(decoded, event);
-        assert_eq!(decoded.canonical_presentation().icon, ServiceIcon::Migration);
+        assert_eq!(
+            decoded.canonical_presentation().icon,
+            ServiceIcon::Migration
+        );
         assert!(!json.contains("text"));
     }
 
@@ -201,7 +206,9 @@ mod tests {
                 ServiceIcon::Channel,
             ),
             (
-                ServiceAction::GroupMigratedToSupergroup { supergroup_id: -100 },
+                ServiceAction::GroupMigratedToSupergroup {
+                    supergroup_id: -100,
+                },
                 ServiceIcon::Migration,
             ),
         ];
