@@ -109,24 +109,31 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 )
                 replaceWithTelegramHandle(config)
             }.onSuccess { newHandle ->
-                _state.update {
-                    it.copy(
-                        nativeHandle = newHandle,
-                        telegramConfigured = true,
-                        authorization = AuthorizationUiStep.Closed,
-                        chats = emptyList(),
-                        messages = emptyMap(),
-                        busy = false,
-                        error = null,
-                    )
+                val updated = lifecycle.runIfOpen {
+                    _state.update {
+                        it.copy(
+                            nativeHandle = newHandle,
+                            telegramConfigured = true,
+                            authorization = AuthorizationUiStep.Closed,
+                            chats = emptyList(),
+                            messages = emptyMap(),
+                            busy = false,
+                            error = null,
+                        )
+                    }
                 }
-                sendStartCommand()
+                if (updated) {
+                    sendStartCommand()
+                }
             }.onFailure { error ->
-                _state.update {
-                    it.copy(
-                        busy = false,
-                        error = error.message ?: error::class.java.simpleName,
-                    )
+                lifecycle.runIfOpen {
+                    _state.update {
+                        it.copy(
+                            nativeHandle = lifecycle.currentHandleOrZero(),
+                            busy = false,
+                            error = error.message ?: error::class.java.simpleName,
+                        )
+                    }
                 }
             }
         }
@@ -174,14 +181,14 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         val creation = lifecycle.beginReplacement()
             ?: throw IllegalStateException("Native session replacement is already in progress")
 
-        creation.detachedHandle?.let { oldHandle ->
-            if (NativeLibrary.isLoaded) {
-                NativeBridge.destroyHandle(oldHandle)
-            }
-        }
-
         var createdHandle = 0L
         try {
+            creation.detachedHandle?.let { oldHandle ->
+                if (NativeLibrary.isLoaded) {
+                    NativeBridge.destroyHandle(oldHandle)
+                }
+            }
+
             val callback = object : NativeEventCallback {
                 override fun onNativeEvent(type: String, payload: String) {
                     this@NativeSessionViewModel.onNativeEvent(
@@ -241,7 +248,12 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
     }
 
     fun sendStartCommand() {
-        _state.update { it.copy(busy = true, error = null) }
+        if (!lifecycle.runIfOpen {
+                _state.update { it.copy(busy = true, error = null) }
+            }
+        ) {
+            return
+        }
         val commandJson = JSONObject().put("type", "start").toString()
         val result = runCatching {
             lifecycle.dispatchStart { currentHandle ->
