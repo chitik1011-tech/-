@@ -105,7 +105,10 @@ impl MockTelegramBackend {
 
                 let message = self.new_outgoing_message(chat_id, text)?;
                 self.store_message(&message);
-                Ok(vec![CoreEvent::MessageAdded(message)])
+                Ok(vec![CoreEvent::MessageReplied {
+                    message,
+                    reply_to_message_id,
+                }])
             }
             CoreCommand::EditMessage {
                 chat_id,
