@@ -12,12 +12,27 @@ pub enum CoreCommand {
     SetPhoneNumber(String),
     SubmitCode(String),
     SubmitPassword(String),
-    LoadChats { limit: usize },
-    LoadMessages { chat_id: i64, limit: usize },
-    MarkRead { chat_id: i64, max_message_id: i64 },
-    SendText { chat_id: i64, text: String },
+    LoadChats {
+        limit: usize,
+    },
+    LoadMessages {
+        chat_id: i64,
+        limit: usize,
+    },
+    MarkRead {
+        chat_id: i64,
+        max_message_id: i64,
+    },
+    SendText {
+        chat_id: i64,
+        text: String,
+    },
     /// Reliable text send. Retrying the same client_id with the same payload is idempotent.
-    SendTextReliable { client_id: i64, chat_id: i64, text: String },
+    SendTextReliable {
+        client_id: i64,
+        chat_id: i64,
+        text: String,
+    },
     Shutdown,
 }
 

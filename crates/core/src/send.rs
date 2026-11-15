@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::error::CoreError;
+
 /// Stable client-generated identifier for one logical outgoing message.
 ///
 /// The same identifier may be retried with the same chat/text. Reusing it for
@@ -57,6 +59,48 @@ impl OutgoingSend {
         }
     }
 
+    pub fn awaiting_confirmation(
+        client_id: ClientMessageId,
+        chat_id: i64,
+        text: impl Into<String>,
+        reason: impl Into<String>,
+    ) -> Self {
+        Self {
+            client_id,
+            chat_id,
+            text: text.into(),
+            state: OutgoingSendState::AwaitingConfirmation {
+                reason: reason.into(),
+            },
+        }
+    }
+
+    pub fn after_error(
+        client_id: ClientMessageId,
+        chat_id: i64,
+        text: impl Into<String>,
+        error: &CoreError,
+    ) -> Self {
+        let text = text.into();
+        match error {
+            CoreError::Transport(_) | CoreError::UnknownSendOutcome(_) => {
+                Self::awaiting_confirmation(client_id, chat_id, text, error.to_string())
+            }
+            CoreError::FloodWait { .. } => {
+                Self::failed(client_id, chat_id, text, error.to_string(), true)
+            }
+            CoreError::NotInitialized
+            | CoreError::CommandChannelClosed
+            | CoreError::Backend(_)
+            | CoreError::Rpc { .. }
+            | CoreError::InvalidInput(_)
+            | CoreError::Serialization(_)
+            | CoreError::Storage(_) => {
+                Self::failed(client_id, chat_id, text, error.to_string(), false)
+            }
+        }
+    }
+
     pub fn same_request(&self, chat_id: i64, text: &str) -> bool {
         self.chat_id == chat_id && self.text == text
     }
@@ -66,13 +110,9 @@ impl OutgoingSend {
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum OutgoingSendState {
     Sending,
-    Sent {
-        message_id: i64,
-    },
-    Failed {
-        reason: String,
-        retryable: bool,
-    },
+    AwaitingConfirmation { reason: String },
+    Sent { message_id: i64 },
+    Failed { reason: String, retryable: bool },
 }
 
 impl OutgoingSendState {

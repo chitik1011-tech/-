@@ -1,6 +1,6 @@
 use tg_mobile_core::{
-    CoreCommand, CoreEvent, CoreState, MockTelegramBackend, OutgoingSend, OutgoingSendState,
-    TelegramBackend, decode_command,
+    decode_command, CoreCommand, CoreError, CoreEvent, CoreState, MockTelegramBackend,
+    OutgoingSend, OutgoingSendState, TelegramBackend,
 };
 
 async fn authorize(backend: &mut MockTelegramBackend) {
@@ -82,11 +82,9 @@ async fn reusing_client_id_for_different_content_is_rejected_without_sending() {
         .await
         .unwrap();
 
-    assert!(
-        !events
-            .iter()
-            .any(|event| matches!(event, CoreEvent::MessageAdded(_)))
-    );
+    assert!(!events
+        .iter()
+        .any(|event| matches!(event, CoreEvent::MessageAdded(_))));
     assert!(events.iter().any(|event| matches!(
         event,
         CoreEvent::MessageSendStateChanged(OutgoingSend {
@@ -97,10 +95,57 @@ async fn reusing_client_id_for_different_content_is_rejected_without_sending() {
             ..
         })
     )));
+
+    let other_chat = backend
+        .handle(CoreCommand::SendTextReliable {
+            client_id: 7,
+            chat_id: 3,
+            text: "first".into(),
+        })
+        .await
+        .unwrap();
+    assert!(!other_chat
+        .iter()
+        .any(|event| matches!(event, CoreEvent::MessageAdded(_))));
+}
+
+#[tokio::test]
+async fn same_text_with_different_client_ids_creates_distinct_messages() {
+    let mut backend = MockTelegramBackend::default();
+    authorize(&mut backend).await;
+
+    let first = backend
+        .handle(CoreCommand::SendTextReliable {
+            client_id: 17,
+            chat_id: 2,
+            text: "same text".into(),
+        })
+        .await
+        .unwrap();
+    let second = backend
+        .handle(CoreCommand::SendTextReliable {
+            client_id: 18,
+            chat_id: 2,
+            text: "same text".into(),
+        })
+        .await
+        .unwrap();
+
+    let first_id = first.iter().find_map(|event| match event {
+        CoreEvent::MessageAdded(message) => Some(message.id),
+        _ => None,
+    });
+    let second_id = second.iter().find_map(|event| match event {
+        CoreEvent::MessageAdded(message) => Some(message.id),
+        _ => None,
+    });
+    assert!(first_id.is_some());
+    assert!(second_id.is_some());
+    assert_ne!(first_id, second_id);
 }
 
 #[test]
-fn core_state_tracks_retryable_outbox_and_removes_success() {
+fn core_state_tracks_retryable_outbox_and_keeps_success_binding() {
     let mut state = CoreState::default();
 
     state.reduce(&CoreEvent::MessageSendStateChanged(OutgoingSend::sending(
@@ -132,7 +177,10 @@ fn core_state_tracks_retryable_outbox_and_removes_success() {
     state.reduce(&CoreEvent::MessageSendStateChanged(OutgoingSend::sent(
         101, 2, "hello", 55,
     )));
-    assert!(state.outgoing_send(101).is_none());
+    assert!(matches!(
+        state.outgoing_send(101).map(|send| &send.state),
+        Some(OutgoingSendState::Sent { message_id: 55 })
+    ));
 }
 
 #[test]
@@ -142,16 +190,80 @@ fn core_state_rejects_client_id_collision_while_request_is_in_outbox() {
         15, 2, "first",
     )));
     state.reduce(&CoreEvent::MessageSendStateChanged(OutgoingSend::sending(
-        15, 2, "different",
+        15,
+        2,
+        "different",
     )));
 
     assert_eq!(state.outgoing_send(15).unwrap().text, "first");
-    assert!(
-        state
-            .last_error
-            .as_deref()
-            .is_some_and(|message| message.contains("reused"))
+    assert!(state
+        .last_error
+        .as_deref()
+        .is_some_and(|message| message.contains("reused")));
+}
+
+#[test]
+fn transport_failure_waits_for_confirmation_instead_of_failing() {
+    let send = OutgoingSend::after_error(
+        19,
+        2,
+        "hello",
+        &CoreError::Transport("response timed out".into()),
     );
+    assert!(matches!(
+        send.state,
+        OutgoingSendState::AwaitingConfirmation { .. }
+    ));
+}
+
+#[test]
+fn permanent_rpc_failure_is_not_retryable() {
+    let send = OutgoingSend::after_error(
+        20,
+        2,
+        "hello",
+        &CoreError::Rpc {
+            code: 400,
+            name: "MESSAGE_EMPTY".into(),
+        },
+    );
+    assert!(matches!(
+        send.state,
+        OutgoingSendState::Failed {
+            retryable: false,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn generic_backend_error_is_not_automatically_retryable() {
+    let send = OutgoingSend::after_error(
+        22,
+        2,
+        "hello",
+        &CoreError::Backend("permanent backend rejection".into()),
+    );
+    assert!(matches!(
+        send.state,
+        OutgoingSendState::Failed {
+            retryable: false,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn flood_wait_is_distinct_and_retryable() {
+    let send =
+        OutgoingSend::after_error(21, 2, "hello", &CoreError::FloodWait { seconds: Some(15) });
+    assert!(matches!(
+        send.state,
+        OutgoingSendState::Failed {
+            retryable: true,
+            ..
+        }
+    ));
 }
 
 #[test]
@@ -169,10 +281,8 @@ fn old_persisted_state_without_outbox_still_deserializes() {
 
 #[test]
 fn reliable_send_wire_command_is_additive_and_validated() {
-    let legacy = decode_command(
-        r#"{"type":"send_text","payload":{"chat_id":2,"text":"legacy"}}"#,
-    )
-    .unwrap();
+    let legacy =
+        decode_command(r#"{"type":"send_text","payload":{"chat_id":2,"text":"legacy"}}"#).unwrap();
     assert_eq!(legacy.kind(), "send_text");
 
     let reliable = decode_command(

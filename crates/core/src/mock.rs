@@ -245,10 +245,7 @@ impl MockTelegramBackend {
                     sending,
                     CoreEvent::MessageAdded(message.clone()),
                     CoreEvent::MessageSendStateChanged(OutgoingSend::sent(
-                        client_id,
-                        chat_id,
-                        text,
-                        message.id,
+                        client_id, chat_id, text, message.id,
                     )),
                 ])
             }

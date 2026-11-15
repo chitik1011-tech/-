@@ -10,6 +10,7 @@ use crate::{
     command::CoreCommand,
     error::{CoreError, Result},
     event::CoreEvent,
+    send::OutgoingSend,
     state::CoreState,
     storage::{NoopStateStore, StateStore},
     wire::{decode_command, encode_state},
@@ -98,9 +99,82 @@ where
             match input {
                 RuntimeInput::Command(Some(command)) => {
                     let shutdown_requested = matches!(command, CoreCommand::Shutdown);
+                    let reliable_send = match &command {
+                        CoreCommand::SendTextReliable {
+                            client_id,
+                            chat_id,
+                            text,
+                        } => Some((*client_id, *chat_id, text.clone())),
+                        _ => None,
+                    };
+
+                    if let Some((client_id, chat_id, text)) = reliable_send.as_ref() {
+                        match reduced_state.begin_reliable_send(*client_id, *chat_id, text.clone())
+                        {
+                            Ok(false) => continue,
+                            Err(error) => {
+                                apply_event(
+                                    CoreEvent::Error(error.to_string()),
+                                    &mut reduced_state,
+                                    &state_tx,
+                                    &event_tx_task,
+                                );
+                                continue;
+                            }
+                            Ok(true) => {}
+                        }
+
+                        if let Err(error) = store.save(&reduced_state).await {
+                            let message = format!(
+                                "cannot persist reliable-send intent before network request: {error}"
+                            );
+                            let failed = OutgoingSend::failed(
+                                *client_id,
+                                *chat_id,
+                                text.clone(),
+                                message.clone(),
+                                true,
+                            );
+                            apply_event(
+                                CoreEvent::MessageSendStateChanged(failed),
+                                &mut reduced_state,
+                                &state_tx,
+                                &event_tx_task,
+                            );
+                            apply_event(
+                                CoreEvent::Error(message),
+                                &mut reduced_state,
+                                &state_tx,
+                                &event_tx_task,
+                            );
+                            persistence_dirty = true;
+                            continue;
+                        }
+
+                        apply_event(
+                            CoreEvent::MessageSendStateChanged(OutgoingSend::sending(
+                                *client_id,
+                                *chat_id,
+                                text.clone(),
+                            )),
+                            &mut reduced_state,
+                            &state_tx,
+                            &event_tx_task,
+                        );
+                        persistence_dirty = true;
+                    }
+
                     let events = match backend.handle(command).await {
                         Ok(events) => events,
-                        Err(error) => vec![CoreEvent::Error(error.to_string())],
+                        Err(error) => match reliable_send {
+                            Some((client_id, chat_id, text)) => vec![
+                                CoreEvent::MessageSendStateChanged(OutgoingSend::after_error(
+                                    client_id, chat_id, text, &error,
+                                )),
+                                CoreEvent::Error(error.to_string()),
+                            ],
+                            None => vec![CoreEvent::Error(error.to_string())],
+                        },
                     };
 
                     if !events.is_empty() {
@@ -213,6 +287,12 @@ async fn restore_state<S: StateStore>(
         Ok(Some(mut state)) => {
             state.running = true;
             state.last_error = None;
+            if state.recover_inflight_sends() {
+                if let Err(error) = store.save(&state).await {
+                    state.last_error = Some(error.to_string());
+                    let _ = event_tx.send(CoreEvent::Error(error.to_string()));
+                }
+            }
             let _ = state_tx.send(state.clone());
             state
         }
@@ -266,5 +346,186 @@ async fn persist_state<S: StateStore>(
         state.last_error = Some(message.clone());
         let _ = state_tx.send(state.clone());
         let _ = event_tx.send(CoreEvent::Error(message));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use tokio::sync::oneshot;
+
+    use crate::{
+        backend::BackendFuture,
+        command::CoreCommand,
+        error::CoreError,
+        event::CoreEvent,
+        send::{OutgoingSend, OutgoingSendState},
+        storage::{MemoryStateStore, StateStore},
+        TelegramBackend,
+    };
+
+    use super::{restore_state, spawn_core_with_store};
+
+    struct WriteAheadObserver {
+        store: MemoryStateStore,
+        observed: Option<oneshot::Sender<Option<OutgoingSendState>>>,
+    }
+
+    impl TelegramBackend for WriteAheadObserver {
+        fn handle<'a>(&'a mut self, command: CoreCommand) -> BackendFuture<'a> {
+            Box::pin(async move {
+                if let CoreCommand::SendTextReliable {
+                    client_id,
+                    chat_id,
+                    text,
+                } = command
+                {
+                    let state = self.store.snapshot()?.and_then(|state| {
+                        state.outbox.get(&client_id).map(|send| send.state.clone())
+                    });
+                    if let Some(observed) = self.observed.take() {
+                        let _ = observed.send(state);
+                    }
+                    return Ok(vec![CoreEvent::MessageSendStateChanged(
+                        OutgoingSend::sent(client_id, chat_id, text, 42),
+                    )]);
+                }
+                Ok(Vec::new())
+            })
+        }
+    }
+
+    struct OneTimeoutBackend {
+        calls: Arc<Mutex<Vec<i64>>>,
+    }
+
+    impl TelegramBackend for OneTimeoutBackend {
+        fn handle<'a>(&'a mut self, command: CoreCommand) -> BackendFuture<'a> {
+            Box::pin(async move {
+                if let CoreCommand::SendTextReliable {
+                    client_id,
+                    chat_id,
+                    text,
+                } = command
+                {
+                    let call_number = {
+                        let mut calls = self.calls.lock().unwrap();
+                        calls.push(client_id);
+                        calls.len()
+                    };
+                    if call_number == 1 {
+                        return Err(CoreError::Transport("timed out after send".into()));
+                    }
+                    return Ok(vec![CoreEvent::MessageSendStateChanged(
+                        OutgoingSend::sent(client_id, chat_id, text, 43),
+                    )]);
+                }
+                Ok(Vec::new())
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn reliable_send_is_persisted_before_backend_invocation() {
+        let store = MemoryStateStore::default();
+        let (observed_tx, observed_rx) = oneshot::channel();
+        let core = spawn_core_with_store(
+            WriteAheadObserver {
+                store: store.clone(),
+                observed: Some(observed_tx),
+            },
+            store,
+        );
+
+        core.send(CoreCommand::SendTextReliable {
+            client_id: 33,
+            chat_id: 2,
+            text: "persist first".into(),
+        })
+        .await
+        .unwrap();
+
+        let persisted_state = tokio::time::timeout(std::time::Duration::from_secs(1), observed_rx)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(persisted_state, Some(OutgoingSendState::Sending)));
+        core.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn retry_after_transport_ambiguity_uses_the_same_client_id() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let core = spawn_core_with_store(
+            OneTimeoutBackend {
+                calls: calls.clone(),
+            },
+            MemoryStateStore::default(),
+        );
+        let command = CoreCommand::SendTextReliable {
+            client_id: 35,
+            chat_id: 2,
+            text: "retry without changing identity".into(),
+        };
+
+        core.send(command.clone()).await.unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            loop {
+                if matches!(
+                    core.state().outgoing_send(35).map(|send| &send.state),
+                    Some(OutgoingSendState::AwaitingConfirmation { .. })
+                ) {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+
+        core.send(command).await.unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            loop {
+                if matches!(
+                    core.state().outgoing_send(35).map(|send| &send.state),
+                    Some(OutgoingSendState::Sent { message_id: 43 })
+                ) {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(*calls.lock().unwrap(), [35, 35]);
+        core.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn restart_recovers_inflight_send_and_persists_confirmation_state() {
+        let store = MemoryStateStore::default();
+        let mut initial = crate::state::CoreState::default();
+        initial.reduce(&CoreEvent::MessageSendStateChanged(OutgoingSend::sending(
+            34,
+            2,
+            "restart me",
+        )));
+        store.save(&initial).await.unwrap();
+
+        let (state_tx, _) = tokio::sync::watch::channel(crate::state::CoreState::default());
+        let (event_tx, _) = tokio::sync::broadcast::channel(4);
+        let restored = restore_state(&store, &state_tx, &event_tx).await;
+
+        assert!(matches!(
+            restored.outgoing_send(34).map(|send| &send.state),
+            Some(OutgoingSendState::AwaitingConfirmation { .. })
+        ));
+        let persisted = store.snapshot().unwrap().unwrap();
+        assert!(matches!(
+            persisted.outgoing_send(34).map(|send| &send.state),
+            Some(OutgoingSendState::AwaitingConfirmation { .. })
+        ));
     }
 }

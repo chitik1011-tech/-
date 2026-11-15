@@ -11,6 +11,18 @@ pub enum CoreError {
     #[error("backend error: {0}")]
     Backend(String),
 
+    #[error("network or transport error: {0}")]
+    Transport(String),
+
+    #[error("Telegram flood wait ({seconds:?} seconds)")]
+    FloodWait { seconds: Option<u32> },
+
+    #[error("Telegram RPC error {code}: {name}")]
+    Rpc { code: i32, name: String },
+
+    #[error("send outcome is unknown: {0}")]
+    UnknownSendOutcome(String),
+
     #[error("invalid input: {0}")]
     InvalidInput(String),
 

@@ -1,7 +1,4 @@
-use std::{
-    collections::{HashMap, VecDeque},
-    sync::Arc,
-};
+use std::{collections::HashMap, sync::Arc};
 
 use grammers_client::{
     Client,
@@ -22,14 +19,11 @@ use crate::{
     chats::{PeerRegistry, find_peer, load_chats, new_peer_registry},
     config::TelegramConfig,
     error::{TelegramBackendError, session_error},
-    messages::{
-        MessageDeduplicator, load_messages, mark_read, send_text, send_text_idempotent,
-    },
+    messages::{MessageDeduplicator, load_messages, mark_read, send_text, send_text_idempotent},
     updates::{TelegramUpdate, UpdateWorkerInput, run_update_worker},
 };
 
 const MESSAGE_DEDUP_CAPACITY: usize = 4096;
-const RELIABLE_SEND_CACHE_CAPACITY: usize = 4096;
 
 #[derive(Debug, Clone)]
 struct ReliableSendRecord {
@@ -58,7 +52,6 @@ pub struct GrammersBackend {
     peers: PeerRegistry,
     dedup: Arc<MessageDeduplicator>,
     reliable_sends: HashMap<i64, ReliableSendRecord>,
-    reliable_send_order: VecDeque<i64>,
     stopped: bool,
 }
 
@@ -97,7 +90,6 @@ impl GrammersBackend {
             peers: new_peer_registry(),
             dedup: Arc::new(MessageDeduplicator::new(MESSAGE_DEDUP_CAPACITY)),
             reliable_sends: HashMap::new(),
-            reliable_send_order: VecDeque::new(),
             stopped: false,
         })
     }
@@ -189,9 +181,6 @@ impl GrammersBackend {
         text: String,
         message_id: i64,
     ) {
-        if !self.reliable_sends.contains_key(&client_id) {
-            self.reliable_send_order.push_back(client_id);
-        }
         self.reliable_sends.insert(
             client_id,
             ReliableSendRecord {
@@ -200,12 +189,6 @@ impl GrammersBackend {
                 message_id,
             },
         );
-
-        while self.reliable_send_order.len() > RELIABLE_SEND_CACHE_CAPACITY {
-            if let Some(oldest) = self.reliable_send_order.pop_front() {
-                self.reliable_sends.remove(&oldest);
-            }
-        }
     }
 
     async fn handle_reliable_send(
@@ -225,10 +208,7 @@ impl GrammersBackend {
                 return vec![
                     sending,
                     CoreEvent::MessageSendStateChanged(OutgoingSend::sent(
-                        client_id,
-                        chat_id,
-                        text,
-                        message_id,
+                        client_id, chat_id, text, message_id,
                     )),
                 ];
             }
@@ -258,35 +238,22 @@ impl GrammersBackend {
 
         match result {
             Ok(message) => {
-                self.remember_reliable_send(
-                    client_id,
-                    chat_id,
-                    text.clone(),
-                    message.id,
-                );
+                self.remember_reliable_send(client_id, chat_id, text.clone(), message.id);
 
                 let mut events = vec![sending];
                 if self.dedup.should_emit(&message).await {
                     events.push(CoreEvent::MessageAdded(message.clone()));
                 }
                 events.push(CoreEvent::MessageSendStateChanged(OutgoingSend::sent(
-                    client_id,
-                    chat_id,
-                    text,
-                    message.id,
+                    client_id, chat_id, text, message.id,
                 )));
                 events
             }
             Err(error) => {
-                let retryable = matches!(&error, CoreError::Backend(_));
                 vec![
                     sending,
-                    CoreEvent::MessageSendStateChanged(OutgoingSend::failed(
-                        client_id,
-                        chat_id,
-                        text,
-                        error.to_string(),
-                        retryable,
+                    CoreEvent::MessageSendStateChanged(OutgoingSend::after_error(
+                        client_id, chat_id, text, &error,
                     )),
                 ]
             }

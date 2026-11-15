@@ -9,7 +9,10 @@ use grammers_client::{
 use tg_mobile_core::{CoreError, ForwardedFrom, MessageSummary, ReplyMetadata};
 use tokio::sync::Mutex;
 
-use crate::{error::api_error, ids::peer_id_to_core};
+use crate::{
+    error::{api_error, reliable_send_error},
+    ids::peer_id_to_core,
+};
 
 pub(crate) fn message_to_summary(message: &Message) -> MessageSummary {
     let chat_id = peer_id_to_core(message.peer_id());
@@ -155,6 +158,7 @@ pub(crate) async fn send_text_idempotent(
             "client message id must be non-zero".into(),
         ));
     }
+    let chat_id = peer_id_to_core(peer.id);
 
     let updates = client
         .invoke(&tl::functions::messages::SendMessage {
@@ -164,7 +168,7 @@ pub(crate) async fn send_text_idempotent(
             clear_draft: false,
             peer: peer.into(),
             reply_to: None,
-            message: text,
+            message: text.clone(),
             random_id,
             reply_markup: None,
             entities: None,
@@ -182,26 +186,79 @@ pub(crate) async fn send_text_idempotent(
             rich_message: None,
         })
         .await
-        .map_err(|error| api_error("send idempotent message", error))?;
+        .map_err(|error| reliable_send_error("send idempotent message", error))?;
 
     let message_id = sent_message_id(&updates, random_id).ok_or_else(|| {
-        CoreError::Backend(
+        CoreError::UnknownSendOutcome(
             "Telegram accepted send request but returned no resolvable message id".into(),
         )
     })?;
+    let timestamp_unix = sent_message_date(&updates, random_id).unwrap_or_else(|| {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_secs() as i64)
+            .unwrap_or_default()
+    });
 
-    let mut messages = client
-        .get_messages_by_id(peer, &[message_id])
-        .await
-        .map_err(|error| api_error("fetch idempotently sent message", error))?;
+    Ok(message_summary_from_fields(MessageFields {
+        id: i64::from(message_id),
+        chat_id,
+        sender_id: 0,
+        text: &text,
+        timestamp_unix,
+        outgoing: true,
+    }))
+}
 
-    let message = messages.pop().flatten().ok_or_else(|| {
-        CoreError::Backend(format!(
-            "Telegram accepted send request but message {message_id} could not be fetched"
-        ))
-    })?;
+fn sent_message_date(updates: &tl::enums::Updates, random_id: i64) -> Option<i64> {
+    match updates {
+        tl::enums::Updates::UpdateShortSentMessage(update) => Some(i64::from(update.date)),
+        tl::enums::Updates::Updates(updates) => {
+            sent_message_date_from_updates(&updates.updates, random_id)
+        }
+        tl::enums::Updates::Combined(updates) => {
+            sent_message_date_from_updates(&updates.updates, random_id)
+        }
+        tl::enums::Updates::UpdateShort(update) => {
+            sent_message_date_from_update(&update.update, random_id)
+        }
+        tl::enums::Updates::UpdateShortMessage(update) => Some(i64::from(update.date)),
+        tl::enums::Updates::UpdateShortChatMessage(update) => Some(i64::from(update.date)),
+        tl::enums::Updates::TooLong => None,
+    }
+}
 
-    Ok(message_to_summary(&message))
+fn sent_message_date_from_updates(updates: &[tl::enums::Update], random_id: i64) -> Option<i64> {
+    let message_id = updates.iter().find_map(|update| match update {
+        tl::enums::Update::MessageId(update) if update.random_id == random_id => Some(update.id),
+        _ => None,
+    });
+    updates.iter().find_map(|update| match update {
+        tl::enums::Update::NewMessage(update) if Some(update.message.id()) == message_id => {
+            message_date(&update.message)
+        }
+        tl::enums::Update::NewChannelMessage(update) if Some(update.message.id()) == message_id => {
+            message_date(&update.message)
+        }
+        _ => None,
+    })
+}
+
+fn sent_message_date_from_update(update: &tl::enums::Update, random_id: i64) -> Option<i64> {
+    match update {
+        tl::enums::Update::NewMessage(update) => message_date(&update.message),
+        tl::enums::Update::NewChannelMessage(update) => message_date(&update.message),
+        tl::enums::Update::MessageId(update) if update.random_id == random_id => None,
+        _ => None,
+    }
+}
+
+fn message_date(message: &tl::enums::Message) -> Option<i64> {
+    match message {
+        tl::enums::Message::Message(message) => Some(i64::from(message.date)),
+        tl::enums::Message::Service(message) => Some(i64::from(message.date)),
+        tl::enums::Message::Empty(_) => None,
+    }
 }
 
 fn sent_message_id(updates: &tl::enums::Updates, random_id: i64) -> Option<i32> {
@@ -222,10 +279,7 @@ fn sent_message_id(updates: &tl::enums::Updates, random_id: i64) -> Option<i32> 
     }
 }
 
-fn sent_message_id_from_updates(
-    updates: &[tl::enums::Update],
-    random_id: i64,
-) -> Option<i32> {
+fn sent_message_id_from_updates(updates: &[tl::enums::Update], random_id: i64) -> Option<i32> {
     if let Some(message_id) = updates.iter().find_map(|update| match update {
         tl::enums::Update::MessageId(update) if update.random_id == random_id => Some(update.id),
         _ => None,

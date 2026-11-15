@@ -15,7 +15,7 @@ pub struct CoreState {
     pub running: bool,
     pub account: AccountState,
     pub messages: BTreeMap<i64, Vec<MessageSummary>>,
-    /// Reliable sends that are still in flight or failed and can be retried.
+    /// Durable reliable-send records. Sent records remain here to prevent client_id reuse.
     /// Older persisted state did not contain this field.
     #[serde(default)]
     pub outbox: BTreeMap<i64, OutgoingSend>,
@@ -35,6 +35,50 @@ impl Default for CoreState {
 }
 
 impl CoreState {
+    pub(crate) fn begin_reliable_send(
+        &mut self,
+        client_id: i64,
+        chat_id: i64,
+        text: String,
+    ) -> crate::error::Result<bool> {
+        if let Some(existing) = self.outbox.get(&client_id) {
+            if !existing.same_request(chat_id, &text) {
+                return Err(crate::error::CoreError::InvalidInput(format!(
+                    "client message id {client_id} was reused for a different outgoing message"
+                )));
+            }
+
+            match &existing.state {
+                OutgoingSendState::Sent { .. } => return Ok(false),
+                OutgoingSendState::Failed {
+                    retryable: false, ..
+                } => {
+                    return Err(crate::error::CoreError::InvalidInput(format!(
+                        "client message id {client_id} has a permanent send failure"
+                    )));
+                }
+                _ => {}
+            }
+        }
+
+        self.outbox
+            .insert(client_id, OutgoingSend::sending(client_id, chat_id, text));
+        Ok(true)
+    }
+
+    pub(crate) fn recover_inflight_sends(&mut self) -> bool {
+        let mut changed = false;
+        for send in self.outbox.values_mut() {
+            if matches!(&send.state, OutgoingSendState::Sending) {
+                send.state = OutgoingSendState::AwaitingConfirmation {
+                    reason: "previous process stopped before send confirmation".into(),
+                };
+                changed = true;
+            }
+        }
+        changed
+    }
+
     pub fn reduce(&mut self, event: &CoreEvent) {
         match event {
             CoreEvent::State(account) => {
@@ -140,11 +184,30 @@ impl CoreState {
                     }
                 }
 
-                match &update.state {
-                    OutgoingSendState::Sent { .. } => {
-                        self.outbox.remove(&client_id);
+                if let Some(existing) = self.outbox.get(&client_id) {
+                    if let OutgoingSendState::Sent {
+                        message_id: existing_message_id,
+                    } = &existing.state
+                    {
+                        match &update.state {
+                            OutgoingSendState::Sent { message_id }
+                                if message_id == existing_message_id => {}
+                            OutgoingSendState::Sent { .. } => {
+                                self.last_error = Some(format!(
+                                    "conflicting acknowledgements for client message id {client_id}"
+                                ));
+                            }
+                            _ => {}
+                        }
+                        return;
                     }
-                    OutgoingSendState::Sending | OutgoingSendState::Failed { .. } => {
+                }
+
+                match update.state {
+                    OutgoingSendState::Sent { .. }
+                    | OutgoingSendState::Sending
+                    | OutgoingSendState::AwaitingConfirmation { .. }
+                    | OutgoingSendState::Failed { .. } => {
                         self.outbox.insert(client_id, update.clone());
                     }
                 }
@@ -199,5 +262,62 @@ impl CoreState {
         }
 
         inserted
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{event::CoreEvent, send::OutgoingSend};
+
+    use super::CoreState;
+
+    #[test]
+    fn recovery_moves_inflight_sends_to_awaiting_confirmation() {
+        let mut state = CoreState::default();
+        state.reduce(&CoreEvent::MessageSendStateChanged(OutgoingSend::sending(
+            9, 2, "hello",
+        )));
+
+        assert!(state.recover_inflight_sends());
+        assert!(matches!(
+            state.outgoing_send(9).map(|send| &send.state),
+            Some(crate::send::OutgoingSendState::AwaitingConfirmation { .. })
+        ));
+        assert!(!state.recover_inflight_sends());
+    }
+
+    #[test]
+    fn duplicate_acknowledgement_keeps_one_stable_sent_record() {
+        let mut state = CoreState::default();
+        let acknowledgement =
+            CoreEvent::MessageSendStateChanged(OutgoingSend::sent(9, 2, "hello", 55));
+        state.reduce(&acknowledgement);
+        state.reduce(&acknowledgement);
+
+        assert_eq!(state.outbox.len(), 1);
+        assert!(matches!(
+            state.outgoing_send(9).map(|send| &send.state),
+            Some(crate::send::OutgoingSendState::Sent { message_id: 55 })
+        ));
+    }
+
+    #[test]
+    fn conflicting_duplicate_acknowledgement_does_not_replace_first_id() {
+        let mut state = CoreState::default();
+        state.reduce(&CoreEvent::MessageSendStateChanged(OutgoingSend::sent(
+            9, 2, "hello", 55,
+        )));
+        state.reduce(&CoreEvent::MessageSendStateChanged(OutgoingSend::sent(
+            9, 2, "hello", 56,
+        )));
+
+        assert!(matches!(
+            state.outgoing_send(9).map(|send| &send.state),
+            Some(crate::send::OutgoingSendState::Sent { message_id: 55 })
+        ));
+        assert!(state
+            .last_error
+            .as_deref()
+            .is_some_and(|error| error.contains("conflicting acknowledgements")));
     }
 }

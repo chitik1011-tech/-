@@ -45,6 +45,27 @@ pub(crate) fn api_error(context: &'static str, error: impl std::fmt::Display) ->
     TelegramBackendError::Api(format!("{context}: {error}")).into()
 }
 
+pub(crate) fn reliable_send_error(
+    context: &'static str,
+    error: grammers_client::InvocationError,
+) -> CoreError {
+    use grammers_client::InvocationError;
+
+    match error {
+        InvocationError::Rpc(error) if error.is("FLOOD_WAIT") => CoreError::FloodWait {
+            seconds: error.value,
+        },
+        InvocationError::Rpc(error) => CoreError::Rpc {
+            code: error.code,
+            name: error.name,
+        },
+        error @ (InvocationError::Io(_) | InvocationError::Transport(_)) => {
+            CoreError::Transport(format!("{context}: {error}"))
+        }
+        error => TelegramBackendError::Api(format!("{context}: {error}")).into(),
+    }
+}
+
 pub(crate) fn auth_api_error(context: &'static str, _error: impl std::fmt::Display) -> CoreError {
     TelegramBackendError::Authorization(format!("{context}: Telegram request failed")).into()
 }
@@ -55,7 +76,7 @@ pub(crate) fn session_error(context: &'static str, error: impl std::fmt::Display
 
 #[cfg(test)]
 mod tests {
-    use super::TelegramBackendError;
+    use super::{TelegramBackendError, reliable_send_error};
     use tg_mobile_core::CoreError;
 
     #[test]
@@ -86,5 +107,45 @@ mod tests {
             }
             other => panic!("expected backend error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn reliable_send_error_classifies_flood_wait_and_permanent_rpc() {
+        let flood_wait = reliable_send_error(
+            "send idempotent message",
+            grammers_client::InvocationError::Rpc(grammers_client::sender::RpcError {
+                code: 420,
+                name: "FLOOD_WAIT".into(),
+                value: Some(12),
+                caused_by: None,
+            }),
+        );
+        assert!(matches!(
+            flood_wait,
+            CoreError::FloodWait { seconds: Some(12) }
+        ));
+
+        let permanent = reliable_send_error(
+            "send idempotent message",
+            grammers_client::InvocationError::Rpc(grammers_client::sender::RpcError {
+                code: 400,
+                name: "MESSAGE_EMPTY".into(),
+                value: None,
+                caused_by: None,
+            }),
+        );
+        assert!(matches!(
+            permanent,
+            CoreError::Rpc { code: 400, ref name } if name == "MESSAGE_EMPTY"
+        ));
+
+        let transport = reliable_send_error(
+            "send idempotent message",
+            grammers_client::InvocationError::Io(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "response timeout",
+            )),
+        );
+        assert!(matches!(transport, CoreError::Transport(_)));
     }
 }
