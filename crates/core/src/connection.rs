@@ -20,23 +20,22 @@ impl ConnectionState {
     pub const fn can_transition_to(self, next: Self) -> bool {
         matches!(
             (self, next),
-            (Self::Offline, Self::Connecting | Self::Reconnecting | Self::Failed)
-                | (
-                    Self::Connecting,
-                    Self::Connected | Self::Reconnecting | Self::Offline | Self::Failed
-                )
-                | (
-                    Self::Connected,
-                    Self::Reconnecting | Self::Offline | Self::Failed
-                )
-                | (
-                    Self::Reconnecting,
-                    Self::Connecting | Self::Connected | Self::Offline | Self::Failed
-                )
-                | (
-                    Self::Failed,
-                    Self::Connecting | Self::Reconnecting | Self::Offline
-                )
+            (
+                Self::Offline,
+                Self::Connecting | Self::Connected | Self::Reconnecting | Self::Failed
+            ) | (
+                Self::Connecting,
+                Self::Connected | Self::Reconnecting | Self::Offline | Self::Failed
+            ) | (
+                Self::Connected,
+                Self::Reconnecting | Self::Offline | Self::Failed
+            ) | (
+                Self::Reconnecting,
+                Self::Connecting | Self::Connected | Self::Offline | Self::Failed
+            ) | (
+                Self::Failed,
+                Self::Connecting | Self::Connected | Self::Reconnecting | Self::Offline
+            )
         )
     }
 }
