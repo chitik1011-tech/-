@@ -356,6 +356,9 @@ impl MockTelegramBackend {
                 },
             ),
             CoreCommand::Shutdown => Ok(Vec::new()),
+            CoreCommand::ResolvePeer { .. } => Err(CoreError::Backend(
+                "peer resolution is unsupported by this backend".into(),
+            )),
         }
     }
 

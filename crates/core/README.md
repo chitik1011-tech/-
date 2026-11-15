@@ -37,6 +37,21 @@ Raw events are available through `CoreHandle::subscribe`.
 
 `CoreCommand::kind` and `CoreEvent::kind` return stable snake-case identifiers matching the JSON wire names. Bridges should use these helpers instead of maintaining exhaustive duplicate mappings. `CoreEvent::is_terminal` identifies terminal events.
 
+## Peer references and resolution
+
+`parse_peer_reference` is a pure parser for a full `@username`, `t.me` profile/message URL,
+or a stable `tg://user?id=…` deep link. It extracts message IDs and optional `single`,
+`thread`, and `comment` metadata without contacting Telegram. Private `/c/` links retain
+their internal channel number as a distinct reference; it is not treated as a resolved chat ID.
+
+`CoreCommand::ResolvePeer` delegates a validated reference to the backend. The Grammers
+backend resolves public usernames and username message links through Telegram's actual
+`contacts.resolveUsername` response. Numeric user IDs without an access hash and private
+`/c/` links without a cached peer return explicit `Unknown` or `Unsupported` outcomes;
+nonexistent usernames return `NotFound`. Mock mode reports resolution as unsupported rather
+than inventing production identities. These identity results carry no access grant:
+authorization and permission checks remain the backend's responsibility.
+
 ## Telegram backend updates
 
 `TelegramBackend::handle` is the request/response path for `CoreCommand` values.
@@ -121,3 +136,4 @@ Incoming `MessageAdded` events are cached per chat and deduplicated by message I
 ## Safety
 
 This crate forbids unsafe Rust. FFI-specific unsafe code belongs in a narrow Android or protocol bridge crate, not in core.
+
