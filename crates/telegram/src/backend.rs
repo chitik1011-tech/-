@@ -497,9 +497,9 @@ impl GrammersBackend {
                     .map_err(|error| crate::error::api_error("vote on poll", error))?;
 
                 let polls = polls_from_updates(&updates, &self.polls).await?;
-                Ok::<_, CoreError>(
-                    polls.into_iter().map(CoreEvent::PollUpdated).collect::<Vec<_>>(),
-                )?
+                let mut events = vec![CoreEvent::PollVoteSubmitted { poll_id }];
+                events.extend(polls.into_iter().map(CoreEvent::PollUpdated));
+                events
             }
             CoreCommand::ArchiveChat { chat_id } | CoreCommand::UnarchiveChat { chat_id } => {
                 self.require_ready().await?;
