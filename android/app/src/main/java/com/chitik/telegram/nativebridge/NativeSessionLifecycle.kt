@@ -129,6 +129,20 @@ internal class NativeSessionLifecycle {
 
     fun acceptsCallbacks(): Boolean = synchronized(lock) { !closed }
 
+    fun currentHandleOrZero(): Long = synchronized(lock) {
+        if (closed) 0L else handle
+    }
+
+    /** Runs state updates under the same gate used by callbacks and teardown. */
+    fun runIfOpen(action: () -> Unit): Boolean = synchronized(lock) {
+        if (closed) {
+            false
+        } else {
+            action()
+            true
+        }
+    }
+
     /** Closes once and transfers the owned handle to the caller for JNI cleanup. */
     fun close(): Long? = synchronized(lock) {
         if (closed) return@synchronized null
