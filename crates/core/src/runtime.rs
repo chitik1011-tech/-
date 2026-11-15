@@ -221,6 +221,7 @@ async fn restore_state<S: StateStore>(
         Ok(Some(mut state)) => {
             state.running = true;
             state.last_error = None;
+            state.message_search = Default::default();
             let _ = state_tx.send(state.clone());
             state
         }

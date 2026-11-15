@@ -1,8 +1,12 @@
+use std::time::Duration;
+
 use tg_mobile_core::{
-    CoreCommand, CoreError, CoreEvent, CoreState, MessageSummary, MessagesSearchResult,
+    spawn_core_with_store, AuthorizationState, CoreCommand, CoreError, CoreEvent, CoreState,
+    MemoryStateStore, MessageSummary, MessagesSearchResult,
     SearchChatMetadata, SearchMessagesRequest, SearchResult, SearchScope, SearchSenderMetadata,
-    MAX_MESSAGE_SEARCH_LIMIT,
+    MAX_MESSAGE_SEARCH_LIMIT, StateStore,
 };
+use tokio::time::timeout;
 
 fn request(request_id: u64, query: &str, cursor: Option<&str>) -> SearchMessagesRequest {
     SearchMessagesRequest {
@@ -204,4 +208,53 @@ fn old_core_state_json_defaults_message_search_state() {
     let json = r#"{"running":true,"account":{"authorization":"Closed","chats":[]},"messages":{},"last_error":null}"#;
     let state: CoreState = serde_json::from_str(json).unwrap();
     assert_eq!(state, CoreState::default());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restore_clears_persisted_search_generation_before_new_request() {
+    let store = MemoryStateStore::default();
+    let mut persisted = CoreState::default();
+    persisted.account.authorization = AuthorizationState::Ready;
+
+    persisted.reduce(&CoreEvent::SearchStarted(request(100, "needle", None)));
+    persisted.reduce(&CoreEvent::MessagesSearchCompleted(page(
+        100,
+        None,
+        vec![result(1, 3, 10)],
+        Some("next"),
+        true,
+    )));
+    persisted.reduce(&CoreEvent::SearchStarted(request(
+        100,
+        "needle",
+        Some("next"),
+    )));
+    store.save(&persisted).await.unwrap();
+
+    let core = spawn_core_with_store(tg_mobile_core::MockTelegramBackend::default(), store);
+    timeout(Duration::from_secs(1), async {
+        while core.state().account.authorization != AuthorizationState::Ready {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+
+    assert!(core.state().message_search.global.results.is_empty());
+    assert!(core.state().message_search.global.active_request.is_none());
+
+    let mut events = core.subscribe();
+    core.send(CoreCommand::SearchMessages(request(1, "fresh", None)))
+        .await
+        .unwrap();
+    let event = timeout(Duration::from_secs(1), events.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(event, CoreEvent::SearchStarted(_)));
+    assert_eq!(
+        core.state().message_search.global.current_request_id,
+        Some(1)
+    );
+    assert!(core.state().message_search.global.results.is_empty());
 }
