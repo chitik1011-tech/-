@@ -209,7 +209,10 @@ mod message_ordering_tests {
         let mut state = CoreState::default();
         state.reduce(&CoreEvent::MessageAdded(message(20, 200, false)));
         state.reduce(&CoreEvent::MessageAdded(message(10, 100, false)));
-        assert_eq!(state.chat(42).unwrap().last_message.as_ref().unwrap().id, 20);
+        assert_eq!(
+            state.chat(42).unwrap().last_message.as_ref().unwrap().id,
+            20
+        );
         assert_eq!(state.messages_for_chat(42).len(), 2);
     }
 
@@ -229,6 +232,9 @@ mod message_ordering_tests {
         state.reduce(&CoreEvent::MessageAdded(message(8, 200, true)));
         assert_eq!(state.chat(42).unwrap().last_message.as_ref().unwrap().id, 9);
         state.reduce(&CoreEvent::MessageAdded(message(10, 200, true)));
-        assert_eq!(state.chat(42).unwrap().last_message.as_ref().unwrap().id, 10);
+        assert_eq!(
+            state.chat(42).unwrap().last_message.as_ref().unwrap().id,
+            10
+        );
     }
 }
