@@ -67,6 +67,17 @@ async fn mock_backend_loads_pins_and_supports_pin_unpin() {
     let core = spawn_core(MockTelegramBackend::default());
     let mut events = core.subscribe();
 
+    core.send(CoreCommand::LoadChats { limit: 10 })
+        .await
+        .unwrap();
+    assert!(matches!(
+        timeout(Duration::from_secs(1), events.recv())
+            .await
+            .unwrap()
+            .unwrap(),
+        CoreEvent::ChatsLoaded(_)
+    ));
+
     core.send(CoreCommand::PinMessage {
         chat_id: 2,
         message_id: 1,
