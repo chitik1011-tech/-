@@ -12,7 +12,7 @@ pub mod storage;
 pub mod wire;
 
 pub use backend::TelegramBackend;
-pub use command::CoreCommand;
+pub use command::{CoreCommand, MAX_CHAT_LOAD_LIMIT};
 pub use error::{CoreError, Result};
 pub use event::CoreEvent;
 pub use mock::MockTelegramBackend;
