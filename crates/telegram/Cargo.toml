@@ -1,0 +1,13 @@
+[package]
+name = "tg-mobile-telegram"
+version = "0.1.0"
+edition = "2024"
+license.workspace = true
+rust-version = "1.88"
+
+[dependencies]
+grammers-client = "=0.12.0"
+grammers-session = { version = "=0.12.0", features = ["sqlite-storage"] }
+tg-mobile-core = { path = "../core" }
+thiserror.workspace = true
+tokio.workspace = true

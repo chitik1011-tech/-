@@ -1,5 +1,6 @@
 use tg_mobile_core::{
     spawn_core, CoreCommand, CoreError, MockTelegramBackend, MAX_CHAT_LOAD_LIMIT,
+    MAX_MESSAGE_LOAD_LIMIT,
 };
 
 #[test]
@@ -16,6 +17,12 @@ fn command_validation_accepts_supported_inputs() {
         .is_ok());
     assert!(CoreCommand::LoadChats {
         limit: MAX_CHAT_LOAD_LIMIT
+    }
+    .validate()
+    .is_ok());
+    assert!(CoreCommand::LoadMessages {
+        chat_id: 1,
+        limit: MAX_MESSAGE_LOAD_LIMIT,
     }
     .validate()
     .is_ok());
@@ -37,6 +44,18 @@ fn command_validation_rejects_invalid_inputs() {
         CoreCommand::LoadChats { limit: 0 },
         CoreCommand::LoadChats {
             limit: MAX_CHAT_LOAD_LIMIT + 1,
+        },
+        CoreCommand::LoadMessages {
+            chat_id: 0,
+            limit: 10,
+        },
+        CoreCommand::LoadMessages {
+            chat_id: 1,
+            limit: 0,
+        },
+        CoreCommand::LoadMessages {
+            chat_id: 1,
+            limit: MAX_MESSAGE_LOAD_LIMIT + 1,
         },
         CoreCommand::SendText {
             chat_id: 0,
