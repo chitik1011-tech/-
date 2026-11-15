@@ -517,14 +517,8 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 }
             }
             "poll_vote_submitted" -> {
-                val pollId = parsePollEventId(payload)
                 _state.update {
                     it.copy(
-                        votingPollIds = if (pollId != null) {
-                            it.votingPollIds - pollId
-                        } else {
-                            it.votingPollIds
-                        },
                         lastEventType = type,
                         lastEventPayload = payload,
                     )
