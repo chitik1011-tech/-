@@ -5,8 +5,8 @@ use std::{
 
 use tg_mobile_core::{
     decode_command, encode_event, encode_state, spawn_core, spawn_core_with_store,
-    AuthorizationState, CoreCommand, CoreEvent, CoreState, JsonFileStateStore, MemoryStateStore,
-    BackendFuture, MessageSummary, MockTelegramBackend, StateStore, TelegramBackend,
+    AuthorizationState, BackendFuture, CoreCommand, CoreEvent, CoreState, JsonFileStateStore,
+    MemoryStateStore, MessageSummary, MockTelegramBackend, StateStore, TelegramBackend,
 };
 use tokio::time::timeout;
 
