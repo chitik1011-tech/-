@@ -18,6 +18,30 @@ pub struct ChatSummary {
     pub last_message: Option<MessageSummary>,
 }
 
+/// One cursor-addressed page of chat summaries.
+///
+/// `requested_cursor` is opaque and must be the cursor used to request this
+/// page. `None` denotes the first page. The backend returns the next opaque
+/// cursor, or `None` when pagination is complete.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChatPage {
+    pub requested_cursor: Option<String>,
+    pub chats: Vec<ChatSummary>,
+    pub next_cursor: Option<String>,
+}
+
+/// Core-owned progress for merging cursor-addressed chat pages.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ChatPaginationState {
+    /// Whether a first page has been accepted.
+    pub loaded: bool,
+    /// Cursor to pass to the next `LoadChatsPage` command.
+    pub next_cursor: Option<String>,
+    /// Cursors already consumed in this page chain, used to stop cursor loops.
+    #[serde(default)]
+    pub consumed_cursors: std::collections::BTreeSet<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MessageSummary {
     pub id: i64,
