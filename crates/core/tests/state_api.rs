@@ -92,6 +92,7 @@ fn unread_increment_saturates_at_u32_max() {
         title: "existing".into(),
         unread_count: u32::MAX,
         last_message: None,
+        pinned_message: None,
     });
 
     state.reduce(&CoreEvent::MessageAdded(message(12, 102)));
