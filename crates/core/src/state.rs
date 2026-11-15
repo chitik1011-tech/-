@@ -67,6 +67,55 @@ impl CoreState {
 
                 self.last_error = None;
             }
+            CoreEvent::MessageEdited(message) => {
+                self.upsert_message(message.clone());
+
+                if let Some(chat) = self
+                    .account
+                    .chats
+                    .iter_mut()
+                    .find(|chat| chat.id == message.chat_id)
+                {
+                    if chat
+                        .last_message
+                        .as_ref()
+                        .is_some_and(|last| last.id == message.id)
+                    {
+                        chat.last_message = Some(message.clone());
+                    }
+                }
+
+                self.last_error = None;
+            }
+            CoreEvent::MessageDeleted { chat_id, message_id } => {
+                let remove_chat_messages = if let Some(messages) = self.messages.get_mut(chat_id) {
+                    messages.retain(|message| message.id != *message_id);
+                    messages.is_empty()
+                } else {
+                    false
+                };
+                if remove_chat_messages {
+                    self.messages.remove(chat_id);
+                }
+
+                let next_last_message = self.messages_for_chat(*chat_id).last().cloned();
+                if let Some(chat) = self
+                    .account
+                    .chats
+                    .iter_mut()
+                    .find(|chat| chat.id == *chat_id)
+                {
+                    if chat
+                        .last_message
+                        .as_ref()
+                        .is_some_and(|last| last.id == *message_id)
+                    {
+                        chat.last_message = next_last_message;
+                    }
+                }
+
+                self.last_error = None;
+            }
             CoreEvent::Error(error) => {
                 self.last_error = Some(error.clone());
             }
