@@ -292,10 +292,7 @@ mod tests {
         let messages = state.messages_for_chat(7);
         assert_eq!(messages.len(), MAX_CACHED_MESSAGES_PER_CHAT);
         assert_eq!(messages.first().map(|item| item.id), Some(412));
-        assert_eq!(
-            messages.last().map(|item| item.id),
-            Some(923)
-        );
+        assert_eq!(messages.last().map(|item| item.id), Some(923));
         assert!(messages
             .windows(2)
             .all(|pair| pair[0].timestamp_unix <= pair[1].timestamp_unix));
