@@ -88,7 +88,7 @@ impl MockTelegramBackend {
             }
             CoreCommand::SendText { chat_id, text } => {
                 self.require_authorized()?;
-                let message = self.new_outgoing_message(chat_id, text);
+                let message = self.new_outgoing_message(chat_id, text)?;
                 self.store_message(&message);
 
                 Ok(vec![CoreEvent::MessageAdded(message)])
@@ -103,7 +103,7 @@ impl MockTelegramBackend {
                     return Err(CoreError::Backend("reply target was not found".into()));
                 }
 
-                let message = self.new_outgoing_message(chat_id, text);
+                let message = self.new_outgoing_message(chat_id, text)?;
                 self.store_message(&message);
                 Ok(vec![CoreEvent::MessageAdded(message)])
             }
@@ -140,7 +140,7 @@ impl MockTelegramBackend {
             }
             CoreCommand::DeleteMessage { chat_id, message_id } => {
                 self.require_authorized()?;
-                let (deleted, next_last) = {
+                let next_last = {
                     let messages = self
                         .messages
                         .get_mut(&chat_id)
@@ -150,9 +150,8 @@ impl MockTelegramBackend {
                     if messages.len() == original_len {
                         return Err(CoreError::Backend("message was not found".into()));
                     }
-                    (true, messages.last().cloned())
+                    messages.last().cloned()
                 };
-                let _ = deleted;
 
                 if let Some(chat) = self.chats.iter_mut().find(|chat| chat.id == chat_id) {
                     if chat
@@ -187,7 +186,11 @@ impl MockTelegramBackend {
             .is_some_and(|messages| messages.iter().any(|message| message.id == message_id))
     }
 
-    fn new_outgoing_message(&mut self, chat_id: i64, text: String) -> MessageSummary {
+    fn new_outgoing_message(&mut self, chat_id: i64, text: String) -> Result<MessageSummary> {
+        let next_message_id = self
+            .next_message_id
+            .checked_add(1)
+            .ok_or_else(|| CoreError::Backend("mock message id space exhausted".into()))?;
         let message = MessageSummary {
             id: self.next_message_id,
             chat_id,
@@ -196,8 +199,8 @@ impl MockTelegramBackend {
             timestamp_unix: unix_timestamp(),
             outgoing: true,
         };
-        self.next_message_id = self.next_message_id.saturating_add(1);
-        message
+        self.next_message_id = next_message_id;
+        Ok(message)
     }
 
     fn store_message(&mut self, message: &MessageSummary) {
