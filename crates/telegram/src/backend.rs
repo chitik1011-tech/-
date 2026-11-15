@@ -156,14 +156,18 @@ impl GrammersBackend {
         }
         if let Some(task) = self.update_task.take() {
             task.await.map_err(|error| {
-                CoreError::Backend(format!("Telegram update worker failed during shutdown: {error}"))
+                CoreError::Backend(format!(
+                    "Telegram update worker failed during shutdown: {error}"
+                ))
             })?;
         }
 
         let _ = self.pool_handle.quit();
         if let Some(task) = self.pool_task.take() {
             task.await.map_err(|error| {
-                CoreError::Backend(format!("Telegram sender pool failed during shutdown: {error}"))
+                CoreError::Backend(format!(
+                    "Telegram sender pool failed during shutdown: {error}"
+                ))
             })?;
         }
 
