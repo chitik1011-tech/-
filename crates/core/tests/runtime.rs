@@ -1,8 +1,12 @@
-use std::time::Duration;
+use std::{
+    fs, process,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 use tg_mobile_core::{
-    decode_command, encode_event, encode_state, spawn_core, AuthorizationState, CoreCommand,
-    CoreEvent, CoreState, MessageSummary, MockTelegramBackend,
+    decode_command, encode_event, encode_state, spawn_core, spawn_core_with_store,
+    AuthorizationState, CoreCommand, CoreEvent, CoreState, JsonFileStateStore, MemoryStateStore,
+    MessageSummary, MockTelegramBackend, StateStore,
 };
 use tokio::time::timeout;
 
@@ -71,6 +75,52 @@ fn wire_protocol_round_trips_commands_events_and_state() {
     let encoded_state = encode_state(&state).unwrap();
     let decoded_state: CoreState = serde_json::from_str(&encoded_state).unwrap();
     assert_eq!(decoded_state, state);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn memory_store_restores_state_for_runtime() {
+    let store = MemoryStateStore::default();
+    let mut saved = CoreState::default();
+    saved.running = false;
+    saved.last_error = Some("old error".into());
+    saved.account.authorization = AuthorizationState::Ready;
+    store.save(&saved).await.unwrap();
+
+    let core = spawn_core_with_store(MockTelegramBackend::default(), store);
+
+    let restored = timeout(Duration::from_secs(1), async {
+        loop {
+            let state = core.state();
+            if state.account.authorization == AuthorizationState::Ready {
+                break state;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+
+    assert!(restored.running);
+    assert_eq!(restored.last_error, None);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn json_file_store_round_trips_state() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("tg-mobile-core-{}-{unique}.json", process::id()));
+    let store = JsonFileStateStore::new(&path);
+
+    let mut state = CoreState::default();
+    state.account.authorization = AuthorizationState::Ready;
+    store.save(&state).await.unwrap();
+
+    let loaded = store.load().await.unwrap().unwrap();
+    assert_eq!(loaded, state);
+
+    let _ = fs::remove_file(path);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

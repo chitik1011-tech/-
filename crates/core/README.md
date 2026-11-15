@@ -10,10 +10,17 @@ Telegram protocol implementations must implement `TelegramBackend` and translate
 
 ## Runtime
 
-Create the runtime with:
+Create an in-memory runtime with:
 
 ```rust
 let handle = spawn_core(backend);
+```
+
+Use persistent state with:
+
+```rust
+let store = JsonFileStateStore::new(state_path);
+let handle = spawn_core_with_store(backend, store);
 ```
 
 Commands can be sent as Rust values with `CoreHandle::send` or through the JSON bridge with `CoreHandle::send_json`.
@@ -25,6 +32,20 @@ State snapshots are available through:
 - `CoreHandle::subscribe_state`
 
 Raw events are available through `CoreHandle::subscribe`.
+
+## State stores
+
+The core exposes three storage implementations:
+
+- `NoopStateStore` — no persistence.
+- `MemoryStateStore` — useful for tests and process-local caching.
+- `JsonFileStateStore` — persists the complete `CoreState` to a JSON file.
+
+File reads and writes are moved onto Tokio blocking workers so filesystem I/O does not block the async core task. File writes use a temporary file followed by rename.
+
+When persisted state is restored, transient runtime fields are normalized: the runtime is marked active and an old error is cleared.
+
+Android owns the choice of storage path. The core does not assume a platform-specific directory.
 
 ## JSON wire format
 
