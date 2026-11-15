@@ -249,6 +249,48 @@ impl Default for MessageHistoryState {
     }
 }
 
+/// Text being composed in a chat, including an optional reply or edit target.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Draft {
+    pub chat_id: i64,
+    pub text: String,
+    pub reply_to_message_id: Option<i64>,
+    pub edit_message_id: Option<i64>,
+    pub updated_at_unix: i64,
+}
+
+impl Draft {
+    /// Validate invariants for drafts received over the command wire or loaded from storage.
+    pub fn validate(&self) -> crate::error::Result<()> {
+        use crate::error::CoreError;
+
+        if self.chat_id == 0 {
+            return Err(CoreError::InvalidInput("chat id must be non-zero".into()));
+        }
+        if self.text.trim().is_empty() {
+            return Err(CoreError::InvalidInput("draft text is empty".into()));
+        }
+        if self.reply_to_message_id.is_some_and(|id| id <= 0)
+            || self.edit_message_id.is_some_and(|id| id <= 0)
+        {
+            return Err(CoreError::InvalidInput(
+                "draft target message id must be positive".into(),
+            ));
+        }
+        if self.reply_to_message_id.is_some() && self.edit_message_id.is_some() {
+            return Err(CoreError::InvalidInput(
+                "draft cannot reply to and edit a message at the same time".into(),
+            ));
+        }
+        if self.updated_at_unix < 0 {
+            return Err(CoreError::InvalidInput(
+                "draft timestamp must be non-negative".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AccountState {
     pub authorization: AuthorizationState,

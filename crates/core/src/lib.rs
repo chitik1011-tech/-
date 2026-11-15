@@ -35,8 +35,8 @@ pub use event::CoreEvent;
 pub use mock::MockTelegramBackend;
 pub use model::{
     AccountState, AttachmentDownloadState, AttachmentKind, AttachmentThumbnail, AuthorizationState,
-    ChatActivityKind, ChatFolder, ChatFolderFacts, ChatSummary, ForwardedFrom, MediaAttachment,
-    MessageHistoryState, MessageSummary, ReplyMetadata,
+    ChatActivityKind, ChatFolder, ChatFolderFacts, ChatSummary, Draft, ForwardedFrom,
+    MediaAttachment, MessageHistoryState, MessageSummary, ReplyMetadata,
 };
 pub use poll::{PollOption, PollSummary, MAX_POLL_OPTIONS};
 pub use runtime::{spawn_core, spawn_core_with_store, CoreHandle, PERSISTENCE_FLUSH_INTERVAL_MS};

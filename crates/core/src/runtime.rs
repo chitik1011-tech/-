@@ -237,6 +237,39 @@ where
                     persistence_dirty = true;
                 }
                 RuntimeInput::Command(Some(command)) => {
+                    match &command {
+                        CoreCommand::UpdateDraft(draft) => {
+                            apply_event(
+                                CoreEvent::DraftUpdated(draft.clone()),
+                                &mut reduced_state,
+                                &state_tx,
+                                &event_tx_task,
+                                &mut activity_tracker,
+                            );
+                            persistence_dirty = true;
+                            continue;
+                        }
+                        CoreCommand::ClearDraft {
+                            chat_id,
+                            expected_updated_at_unix,
+                            expected_draft,
+                        } => {
+                            apply_event(
+                                CoreEvent::DraftCleared {
+                                    chat_id: *chat_id,
+                                    expected_updated_at_unix: *expected_updated_at_unix,
+                                    expected_draft: expected_draft.clone(),
+                                },
+                                &mut reduced_state,
+                                &state_tx,
+                                &event_tx_task,
+                                &mut activity_tracker,
+                            );
+                            persistence_dirty = true;
+                            continue;
+                        }
+                        _ => {}
+                    }
                     let shutdown_requested = matches!(&command, CoreCommand::Shutdown);
                     let starting_session = matches!(&command, CoreCommand::Start);
                     if shutdown_requested {

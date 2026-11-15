@@ -205,6 +205,9 @@ impl MockTelegramBackend {
 
                 Ok(vec![CoreEvent::MessageAdded(message)])
             }
+            CoreCommand::UpdateDraft(_) | CoreCommand::ClearDraft { .. } => Err(
+                CoreError::Backend("draft commands are handled by the core runtime".into()),
+            ),
             CoreCommand::SendTextReliable {
                 client_id,
                 chat_id,

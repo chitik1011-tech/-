@@ -105,6 +105,13 @@ pub enum CoreEvent {
         user_id: i64,
         generation: u64,
     },
+    DraftUpdated(crate::model::Draft),
+    DraftCleared {
+        chat_id: i64,
+        expected_updated_at_unix: Option<i64>,
+        #[serde(default)]
+        expected_draft: Option<crate::model::Draft>,
+    },
     Error(String),
     Stopped,
 }
@@ -139,6 +146,8 @@ impl CoreEvent {
             Self::ChatActivityChanged { .. } => "chat_activity_changed",
             Self::ChatActivityEnded { .. } => "chat_activity_ended",
             Self::ChatActivityExpired { .. } => "chat_activity_expired",
+            Self::DraftUpdated(_) => "draft_updated",
+            Self::DraftCleared { .. } => "draft_cleared",
             Self::Error(_) => "error",
             Self::Stopped => "stopped",
         }

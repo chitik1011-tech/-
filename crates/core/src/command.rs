@@ -67,6 +67,15 @@ pub enum CoreCommand {
     MarkChatRead {
         chat_id: i64,
     },
+    /// Save or replace the current draft for a chat.
+    UpdateDraft(crate::model::Draft),
+    /// Clear a draft. Guarded clears compare its timestamp and full captured identity.
+    ClearDraft {
+        chat_id: i64,
+        expected_updated_at_unix: Option<i64>,
+        #[serde(default)]
+        expected_draft: Option<crate::model::Draft>,
+    },
     Shutdown,
 }
 
@@ -92,6 +101,8 @@ impl CoreCommand {
             Self::UnpinChat { .. } => "unpin_chat",
             Self::MarkChatUnread { .. } => "mark_chat_unread",
             Self::MarkChatRead { .. } => "mark_chat_read",
+            Self::UpdateDraft(_) => "update_draft",
+            Self::ClearDraft { .. } => "clear_draft",
             Self::Shutdown => "shutdown",
         }
     }
@@ -166,6 +177,36 @@ impl CoreCommand {
             | Self::UnpinChat { chat_id }
             | Self::MarkChatUnread { chat_id }
             | Self::MarkChatRead { chat_id } => validate_chat_id(*chat_id),
+            Self::UpdateDraft(draft) => draft.validate(),
+            Self::ClearDraft {
+                chat_id,
+                expected_updated_at_unix,
+                expected_draft,
+            } => {
+                validate_chat_id(*chat_id)?;
+                if expected_updated_at_unix.is_some_and(|timestamp| timestamp < 0) {
+                    Err(CoreError::InvalidInput(
+                        "draft timestamp must be non-negative".into(),
+                    ))
+                } else if expected_updated_at_unix.is_some() && expected_draft.is_none() {
+                    Err(CoreError::InvalidInput(
+                        "timestamp-guarded clear requires the expected draft".into(),
+                    ))
+                } else if let Some(draft) = expected_draft {
+                    draft.validate()?;
+                    if draft.chat_id != *chat_id
+                        || expected_updated_at_unix
+                            .is_some_and(|timestamp| timestamp != draft.updated_at_unix)
+                    {
+                        return Err(CoreError::InvalidInput(
+                            "expected draft does not match clear target".into(),
+                        ));
+                    }
+                    Ok(())
+                } else {
+                    Ok(())
+                }
+            }
         }
     }
 }

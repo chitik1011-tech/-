@@ -529,6 +529,11 @@ impl GrammersBackend {
                 }
                 vec![CoreEvent::ChatUnreadChanged { chat_id, unread }]
             }
+            CoreCommand::UpdateDraft(_) | CoreCommand::ClearDraft { .. } => {
+                return Err(CoreError::Backend(
+                    "draft commands are handled by the core runtime".into(),
+                ));
+            }
             CoreCommand::Shutdown => self.shutdown().await?,
         };
 
