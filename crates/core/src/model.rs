@@ -2,6 +2,16 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+/// Telegram activities surfaced transiently while a user is composing or uploading.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChatActivityKind {
+    Typing,
+    RecordingVoice,
+    UploadingMedia,
+}
+
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AuthorizationState {
     WaitingForPhoneNumber,
