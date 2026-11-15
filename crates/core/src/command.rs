@@ -12,6 +12,8 @@ pub enum CoreCommand {
     SubmitCode(String),
     SubmitPassword(String),
     LoadChats { limit: usize },
+    /// Load one page; `cursor: None` requests the first page.
+    LoadChatsPage { cursor: Option<String>, limit: usize },
     SendText { chat_id: i64, text: String },
     Shutdown,
 }
@@ -24,6 +26,7 @@ impl CoreCommand {
             Self::SubmitCode(_) => "submit_code",
             Self::SubmitPassword(_) => "submit_password",
             Self::LoadChats { .. } => "load_chats",
+            Self::LoadChatsPage { .. } => "load_chats_page",
             Self::SendText { .. } => "send_text",
             Self::Shutdown => "shutdown",
         }
@@ -41,14 +44,11 @@ impl CoreCommand {
                     Ok(())
                 }
             }
-            Self::LoadChats { limit } => {
-                if (1..=MAX_CHAT_LOAD_LIMIT).contains(limit) {
-                    Ok(())
-                } else {
-                    Err(CoreError::InvalidInput(format!(
-                        "chat load limit must be in 1..={MAX_CHAT_LOAD_LIMIT}"
-                    )))
-                }
+            Self::LoadChats { limit } | Self::LoadChatsPage { limit, .. } => {
+                validate_chat_load_limit(*limit)
+            }
+            Self::LoadChatsPage { cursor: Some(cursor), .. } if cursor.trim().is_empty() => {
+                Err(CoreError::InvalidInput("chat page cursor is empty".into()))
             }
             Self::SendText { chat_id, text } => {
                 if *chat_id == 0 {
@@ -66,5 +66,15 @@ fn require_non_blank(field: &str, value: &str) -> Result<()> {
         Err(CoreError::InvalidInput(format!("{field} is empty")))
     } else {
         Ok(())
+    }
+}
+
+fn validate_chat_load_limit(limit: usize) -> Result<()> {
+    if (1..=MAX_CHAT_LOAD_LIMIT).contains(&limit) {
+        Ok(())
+    } else {
+        Err(CoreError::InvalidInput(format!(
+            "chat load limit must be in 1..={MAX_CHAT_LOAD_LIMIT}"
+        )))
     }
 }
