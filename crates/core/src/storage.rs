@@ -164,3 +164,41 @@ fn decode_stored_state(content: &str) -> Result<CoreState> {
         }
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stored_state_version_one_defaults_new_message_metadata() {
+        let legacy = r#"{
+            "schema_version": 1,
+            "state": {
+                "running": true,
+                "account": {
+                    "authorization": "Ready",
+                    "chats": []
+                },
+                "messages": {
+                    "3": [{
+                        "id": 7,
+                        "chat_id": 3,
+                        "sender_id": 9,
+                        "text": "old message",
+                        "timestamp_unix": 100,
+                        "outgoing": false
+                    }]
+                },
+                "last_error": null
+            }
+        }"#;
+
+        let state = decode_stored_state(legacy).expect("version-one state should deserialize");
+        let message = &state.messages_for_chat(3)[0];
+        assert_eq!(message.forwarded_from, None);
+        assert!(!message.edited);
+        assert_eq!(message.edit_timestamp_unix, None);
+        assert_eq!(message.reply_to, None);
+    }
+}
