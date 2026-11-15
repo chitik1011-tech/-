@@ -1,6 +1,6 @@
 use tg_mobile_core::{
-    decode_command, CoreCommand, CoreEvent, CoreState, MemoryStateStore, PeerKind, PeerPresence,
-    PeerProfile, StateStore,
+    decode_command, CoreCommand, CoreEvent, CoreState, JsonFileStateStore, MemoryStateStore,
+    PeerKind, PeerPresence, PeerProfile, StateStore,
 };
 
 #[test]
@@ -59,16 +59,59 @@ fn profile_reducer_keeps_stable_id_and_old_snapshots_migrate() {
 }
 
 #[tokio::test]
-async fn peer_profiles_are_persisted_by_the_existing_store() {
-    let store = MemoryStateStore::default();
+async fn file_persistence_drops_phone_but_keeps_other_profile_fields() {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock is after unix epoch")
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!(
+        "tg-mobile-peer-profiles-{}-{unique}.json",
+        std::process::id()
+    ));
+    let store = JsonFileStateStore::new(&path);
     let mut state = CoreState::default();
-    let profile = PeerProfile::unknown(73);
+    let mut profile = PeerProfile::unknown(73);
+    profile.username = Some("member".into());
+    profile.phone = Some("+15551234567".into());
+    profile.bio = Some("Telegram supplied bio".into());
     state.reduce(&CoreEvent::ProfileUpdated(profile.clone()));
+
+    let event_json = tg_mobile_core::encode_event(&CoreEvent::ProfileUpdated(profile))
+        .expect("profile event serializes");
+    assert!(event_json.contains("\\"phone\\":\\"+15551234567\\""));
+
     store.save(&state).await.expect("state saves");
+    let persisted_json = std::fs::read_to_string(store.path()).expect("persisted JSON reads");
+    assert!(!persisted_json.contains("\\"phone\\""));
+    assert!(persisted_json.contains("\\"username\\":\\"member\\""));
+    assert!(persisted_json.contains("\\"bio\\":\\"Telegram supplied bio\\""));
+
     let restored = store
         .load()
         .await
         .expect("state loads")
         .expect("state exists");
-    assert_eq!(restored.profile(73), Some(&profile));
+    let restored_profile = restored.profile(73).expect("profile exists");
+    assert_eq!(restored_profile.phone, None);
+    assert_eq!(restored_profile.username.as_deref(), Some("member"));
+    assert_eq!(restored_profile.bio.as_deref(), Some("Telegram supplied bio"));
+    let _ = std::fs::remove_file(store.path());
+}
+
+#[tokio::test]
+async fn memory_store_drops_phone_fields_too() {
+    let store = MemoryStateStore::default();
+    let mut state = CoreState::default();
+    let mut profile = PeerProfile::unknown(74);
+    profile.phone = Some("+15559876543".into());
+    profile.username = Some("cached".into());
+    state.reduce(&CoreEvent::ProfileUpdated(profile));
+
+    store.save(&state).await.expect("state saves");
+    let restored = store.load().await.expect("state loads").expect("state exists");
+    let restored_profile = restored.profile(74).expect("profile exists");
+    assert_eq!(restored_profile.phone, None);
+    assert_eq!(restored_profile.username.as_deref(), Some("cached"));
 }

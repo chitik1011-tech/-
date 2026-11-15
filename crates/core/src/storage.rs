@@ -66,7 +66,7 @@ impl StateStore for MemoryStateStore {
                 .state
                 .write()
                 .map_err(|_| CoreError::Storage("memory state lock poisoned".into()))?;
-            *slot = Some(state.clone());
+            *slot = Some(state.persistent_snapshot());
             Ok(())
         })
     }
@@ -114,7 +114,7 @@ impl StateStore for JsonFileStateStore {
         let path = self.path.clone();
         let stored = StoredState {
             schema_version: STATE_SCHEMA_VERSION,
-            state: state.clone(),
+            state: state.persistent_snapshot(),
         };
         let encoded = serde_json::to_vec(&stored)
             .map_err(|error| CoreError::Serialization(error.to_string()));

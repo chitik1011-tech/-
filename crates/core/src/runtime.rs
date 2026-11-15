@@ -261,7 +261,8 @@ async fn persist_state<S: StateStore>(
     state_tx: &watch::Sender<CoreState>,
     event_tx: &broadcast::Sender<CoreEvent>,
 ) {
-    if let Err(error) = store.save(state).await {
+    let snapshot = state.persistent_snapshot();
+    if let Err(error) = store.save(&snapshot).await {
         let message = error.to_string();
         state.last_error = Some(message.clone());
         let _ = state_tx.send(state.clone());

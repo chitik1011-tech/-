@@ -33,6 +33,15 @@ impl Default for CoreState {
 }
 
 impl CoreState {
+    /// Clone state for persistence while dropping the personal phone field.
+    pub(crate) fn persistent_snapshot(&self) -> Self {
+        let mut snapshot = self.clone();
+        for profile in snapshot.profiles.values_mut() {
+            profile.phone = None;
+        }
+        snapshot
+    }
+
     pub fn reduce(&mut self, event: &CoreEvent) {
         match event {
             CoreEvent::State(account) => {
