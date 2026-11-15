@@ -135,9 +135,14 @@ impl CoreState {
             .as_ref()
             .filter(|cursor| !cursor.trim().is_empty())
             .cloned();
-        self.chat_pagination.next_cursor = next_cursor.filter(|cursor| {
-            !self.chat_pagination.consumed_cursors.contains(cursor)
-        });
+        let cursor_was_consumed = next_cursor
+            .as_ref()
+            .is_some_and(|cursor| self.chat_pagination.consumed_cursors.contains(cursor));
+        self.chat_pagination.next_cursor = if cursor_was_consumed {
+            None
+        } else {
+            next_cursor
+        };
 
         true
     }
@@ -196,10 +201,10 @@ impl CoreState {
 }
 
 fn merge_chat_summary(existing: &mut ChatSummary, incoming: ChatSummary) {
+    let incoming_is_placeholder = incoming.title == format!("Chat {}", incoming.id);
+    let existing_is_placeholder = existing.title == format!("Chat {}", existing.id);
     if !incoming.title.trim().is_empty()
-        && (existing.title.trim().is_empty()
-            || existing.title == format!("Chat {}", existing.id)
-            || incoming.title != format!("Chat {}", incoming.id))
+        && (!incoming_is_placeholder || existing.title.trim().is_empty() || existing_is_placeholder)
     {
         existing.title = incoming.title;
     }
