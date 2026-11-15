@@ -7,10 +7,10 @@ use grammers_client::{
     session::types::{PeerKind, PeerRef},
     tl,
 };
-use tg_mobile_core::{CoreError, ForwardedFrom, MessageSummary, ReplyMetadata};
+use tg_mobile_core::{CoreError, ForwardedFrom, MessageSummary, PollSummary, ReplyMetadata};
 use tokio::sync::Mutex;
 
-use crate::{error::api_error, ids::peer_id_to_core};
+use crate::{error::api_error, ids::peer_id_to_core, polls::poll_from_message};
 
 pub(crate) fn message_to_summary(message: &Message) -> MessageSummary {
     let chat_id = peer_id_to_core(message.peer_id());
@@ -74,29 +74,41 @@ fn message_summary_from_fields(fields: MessageFields<'_>) -> MessageSummary {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LoadedMessages {
+    pub messages: Vec<MessageSummary>,
+    pub polls: Vec<PollSummary>,
+}
+
 pub(crate) async fn load_messages(
     client: &Client,
     peer: PeerRef,
     limit: usize,
-) -> tg_mobile_core::Result<Vec<MessageSummary>> {
+) -> tg_mobile_core::Result<LoadedMessages> {
     let mut iterator = client.iter_messages(peer).limit(limit);
     let mut messages = Vec::with_capacity(limit.min(100));
+    let mut polls = Vec::new();
 
     while let Some(message) = iterator
         .next()
         .await
         .map_err(|error| api_error("load messages", error))?
     {
+        if let Some(poll) = poll_from_message(&message)? {
+            polls.push(poll);
+        }
         messages.push(message_to_summary(&message));
     }
 
     messages.reverse();
-    Ok(messages)
+    polls.reverse();
+    Ok(LoadedMessages { messages, polls })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct MessagePage {
     pub messages: Vec<MessageSummary>,
+    pub polls: Vec<PollSummary>,
     pub next_before_message_id: Option<i64>,
     pub has_more: bool,
 }
@@ -130,22 +142,33 @@ pub(crate) async fn load_messages_page(
     iterator = iterator.limit(fetch_limit);
 
     let mut messages = Vec::with_capacity(fetch_limit.min(201));
+    let mut polls = Vec::new();
     while let Some(message) = iterator
         .next()
         .await
         .map_err(|error| api_error("load message page", error))?
     {
+        if let Some(poll) = poll_from_message(&message)? {
+            polls.push(poll);
+        }
         messages.push(message_to_summary(&message));
     }
 
-    Ok(finalize_message_page(messages, limit))
+    Ok(finalize_message_page(messages, polls, limit))
 }
 
-fn finalize_message_page(mut messages: Vec<MessageSummary>, limit: usize) -> MessagePage {
+fn finalize_message_page(
+    mut messages: Vec<MessageSummary>,
+    mut polls: Vec<PollSummary>,
+    limit: usize,
+) -> MessagePage {
     let has_extra = messages.len() > limit;
     if has_extra {
         messages.truncate(limit);
     }
+
+    let kept_message_ids = messages.iter().map(|message| message.id).collect::<HashSet<_>>();
+    polls.retain(|poll| kept_message_ids.contains(&poll.message_id));
 
     let next_before_message_id = has_extra
         .then(|| messages.last().map(|message| message.id))
@@ -153,9 +176,11 @@ fn finalize_message_page(mut messages: Vec<MessageSummary>, limit: usize) -> Mes
         .filter(|message_id| *message_id > 0);
     let has_more = next_before_message_id.is_some();
     messages.reverse();
+    polls.reverse();
 
     MessagePage {
         messages,
+        polls,
         next_before_message_id,
         has_more,
     }
@@ -539,7 +564,7 @@ mod tests {
             })
         };
 
-        let page = finalize_message_page(vec![summary(5), summary(4), summary(3)], 2);
+        let page = finalize_message_page(vec![summary(5), summary(4), summary(3)], Vec::new(), 2);
         assert_eq!(
             page.messages
                 .iter()
@@ -550,7 +575,7 @@ mod tests {
         assert_eq!(page.next_before_message_id, Some(4));
         assert!(page.has_more);
 
-        let final_page = finalize_message_page(vec![summary(2), summary(1)], 2);
+        let final_page = finalize_message_page(vec![summary(2), summary(1)], Vec::new(), 2);
         assert_eq!(
             final_page
                 .messages
