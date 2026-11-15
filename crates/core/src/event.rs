@@ -9,11 +9,16 @@ pub enum CoreEvent {
     AuthorizationChanged(AuthorizationState),
     ChatsLoaded(Vec<ChatSummary>),
     /// Signals that a first or next page request has started.
-    ChatsPageLoading { cursor: Option<String> },
+    ChatsPageLoading {
+        cursor: Option<String>,
+    },
     /// A cursor-addressed chat page. Stale page responses are ignored by CoreState.
     ChatsPageLoaded(ChatPage),
     /// A failed page request keeps its cursor available for retry.
-    ChatsPageFailed { cursor: Option<String>, error: String },
+    ChatsPageFailed {
+        cursor: Option<String>,
+        error: String,
+    },
     MessageAdded(MessageSummary),
     Error(String),
     Stopped,
