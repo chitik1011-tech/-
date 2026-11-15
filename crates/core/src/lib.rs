@@ -34,8 +34,8 @@ pub use event::CoreEvent;
 pub use mock::MockTelegramBackend;
 pub use model::{
     AccountState, AttachmentDownloadState, AttachmentKind, AttachmentThumbnail, AuthorizationState,
-    ChatActivityKind, ChatSummary, ForwardedFrom, MediaAttachment, MessageHistoryState,
-    MessageSummary, ReplyMetadata,
+    ChatActivityKind, ChatFolder, ChatFolderFacts, ChatSummary, ForwardedFrom, MediaAttachment,
+    MessageHistoryState, MessageSummary, ReplyMetadata,
 };
 pub use runtime::{spawn_core, spawn_core_with_store, CoreHandle, PERSISTENCE_FLUSH_INTERVAL_MS};
 pub use search::{
@@ -44,7 +44,7 @@ pub use search::{
 };
 pub use selection::{MessageSelection, SelectionAction, SelectionCapabilities, SelectionError};
 pub use send::{ClientMessageId, OutgoingSend, OutgoingSendState};
-pub use state::{CoreState, MAX_CACHED_MESSAGES_PER_CHAT};
+pub use state::{CoreState, FolderAction, MAX_CACHED_MESSAGES_PER_CHAT};
 pub use storage::{JsonFileStateStore, MemoryStateStore, NoopStateStore, StateStore};
 pub use transfer::{
     DownloadState, TransferDirection, TransferError, TransferKey, TransferManager,

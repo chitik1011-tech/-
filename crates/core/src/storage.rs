@@ -40,7 +40,6 @@ impl StateStore for NoopStateStore {
         Box::pin(async { Ok(()) })
     }
 }
-
 #[derive(Debug, Clone, Default)]
 pub struct MemoryStateStore {
     state: Arc<RwLock<Option<CoreState>>>,
@@ -153,14 +152,58 @@ fn decode_stored_state(content: &str) -> Result<CoreState> {
                     stored.schema_version
                 )));
             }
+            stored
+                .state
+                .validate()
+                .map_err(|error| CoreError::Storage(error.to_string()))?;
             Ok(stored.state)
         }
         Err(versioned_error) => {
-            serde_json::from_str::<CoreState>(content).map_err(|legacy_error| {
+            let state = serde_json::from_str::<CoreState>(content).map_err(|legacy_error| {
                 CoreError::Serialization(format!(
                     "invalid persisted state: versioned={versioned_error}; legacy={legacy_error}"
                 ))
-            })
+            })?;
+            state
+                .validate()
+                .map_err(|error| CoreError::Storage(error.to_string()))?;
+            Ok(state)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::decode_stored_state;
+
+    #[test]
+    fn versioned_state_without_folders_migrates_with_empty_folder_list() {
+        let old_state = r#"{
+            "running": true,
+            "account": {"authorization":"Closed","chats":[]},
+            "messages": {},
+            "last_error": null
+        }"#;
+        let stored = format!(r#"{{"schema_version":1,"state":{old_state}}}"#);
+        let state = decode_stored_state(&stored).unwrap();
+        assert!(state.folders.is_empty());
+    }
+
+    #[test]
+    fn persisted_folder_invariant_violations_are_rejected() {
+        let invalid = r#"{
+            "schema_version":1,
+            "state":{
+                "running":true,
+                "account":{"authorization":"Closed","chats":[]},
+                "messages":{},
+                "last_error":null,
+                "folders":[
+                    {"id":1,"title":"One","position":1},
+                    {"id":1,"title":"Duplicate","position":0}
+                ]
+            }
+        }"#;
+        assert!(decode_stored_state(invalid).is_err());
     }
 }

@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 
 /// Telegram activities surfaced transiently while a user is composing or uploading.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -240,6 +241,107 @@ impl Default for MessageHistoryState {
 pub struct AccountState {
     pub authorization: AuthorizationState,
     pub chats: Vec<ChatSummary>,
+}
+
+/// A saved chat list with deterministic membership and user-defined ordering.
+///
+/// `include_muted`, `include_read`, and `include_archived` allow matching chats in
+/// those states through the automatic category filters. Explicitly included chats
+/// always remain included, while explicitly excluded chats always remain excluded.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChatFolder {
+    pub id: i64,
+    pub title: String,
+    #[serde(default)]
+    pub included_chat_ids: BTreeSet<i64>,
+    #[serde(default)]
+    pub excluded_chat_ids: BTreeSet<i64>,
+    #[serde(default)]
+    pub include_contacts: bool,
+    #[serde(default)]
+    pub include_non_contacts: bool,
+    #[serde(default)]
+    pub include_groups: bool,
+    #[serde(default)]
+    pub include_channels: bool,
+    #[serde(default)]
+    pub include_bots: bool,
+    #[serde(default)]
+    pub include_muted: bool,
+    #[serde(default)]
+    pub include_read: bool,
+    #[serde(default)]
+    pub include_archived: bool,
+    #[serde(default)]
+    pub position: u32,
+}
+
+impl ChatFolder {
+    /// Check folder identifiers, title, membership sets, and ordering position.
+    pub fn validate(&self) -> crate::error::Result<()> {
+        use crate::error::CoreError;
+
+        if self.id <= 0 {
+            return Err(CoreError::InvalidInput("folder id must be positive".into()));
+        }
+        let title = self.title.trim();
+        if title.is_empty() {
+            return Err(CoreError::InvalidInput("folder title is empty".into()));
+        }
+        if title.chars().count() > 64 || title.chars().any(char::is_control) {
+            return Err(CoreError::InvalidInput(
+                "folder title must be at most 64 characters and contain no control characters"
+                    .into(),
+            ));
+        }
+        if self
+            .included_chat_ids
+            .iter()
+            .chain(self.excluded_chat_ids.iter())
+            .any(|id| *id == 0)
+        {
+            return Err(CoreError::InvalidInput(
+                "folder chat ids must be non-zero".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Whether adapter-supplied chat facts satisfy this folder's filters.
+    pub fn matches(&self, chat: &ChatFolderFacts) -> bool {
+        if self.excluded_chat_ids.contains(&chat.id) {
+            return false;
+        }
+        if self.included_chat_ids.contains(&chat.id) {
+            return true;
+        }
+
+        if (chat.muted && !self.include_muted)
+            || (chat.read && !self.include_read)
+            || (chat.archived && !self.include_archived)
+        {
+            return false;
+        }
+
+        (chat.is_user && chat.is_contact && self.include_contacts)
+            || (chat.is_user && !chat.is_contact && self.include_non_contacts)
+            || (chat.is_group && self.include_groups)
+            || (chat.is_channel && self.include_channels)
+            || (chat.is_bot && self.include_bots)
+    }
+}
+/// Backend-neutral facts used to evaluate a folder without inventing chat metadata.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChatFolderFacts {
+    pub id: i64,
+    pub is_user: bool,
+    pub is_contact: bool,
+    pub is_group: bool,
+    pub is_channel: bool,
+    pub is_bot: bool,
+    pub muted: bool,
+    pub read: bool,
+    pub archived: bool,
 }
 
 impl Default for AccountState {
