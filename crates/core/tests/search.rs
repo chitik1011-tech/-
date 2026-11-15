@@ -2,9 +2,9 @@ use std::time::Duration;
 
 use tg_mobile_core::{
     spawn_core_with_store, AuthorizationState, CoreCommand, CoreError, CoreEvent, CoreState,
-    MemoryStateStore, MessageSummary, MessagesSearchResult,
-    SearchChatMetadata, SearchMessagesRequest, SearchResult, SearchScope, SearchSenderMetadata,
-    MAX_MESSAGE_SEARCH_LIMIT, StateStore,
+    MemoryStateStore, MessageSummary, MessagesSearchResult, SearchChatMetadata,
+    SearchMessagesRequest, SearchResult, SearchScope, SearchSenderMetadata, StateStore,
+    MAX_MESSAGE_SEARCH_LIMIT,
 };
 use tokio::time::timeout;
 
