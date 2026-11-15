@@ -106,8 +106,7 @@ impl CoreState {
     }
 
     fn can_accept_chat_page(&self, page: &ChatPage) -> bool {
-        self.chat_pagination.loading
-            && self.chat_pagination.loading_cursor == page.requested_cursor
+        self.chat_pagination.loading && self.chat_pagination.loading_cursor == page.requested_cursor
     }
 
     fn merge_chat_page(&mut self, page: &ChatPage) -> bool {
