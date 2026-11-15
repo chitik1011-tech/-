@@ -39,6 +39,7 @@ fn reducer_deduplicates_message_updates() {
         text: "draft".into(),
         timestamp_unix: 100,
         outgoing: true,
+        attachments: Vec::new(),
     };
 
     state.reduce(&CoreEvent::MessageAdded(original.clone()));

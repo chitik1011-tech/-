@@ -36,6 +36,7 @@ impl Default for MockTelegramBackend {
                         text: "Core online".into(),
                         timestamp_unix: unix_timestamp(),
                         outgoing: false,
+                        attachments: Vec::new(),
                     }),
                 },
             ],
@@ -110,6 +111,7 @@ impl MockTelegramBackend {
                     text,
                     timestamp_unix: unix_timestamp(),
                     outgoing: true,
+                    attachments: Vec::new(),
                 };
                 self.next_message_id += 1;
 
