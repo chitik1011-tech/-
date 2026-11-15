@@ -160,3 +160,85 @@ impl CoreState {
         inserted
     }
 }
+
+
+#[cfg(test)]
+mod outgoing_message_tests {
+    use super::CoreState;
+    use crate::{
+        event::CoreEvent,
+        outgoing::{OutgoingMessage, OutgoingMessageStatus},
+    };
+
+    fn message(status: OutgoingMessageStatus, text: &str) -> OutgoingMessage {
+        OutgoingMessage {
+            client_id: "pending-1".into(),
+            chat_id: 7,
+            text: text.into(),
+            status,
+            server_message_id: None,
+            error: None,
+        }
+    }
+
+    #[test]
+    fn reducer_accepts_only_valid_identity_preserving_transitions() {
+        let mut state = CoreState::default();
+        state.reduce(&CoreEvent::OutgoingMessageChanged(message(
+            OutgoingMessageStatus::Draft,
+            "hello",
+        )));
+        state.reduce(&CoreEvent::OutgoingMessageChanged(message(
+            OutgoingMessageStatus::Sending,
+            "different payload",
+        )));
+        assert_eq!(
+            state.outgoing_message("pending-1").unwrap().text,
+            "hello",
+            "a stable ID cannot be reused for changed text"
+        );
+
+        state.reduce(&CoreEvent::OutgoingMessageChanged(message(
+            OutgoingMessageStatus::Sending,
+            "hello",
+        )));
+        let mut sent = message(OutgoingMessageStatus::Sent, "hello");
+        sent.server_message_id = Some(88);
+        state.reduce(&CoreEvent::OutgoingMessageChanged(sent.clone()));
+        state.reduce(&CoreEvent::OutgoingMessageChanged(message(
+            OutgoingMessageStatus::Failed,
+            "hello",
+        )));
+
+        let stored = state.outgoing_message("pending-1").unwrap();
+        assert_eq!(stored.status, OutgoingMessageStatus::Sent);
+        assert_eq!(stored.server_message_id, Some(88));
+    }
+
+    #[test]
+    fn interrupted_send_recovers_as_failed_with_same_retry_identity() {
+        let mut state = CoreState::default();
+        state.reduce(&CoreEvent::OutgoingMessageChanged(message(
+            OutgoingMessageStatus::Draft,
+            "hello",
+        )));
+        state.reduce(&CoreEvent::OutgoingMessageChanged(message(
+            OutgoingMessageStatus::Sending,
+            "hello",
+        )));
+
+        let recovered = state.fail_interrupted_sends();
+        assert_eq!(recovered.len(), 1);
+        assert_eq!(recovered[0].client_id, "pending-1");
+        assert_eq!(recovered[0].status, OutgoingMessageStatus::Failed);
+        assert!(recovered[0]
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("retrying may duplicate"));
+        assert_eq!(
+            state.outgoing_message("pending-1").unwrap().status,
+            OutgoingMessageStatus::Failed
+        );
+    }
+}
