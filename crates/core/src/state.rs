@@ -138,12 +138,14 @@ impl CoreState {
 
         for chat in &self.account.chats {
             seen_chats.insert(chat.id);
-            let unread = self.unread_by_chat.get(&chat.id).cloned().unwrap_or_else(|| {
-                ChatUnreadState {
+            let unread = self
+                .unread_by_chat
+                .get(&chat.id)
+                .cloned()
+                .unwrap_or_else(|| ChatUnreadState {
                     unread_messages: chat.unread_count,
                     ..ChatUnreadState::default()
-                }
-            });
+                });
             add_unread_totals(&mut totals, &unread);
         }
 
@@ -248,7 +250,9 @@ fn add_unread_totals(totals: &mut UnreadTotals, unread: &ChatUnreadState) {
     totals.unread_reactions = totals
         .unread_reactions
         .saturating_add(u64::from(unread.unread_reactions));
-    totals.muted_chats = totals\n        .muted_chats\n        .saturating_add(if unread.muted { 1 } else { 0 });
+    totals.muted_chats = totals
+        .muted_chats
+        .saturating_add(if unread.muted { 1 } else { 0 });
     totals.marked_unread_chats = totals
         .marked_unread_chats
         .saturating_add(if unread.unread_mark { 1 } else { 0 });

@@ -43,7 +43,6 @@ impl Default for AccountState {
     }
 }
 
-
 /// Per-chat unread counters and user-visible chat flags.
 ///
 /// `unread_messages` mirrors the legacy `ChatSummary::unread_count` field for
