@@ -110,9 +110,6 @@ impl MessageSearchState {
 
         let same_search = state.current_request_id == Some(request.request_id)
             && state.current_query.as_deref() == Some(query);
-        if state.current_request_id == Some(request.request_id) && !same_search {
-            return;
-        }
 
         if !same_search {
             state.results.clear();

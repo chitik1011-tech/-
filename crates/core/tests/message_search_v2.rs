@@ -194,6 +194,67 @@ fn pagination_deduplicates_and_rejects_stale_completion() {
 }
 
 #[test]
+fn same_request_id_with_new_query_replaces_active_search_and_rejects_old_response() {
+    let mut state = CoreState::default();
+    state.reduce(&CoreEvent::MessageSearchStarted(request(
+        9,
+        "old query",
+        None,
+    )));
+    state.reduce(&CoreEvent::MessageSearchCompleted(page(
+        9,
+        "old query",
+        None,
+        vec![message(30, 300, "old result")],
+        None,
+        false,
+    )));
+
+    state.reduce(&CoreEvent::MessageSearchStarted(request(
+        9,
+        "new query",
+        None,
+    )));
+    let search = state.message_search.chat(7).unwrap();
+    assert_eq!(
+        search.active.as_ref().map(|active| active.query.as_str()),
+        Some("new query")
+    );
+    assert!(search.results.is_empty());
+
+    state.reduce(&CoreEvent::MessageSearchCompleted(page(
+        9,
+        "old query",
+        None,
+        vec![message(31, 310, "stale result")],
+        None,
+        false,
+    )));
+    let search = state.message_search.chat(7).unwrap();
+    assert_eq!(
+        search.active.as_ref().map(|active| active.query.as_str()),
+        Some("new query")
+    );
+    assert!(search.results.is_empty());
+
+    state.reduce(&CoreEvent::MessageSearchCompleted(page(
+        9,
+        "new query",
+        None,
+        vec![message(40, 400, "new result")],
+        None,
+        false,
+    )));
+    let search = state.message_search.chat(7).unwrap();
+    assert!(
+        search.active.is_none(),
+        "successful completion must clear loading"
+    );
+    assert_eq!(search.results.len(), 1);
+    assert_eq!(search.results[0].text, "new result");
+}
+
+#[test]
 fn pagination_rejects_equal_or_newer_continuation_cursor() {
     for next_cursor in [10, 20] {
         let mut state = CoreState::default();
