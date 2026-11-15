@@ -6,7 +6,10 @@ use crate::{
     connection::ConnectionState,
     connection_machine::{ConnectionMachine, LinkEvent, LinkPhase, Outcome},
     event::CoreEvent,
-    model::{AccountState, ChatFolder, ChatSummary, Draft, MessageHistoryState, MessageSummary},
+    model::{
+        AccountState, AttachmentDownloadState, ChatFolder, ChatSummary, Draft, MessageHistoryState,
+        MessageSummary,
+    },
     poll::PollSummary,
     search::MessageSearchState,
     send::{OutgoingSend, OutgoingSendState},
@@ -387,6 +390,21 @@ impl CoreState {
                     self.last_error = None;
                 }
             }
+            CoreEvent::MediaTransferUpdated {
+                chat_id,
+                message_id,
+                attachment_index,
+                state,
+            } => {
+                if self.update_attachment_download_state(
+                    *chat_id,
+                    *message_id,
+                    *attachment_index,
+                    state,
+                ) {
+                    self.last_error = None;
+                }
+            }
             CoreEvent::MessagesDeleted {
                 chat_id,
                 message_ids,
@@ -665,6 +683,44 @@ impl CoreState {
             {
                 chat.last_message = Some(incoming.clone());
                 updated = true;
+            }
+        }
+        updated
+    }
+
+    fn update_attachment_download_state(
+        &mut self,
+        chat_id: i64,
+        message_id: i64,
+        attachment_index: usize,
+        state: &AttachmentDownloadState,
+    ) -> bool {
+        let mut updated = false;
+        if let Some(message) = self
+            .messages
+            .get_mut(&chat_id)
+            .and_then(|messages| messages.iter_mut().find(|message| message.id == message_id))
+        {
+            if let Some(attachment) = message.attachments.get_mut(attachment_index) {
+                if attachment.download_state != *state {
+                    attachment.download_state = state.clone();
+                    updated = true;
+                }
+            }
+        }
+
+        if let Some(chat) = self.account.chats.iter_mut().find(|chat| chat.id == chat_id) {
+            if let Some(message) = chat
+                .last_message
+                .as_mut()
+                .filter(|message| message.id == message_id)
+            {
+                if let Some(attachment) = message.attachments.get_mut(attachment_index) {
+                    if attachment.download_state != *state {
+                        attachment.download_state = state.clone();
+                        updated = true;
+                    }
+                }
             }
         }
         updated
