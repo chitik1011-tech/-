@@ -1,8 +1,9 @@
 use std::time::Duration;
 
 use tg_mobile_core::{
-    CoreCommand, CoreEvent, MockTelegramBackend, OutgoingMessageCommand, OutgoingMessageStatus,
-    spawn_core,
+    CoreCommand, CoreEvent, CoreState, MemoryStateStore, MockTelegramBackend,
+    OutgoingMessage, OutgoingMessageCommand, OutgoingMessageStatus, StateStore, spawn_core,
+    spawn_core_with_store,
 };
 use tokio::time::timeout;
 
@@ -124,4 +125,65 @@ async fn failed_send_can_retry_with_the_same_stable_id() {
         vec![OutgoingMessageStatus::Sending, OutgoingMessageStatus::Sent]
     );
     assert_eq!(core.state().messages_for_chat(2).len(), 1);
+}
+
+
+#[tokio::test]
+async fn interrupted_sending_state_is_restored_as_retryable_failure() {
+    let mut initial = CoreState::default();
+    let draft = OutgoingMessage {
+        client_id: "pending-after-restart".into(),
+        chat_id: 2,
+        text: "hello".into(),
+        status: OutgoingMessageStatus::Draft,
+        server_message_id: None,
+        error: None,
+    };
+    initial.reduce(&CoreEvent::OutgoingMessageChanged(draft.clone()));
+    let mut sending = draft;
+    sending.status = OutgoingMessageStatus::Sending;
+    initial.reduce(&CoreEvent::OutgoingMessageChanged(sending));
+
+    let store = MemoryStateStore::default();
+    store.save(&initial).await.unwrap();
+    let core = spawn_core_with_store(MockTelegramBackend::default(), store.clone());
+    let mut state_updates = core.subscribe_state();
+
+    let restored = timeout(Duration::from_secs(3), async {
+        loop {
+            let snapshot = core.state();
+            if snapshot
+                .outgoing_message("pending-after-restart")
+                .is_some_and(|message| message.status == OutgoingMessageStatus::Failed)
+            {
+                break snapshot;
+            }
+            state_updates
+                .changed()
+                .await
+                .expect("core state watcher should remain open");
+        }
+    })
+    .await
+    .expect("interrupted send should be recoverable");
+
+    let message = restored
+        .outgoing_message("pending-after-restart")
+        .unwrap();
+    assert_eq!(message.status, OutgoingMessageStatus::Failed);
+    assert!(message
+        .error
+        .as_deref()
+        .unwrap()
+        .contains("retrying may duplicate"));
+    assert_eq!(
+        store
+            .snapshot()
+            .unwrap()
+            .unwrap()
+            .outgoing_message("pending-after-restart")
+            .unwrap()
+            .status,
+        OutgoingMessageStatus::Failed
+    );
 }
