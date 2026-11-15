@@ -1,6 +1,5 @@
 package com.chitik.telegram
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,8 +21,8 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -69,6 +68,7 @@ data class ConversationScreenState(
  * Stateless conversation UI. Message history and send results always come from the caller;
  * this screen never inserts optimistic or sample messages itself.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ConversationScreen(
     state: ConversationScreenState,
@@ -80,7 +80,7 @@ fun ConversationScreen(
 ) {
     val listState = rememberLazyListState()
     val latestMessageId = state.messages.lastOrNull()?.id
-    val submitMessage = remember(state.chatId, state.draft, state.sending) {
+    val submitMessage = remember(state.chatId, state.draft, state.sending, onSend) {
         {
             val text = state.draft.trim()
             if (text.isNotEmpty() && !state.sending) {
