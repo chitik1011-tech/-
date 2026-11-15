@@ -219,8 +219,8 @@ async fn failed_page_emits_chat_scoped_error_and_can_be_retried() {
         error,
         CoreEvent::MessageHistoryLoadFailed {
             chat_id: 77,
-            ref cursor: failed_cursor,
-            ref error,
+            cursor: failed_cursor,
+            error: message,
         } if failed_cursor.as_ref() == Some(&cursor) && message == "offline"
     ));
     let history = core.state().message_history_for_chat(77);
