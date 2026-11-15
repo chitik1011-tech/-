@@ -98,9 +98,29 @@ where
             match input {
                 RuntimeInput::Command(Some(command)) => {
                     let shutdown_requested = matches!(command, CoreCommand::Shutdown);
+                    let page_cursor = match &command {
+                        CoreCommand::LoadChatsPage { cursor, .. } => Some(cursor.clone()),
+                        _ => None,
+                    };
+                    if let Some(cursor) = page_cursor.as_ref() {
+                        apply_event(
+                            CoreEvent::ChatsPageLoading {
+                                cursor: cursor.clone(),
+                            },
+                            &mut reduced_state,
+                            &state_tx,
+                            &event_tx_task,
+                        );
+                    }
                     let events = match backend.handle(command).await {
                         Ok(events) => events,
-                        Err(error) => vec![CoreEvent::Error(error.to_string())],
+                        Err(error) => match page_cursor {
+                            Some(cursor) => vec![CoreEvent::ChatsPageFailed {
+                                cursor,
+                                error: error.to_string(),
+                            }],
+                            None => vec![CoreEvent::Error(error.to_string())],
+                        },
                     };
 
                     if !events.is_empty() {
