@@ -256,6 +256,20 @@ class NativeSessionViewModel(application: Application) :
         )
     }
 
+    private fun markRead(chatId: Long, maxMessageId: Long) {
+        sendCommand(
+            JSONObject()
+                .put("type", "mark_read")
+                .put(
+                    "payload",
+                    JSONObject()
+                        .put("chat_id", chatId)
+                        .put("max_message_id", maxMessageId),
+                )
+                .toString(),
+        )
+    }
+
     fun sendText(chatId: Long, text: String) {
         sendCommand(
             JSONObject()
@@ -296,6 +310,22 @@ class NativeSessionViewModel(application: Application) :
             "authorization_changed" -> applyAuthorizationPayload(payload)
             "chats_loaded" -> applyChatsEvent(payload)
             "messages_loaded" -> {
+                val readTarget = runCatching {
+                    val eventPayload = JSONObject(payload).optJSONObject("payload")
+                    val chatId = eventPayload?.optLong("chat_id") ?: 0L
+                    val messages = eventPayload?.optJSONArray("messages")
+                    var maxMessageId = 0L
+                    if (messages != null) {
+                        for (index in 0 until messages.length()) {
+                            val messageId = messages.optJSONObject(index)?.optLong("id") ?: 0L
+                            if (messageId > maxMessageId) {
+                                maxMessageId = messageId
+                            }
+                        }
+                    }
+                    chatId to maxMessageId
+                }.getOrDefault(0L to 0L)
+
                 _state.update {
                     it.copy(
                         lastEventType = type,
@@ -303,6 +333,10 @@ class NativeSessionViewModel(application: Application) :
                         busy = false,
                         error = null,
                     )
+                }
+
+                if (readTarget.first != 0L && readTarget.second > 0L) {
+                    markRead(readTarget.first, readTarget.second)
                 }
             }
             "error" -> {
