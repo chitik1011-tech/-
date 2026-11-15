@@ -110,6 +110,45 @@ pub struct AttachmentThumbnail {
     pub height: Option<u32>,
 }
 
+/// A validated pair of positive media dimensions, suitable for display math.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MediaDimensions {
+    width: u32,
+    height: u32,
+}
+
+impl MediaDimensions {
+    /// Normalizes dimensions reported by Telegram; zero or negative values are unavailable.
+    pub fn from_telegram(width: i32, height: i32) -> Option<Self> {
+        let width = u32::try_from(width).ok()?;
+        let height = u32::try_from(height).ok()?;
+        Self::new(width, height)
+    }
+
+    /// Creates dimensions from stored values, rejecting zero and non-Telegram ranges.
+    pub fn new(width: u32, height: u32) -> Option<Self> {
+        if width == 0 || height == 0 || width > i32::MAX as u32 || height > i32::MAX as u32 {
+            return None;
+        }
+        Some(Self { width, height })
+    }
+
+    pub const fn width(self) -> u32 {
+        self.width
+    }
+
+    pub const fn height(self) -> u32 {
+        self.height
+    }
+}
+
+impl AttachmentThumbnail {
+    /// Returns a normalized size only when both thumbnail dimensions are valid.
+    pub fn dimensions(&self) -> Option<MediaDimensions> {
+        MediaDimensions::new(self.width?, self.height?)
+    }
+}
+
 /// State of a media download. A local path exists only in the Downloaded
 /// variant, which represents bytes successfully written to local storage.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -153,6 +192,15 @@ pub struct MediaAttachment {
     pub thumbnail: Option<AttachmentThumbnail>,
     #[serde(default)]
     pub download_state: AttachmentDownloadState,
+}
+
+impl MediaAttachment {
+    /// Returns a normalized size only when both attachment dimensions are valid.
+    pub fn dimensions(&self) -> Option<MediaDimensions> {
+        let width = i32::try_from(self.width?).ok()?;
+        let height = i32::try_from(self.height?).ok()?;
+        MediaDimensions::from_telegram(width, height)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
