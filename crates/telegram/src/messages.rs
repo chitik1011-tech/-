@@ -167,7 +167,10 @@ fn finalize_message_page(
         messages.truncate(limit);
     }
 
-    let kept_message_ids = messages.iter().map(|message| message.id).collect::<HashSet<_>>();
+    let kept_message_ids = messages
+        .iter()
+        .map(|message| message.id)
+        .collect::<HashSet<_>>();
     polls.retain(|poll| kept_message_ids.contains(&poll.message_id));
 
     let next_before_message_id = has_extra
