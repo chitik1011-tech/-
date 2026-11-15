@@ -23,8 +23,8 @@ data class NativeUiState(
  *
  * Android retains this ViewModel across Activity recreation and while the app is
  * backgrounded. Permanent owner cleanup closes the lifecycle gate once and asks
- * Rust to shut down the session. The native session store is responsible for
- * re-opening persisted Telegram authorization after a process restart.
+ * Rust to shut down the session. After a process restart, authorization recovery
+ * depends on the configured backend's persistent session store.
  */
 class NativeSessionViewModel : ViewModel(), NativeEventCallback {
     private val _state = MutableStateFlow(NativeUiState())
