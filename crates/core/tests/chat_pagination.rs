@@ -301,3 +301,43 @@ fn failed_page_keeps_cursor_retryable_and_clears_error_on_success() {
     assert_eq!(state.chat_pagination.error, None);
     assert_eq!(state.chat_pagination.next_cursor, None);
 }
+
+#[test]
+fn stale_first_page_cannot_replace_chats_during_next_page_request() {
+    let mut state = CoreState::default();
+    state.reduce(&page(
+        None,
+        vec![summary(1, "one", 0, None)],
+        Some("next"),
+    ));
+    state.reduce(&CoreEvent::ChatsPageLoading {
+        cursor: Some("next".into()),
+    });
+
+    state.reduce(&page(
+        None,
+        vec![summary(99, "stale first page", 0, None)],
+        None,
+    ));
+
+    assert_eq!(
+        state.account.chats.iter().map(|chat| chat.id).collect::<Vec<_>>(),
+        vec![1]
+    );
+    assert!(state.chat_pagination.loading);
+    assert_eq!(
+        state.chat_pagination.loading_cursor.as_deref(),
+        Some("next")
+    );
+
+    state.reduce(&page(
+        Some("next"),
+        vec![summary(2, "two", 0, None)],
+        None,
+    ));
+    assert_eq!(
+        state.account.chats.iter().map(|chat| chat.id).collect::<Vec<_>>(),
+        vec![1, 2]
+    );
+    assert!(!state.chat_pagination.loading);
+}
