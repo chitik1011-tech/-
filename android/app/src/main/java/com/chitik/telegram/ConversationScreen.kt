@@ -68,6 +68,52 @@ data class ConversationPollUi(
     val explanation: String?,
 )
 
+enum class ConversationServiceAction {
+    UserJoined,
+    UserLeft,
+    UsersAdded,
+    JoinedByLink,
+    JoinedByRequest,
+    TitleChanged,
+    PhotoChanged,
+    PhotoRemoved,
+    MessagePinned,
+    GroupCreated,
+    ChannelCreated,
+    GroupMigratedToSupergroup,
+    ChannelMigratedFromGroup,
+    Unknown,
+}
+
+data class ConversationServiceUi(
+    val action: ConversationServiceAction,
+    val actorId: Long? = null,
+    val targetId: Long? = null,
+    val userIds: List<Long> = emptyList(),
+    val title: String? = null,
+)
+
+internal fun serviceMessageLabel(service: ConversationServiceUi?): String {
+    if (service == null) return "Событие в чате"
+    val target = service.targetId?.let { " $it" }.orEmpty()
+    return when (service.action) {
+        ConversationServiceAction.UserJoined -> "Пользователь$target присоединился"
+        ConversationServiceAction.UserLeft -> "Пользователь$target вышел из чата"
+        ConversationServiceAction.UsersAdded -> "В чат добавлены пользователи: ${service.userIds.joinToString()}"
+        ConversationServiceAction.JoinedByLink -> "Пользователь присоединился по ссылке (пригласитель$target)"
+        ConversationServiceAction.JoinedByRequest -> "Пользователь присоединился по заявке"
+        ConversationServiceAction.TitleChanged -> "Название чата изменено: ${service.title.orEmpty()}"
+        ConversationServiceAction.PhotoChanged -> "Изменена фотография чата"
+        ConversationServiceAction.PhotoRemoved -> "Удалена фотография чата"
+        ConversationServiceAction.MessagePinned -> "Закреплено сообщение$target"
+        ConversationServiceAction.GroupCreated -> "Создана группа «${service.title.orEmpty()}»"
+        ConversationServiceAction.ChannelCreated -> "Создан канал «${service.title.orEmpty()}»"
+        ConversationServiceAction.GroupMigratedToSupergroup -> "Группа перенесена в супергруппу$target"
+        ConversationServiceAction.ChannelMigratedFromGroup -> "Канал создан из группы$target"
+        ConversationServiceAction.Unknown -> "Событие в чате"
+    }
+}
+
 /**
  * Display-ready message data supplied by the Rust-backed state layer.
  *
@@ -80,6 +126,8 @@ data class ConversationMessageUi(
     val text: String,
     val timestamp: String,
     val isOutgoing: Boolean,
+    val isServiceMessage: Boolean = false,
+    val service: ConversationServiceUi? = null,
     val poll: ConversationPollUi? = null,
     val pollVoting: Boolean = false,
     val pollError: String? = null,
@@ -267,7 +315,14 @@ private fun MessageBubble(
             },
         ) {
             Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
-                if (message.text.isNotBlank()) {
+                if (message.isServiceMessage || message.service != null) {
+                    Text(
+                        text = serviceMessageLabel(message.service),
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else if (message.text.isNotBlank()) {
                     Text(
                         text = message.text,
                         style = MaterialTheme.typography.bodyLarge,

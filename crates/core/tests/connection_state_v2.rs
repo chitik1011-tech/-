@@ -359,6 +359,7 @@ async fn runtime_drops_updates_from_the_previous_session_generation() {
         edited: false,
         edit_timestamp_unix: None,
         service_message: false,
+        service: None,
         media_caption: None,
         reply_to: None,
     };

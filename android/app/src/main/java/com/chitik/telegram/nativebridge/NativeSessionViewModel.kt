@@ -9,6 +9,8 @@ import com.chitik.telegram.ChatListPreview
 import com.chitik.telegram.ConversationMessageUi
 import com.chitik.telegram.ConversationPollOptionUi
 import com.chitik.telegram.ConversationPollUi
+import com.chitik.telegram.ConversationServiceAction
+import com.chitik.telegram.ConversationServiceUi
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -749,6 +751,8 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                                 text = message.optString("text"),
                                 timestamp = formatTimestamp(timestamp),
                                 isOutgoing = message.optBoolean("outgoing"),
+                                isServiceMessage = message.optBoolean("service_message"),
+                                service = parseServiceMessage(message.optJSONObject("service")),
                                 poll = polls[chatId to message.optLong("id")],
                             ),
                         )
@@ -757,6 +761,49 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 put(chatId, messages)
             }
         }
+    }
+
+    private fun parseServiceMessage(service: JSONObject?): ConversationServiceUi? {
+        val action = service?.optJSONObject("action") ?: return null
+        val kind = when (action.optString("type")) {
+            "user_joined" -> ConversationServiceAction.UserJoined
+            "user_left" -> ConversationServiceAction.UserLeft
+            "users_added" -> ConversationServiceAction.UsersAdded
+            "joined_by_link" -> ConversationServiceAction.JoinedByLink
+            "joined_by_request" -> ConversationServiceAction.JoinedByRequest
+            "title_changed" -> ConversationServiceAction.TitleChanged
+            "photo_changed" -> ConversationServiceAction.PhotoChanged
+            "photo_removed" -> ConversationServiceAction.PhotoRemoved
+            "message_pinned" -> ConversationServiceAction.MessagePinned
+            "group_created" -> ConversationServiceAction.GroupCreated
+            "channel_created" -> ConversationServiceAction.ChannelCreated
+            "group_migrated_to_supergroup" -> ConversationServiceAction.GroupMigratedToSupergroup
+            "channel_migrated_from_group" -> ConversationServiceAction.ChannelMigratedFromGroup
+            else -> ConversationServiceAction.Unknown
+        }
+        val userIds = action.optJSONArray("user_ids")?.let { values ->
+            buildList {
+                for (index in 0 until values.length()) add(values.optLong(index))
+            }
+        }.orEmpty()
+        val targetId = when (kind) {
+            ConversationServiceAction.UserJoined,
+            ConversationServiceAction.UserLeft,
+            -> action.optLong("user_id").takeIf { it != 0L }
+            ConversationServiceAction.JoinedByLink -> action.optLong("inviter_id").takeIf { it != 0L }
+            ConversationServiceAction.MessagePinned -> action.optLong("message_id").takeIf { it != 0L }
+            ConversationServiceAction.GroupMigratedToSupergroup -> action.optLong("supergroup_id").takeIf { it != 0L }
+            ConversationServiceAction.ChannelMigratedFromGroup -> action.optLong("group_id").takeIf { it != 0L }
+            else -> null
+        }
+        val title = action.optString("title").takeIf { action.has("title") }
+        return ConversationServiceUi(
+            action = kind,
+            actorId = service.optLong("actor_id").takeIf { it != 0L },
+            targetId = targetId,
+            userIds = userIds,
+            title = title,
+        )
     }
 
     private fun parsePollEventId(payload: String): Long? = runCatching {

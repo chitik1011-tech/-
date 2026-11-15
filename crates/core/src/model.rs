@@ -1,7 +1,8 @@
-use std::path::PathBuf;
+use std::{collections::BTreeSet, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+
+use crate::service_message::ServiceMessage;
 
 /// Telegram activities surfaced transiently while a user is composing or uploading.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -66,6 +67,9 @@ pub struct MessageSummary {
     /// Whether this message represents a Telegram service action.
     #[serde(default, skip_serializing_if = "is_false")]
     pub service_message: bool,
+    /// Structured action when Telegram marks this as a service message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service: Option<ServiceMessage>,
     /// Caption attached to media, kept separate from ordinary message text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub media_caption: Option<String>,

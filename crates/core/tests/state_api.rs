@@ -5,7 +5,7 @@ use std::{
 
 use tg_mobile_core::{
     AuthorizationState, ChatSummary, CoreEvent, CoreState, Draft, JsonFileStateStore,
-    MessageSummary, StateStore, MAX_CACHED_MESSAGES_PER_CHAT,
+    MessageSummary, ServiceAction, ServiceMessage, StateStore, MAX_CACHED_MESSAGES_PER_CHAT,
 };
 
 fn message(id: i64, timestamp_unix: i64) -> MessageSummary {
@@ -21,6 +21,7 @@ fn message(id: i64, timestamp_unix: i64) -> MessageSummary {
         edited: false,
         edit_timestamp_unix: None,
         service_message: false,
+        service: None,
         media_caption: None,
         reply_to: None,
     }
@@ -158,6 +159,60 @@ fn state_query_helpers_return_chat_messages_and_unread_total() {
     assert_eq!(state.chat(2).unwrap().title, "two");
     assert!(state.messages_for_chat(404).is_empty());
     assert_eq!(state.total_unread_count(), 7);
+}
+
+#[test]
+fn service_action_survives_canonical_event_and_persisted_state_json() {
+    let mut incoming = message(812, 123);
+    incoming.text.clear();
+    incoming.service_message = true;
+    incoming.service = Some(ServiceMessage {
+        action: ServiceAction::TitleChanged {
+            title: "Release team".into(),
+        },
+        actor_id: Some(10),
+    });
+
+    let event = CoreEvent::MessageAdded(incoming.clone());
+    let wire = tg_mobile_core::encode_event(&event).unwrap();
+    let wire_value: serde_json::Value = serde_json::from_str(&wire).unwrap();
+    assert_eq!(
+        wire_value["payload"]["service"]["action"]["type"],
+        "title_changed"
+    );
+    assert_eq!(wire_value["payload"]["text"], "");
+    let decoded: CoreEvent = serde_json::from_str(&wire).unwrap();
+    assert_eq!(decoded, event);
+
+    let mut state = CoreState::default();
+    state.reduce(&decoded);
+    let state_wire = tg_mobile_core::encode_state(&state).unwrap();
+    let restored: CoreState = serde_json::from_str(&state_wire).unwrap();
+    let actual = &restored.messages_for_chat(77)[0];
+    assert_eq!(actual, &incoming);
+    assert!(actual.text.is_empty());
+    assert!(matches!(
+        &actual.service.as_ref().unwrap().action,
+        ServiceAction::TitleChanged { .. }
+    ));
+}
+
+#[test]
+fn old_state_without_typed_service_metadata_still_decodes() {
+    let legacy = serde_json::json!({
+        "running": true,
+        "account": { "authorization": "Closed", "chats": [] },
+        "messages": { "77": [{
+            "id": 5, "chat_id": 77, "sender_id": 10,
+            "text": "older service", "timestamp_unix": 50,
+            "outgoing": false, "service_message": true
+        }] },
+        "last_error": null
+    });
+    let restored: CoreState = serde_json::from_value(legacy).unwrap();
+    let item = &restored.messages_for_chat(77)[0];
+    assert!(item.service_message);
+    assert_eq!(item.service, None);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

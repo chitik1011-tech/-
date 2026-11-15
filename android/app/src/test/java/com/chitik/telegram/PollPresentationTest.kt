@@ -13,6 +13,29 @@ class PollPresentationTest {
     }
 
     @Test
+    fun presentsTypedServiceActionsAsChatEvents() {
+        assertEquals(
+            "Название чата изменено: Team",
+            serviceMessageLabel(
+                ConversationServiceUi(
+                    action = ConversationServiceAction.TitleChanged,
+                    title = "Team",
+                ),
+            ),
+        )
+        assertEquals(
+            "Закреплено сообщение 42",
+            serviceMessageLabel(
+                ConversationServiceUi(
+                    action = ConversationServiceAction.MessagePinned,
+                    targetId = 42,
+                ),
+            ),
+        )
+        assertEquals("Событие в чате", serviceMessageLabel(null))
+    }
+
+    @Test
     fun hidesPercentWhenTelegramDidNotProvideUsableTotals() {
         assertNull(pollPercent(voterCount = null, totalVoters = 3))
         assertNull(pollPercent(voterCount = 1, totalVoters = null))

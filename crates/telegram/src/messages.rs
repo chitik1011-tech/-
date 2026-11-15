@@ -7,14 +7,18 @@ use grammers_client::{
     session::types::{PeerKind, PeerRef},
     tl,
 };
-use tg_mobile_core::{CoreError, ForwardedFrom, MessageSummary, PollSummary, ReplyMetadata};
+use tg_mobile_core::{
+    CoreError, ForwardedFrom, MessageSummary, PollSummary, ReplyMetadata, ServiceAction,
+    ServiceMessage,
+};
 use tokio::sync::Mutex;
 
 use crate::{error::api_error, ids::peer_id_to_core, polls::poll_from_message};
 
 pub(crate) fn message_to_summary(message: &Message) -> MessageSummary {
     let chat_id = peer_id_to_core(message.peer_id());
-    let text = message.text();
+    let action = message.action();
+    let text = if action.is_some() { "" } else { message.text() };
     let edit_timestamp_unix = message.edit_date().map(|date| date.as_second());
 
     let mut summary = message_summary_from_fields(MessageFields {
@@ -32,7 +36,14 @@ pub(crate) fn message_to_summary(message: &Message) -> MessageSummary {
         .then(ForwardedFrom::default);
     summary.edited = edit_timestamp_unix.is_some();
     summary.edit_timestamp_unix = edit_timestamp_unix;
-    summary.service_message = message.action().is_some();
+    summary.service_message = action.is_some();
+    summary.service = action.map(|action| {
+        service_message_from_action(
+            action,
+            (summary.sender_id != 0).then_some(summary.sender_id),
+            message.reply_to_message_id().map(i64::from),
+        )
+    });
     summary.media_caption =
         (message.media().is_some() && !text.is_empty()).then(|| text.to_owned());
     summary.reply_to = message
@@ -56,6 +67,62 @@ struct MessageFields<'a> {
     outgoing: bool,
 }
 
+fn service_message_from_action(
+    action: &tl::enums::MessageAction,
+    actor_id: Option<i64>,
+    pinned_message_id: Option<i64>,
+) -> ServiceMessage {
+    let action = match action {
+        tl::enums::MessageAction::ChatCreate(action) => ServiceAction::GroupCreated {
+            title: action.title.clone(),
+            user_ids: action.users.clone(),
+        },
+        tl::enums::MessageAction::ChatEditTitle(action) => ServiceAction::TitleChanged {
+            title: action.title.clone(),
+        },
+        tl::enums::MessageAction::ChatEditPhoto(_) => ServiceAction::PhotoChanged,
+        tl::enums::MessageAction::ChatDeletePhoto => ServiceAction::PhotoRemoved,
+        tl::enums::MessageAction::ChatAddUser(action) => {
+            if action.users.len() == 1 && actor_id == action.users.first().copied() {
+                ServiceAction::UserJoined {
+                    user_id: action.users[0],
+                }
+            } else {
+                ServiceAction::UsersAdded {
+                    user_ids: action.users.clone(),
+                }
+            }
+        }
+        tl::enums::MessageAction::ChatDeleteUser(action) => ServiceAction::UserLeft {
+            user_id: action.user_id,
+        },
+        tl::enums::MessageAction::ChatJoinedByLink(action) => ServiceAction::JoinedByLink {
+            inviter_id: action.inviter_id,
+        },
+        tl::enums::MessageAction::ChatJoinedByRequest => ServiceAction::JoinedByRequest,
+        tl::enums::MessageAction::ChannelCreate(action) => ServiceAction::ChannelCreated {
+            title: action.title.clone(),
+        },
+        tl::enums::MessageAction::ChatMigrateTo(action) => {
+            ServiceAction::GroupMigratedToSupergroup {
+                supergroup_id: action.channel_id,
+            }
+        }
+        tl::enums::MessageAction::ChannelMigrateFrom(action) => {
+            ServiceAction::ChannelMigratedFromGroup {
+                title: action.title.clone(),
+                group_id: action.chat_id,
+            }
+        }
+        tl::enums::MessageAction::PinMessage => ServiceAction::MessagePinned {
+            message_id: pinned_message_id,
+        },
+        _ => ServiceAction::Unknown,
+    };
+
+    ServiceMessage { action, actor_id }
+}
+
 fn message_summary_from_fields(fields: MessageFields<'_>) -> MessageSummary {
     MessageSummary {
         id: fields.id,
@@ -69,6 +136,7 @@ fn message_summary_from_fields(fields: MessageFields<'_>) -> MessageSummary {
         edited: false,
         edit_timestamp_unix: None,
         service_message: false,
+        service: None,
         media_caption: None,
         reply_to: None,
     }
@@ -532,8 +600,120 @@ impl MessageDeduplicator {
 mod tests {
     use super::{
         MessageDeduplicator, MessageFields, finalize_message_page, finalize_search_page,
-        message_summary_from_fields,
+        message_summary_from_fields, service_message_from_action,
     };
+    use grammers_client::tl;
+    use tg_mobile_core::ServiceAction;
+
+    #[test]
+    fn maps_typed_title_photo_and_pin_service_actions() {
+        let title =
+            tl::enums::MessageAction::ChatEditTitle(tl::types::MessageActionChatEditTitle {
+                title: "Crew".into(),
+            });
+        let service = service_message_from_action(&title, Some(9), None);
+        assert_eq!(service.actor_id, Some(9));
+        assert_eq!(
+            service.action,
+            ServiceAction::TitleChanged {
+                title: "Crew".into()
+            }
+        );
+
+        let changed =
+            tl::enums::MessageAction::ChatEditPhoto(tl::types::MessageActionChatEditPhoto {
+                photo: tl::enums::Photo::Empty(tl::types::PhotoEmpty { id: 1 }),
+            });
+        assert_eq!(
+            service_message_from_action(&changed, Some(9), None).action,
+            ServiceAction::PhotoChanged,
+        );
+        let removed =
+            service_message_from_action(&tl::enums::MessageAction::ChatDeletePhoto, Some(9), None);
+        assert_eq!(removed.action, ServiceAction::PhotoRemoved);
+
+        let left =
+            tl::enums::MessageAction::ChatDeleteUser(tl::types::MessageActionChatDeleteUser {
+                user_id: 12,
+            });
+        assert_eq!(
+            service_message_from_action(&left, Some(9), None).action,
+            ServiceAction::UserLeft { user_id: 12 },
+        );
+        let joined_by_link =
+            tl::enums::MessageAction::ChatJoinedByLink(tl::types::MessageActionChatJoinedByLink {
+                inviter_id: 88,
+            });
+        assert_eq!(
+            service_message_from_action(&joined_by_link, Some(9), None).action,
+            ServiceAction::JoinedByLink { inviter_id: 88 },
+        );
+
+        let pin =
+            service_message_from_action(&tl::enums::MessageAction::PinMessage, Some(9), Some(73));
+        assert_eq!(
+            pin.action,
+            ServiceAction::MessagePinned {
+                message_id: Some(73)
+            }
+        );
+    }
+
+    #[test]
+    fn maps_group_and_channel_creation_and_migration() {
+        let group = tl::enums::MessageAction::ChatCreate(tl::types::MessageActionChatCreate {
+            title: "Group".into(),
+            users: vec![1, 2],
+        });
+        assert_eq!(
+            service_message_from_action(&group, None, None).action,
+            ServiceAction::GroupCreated {
+                title: "Group".into(),
+                user_ids: vec![1, 2]
+            },
+        );
+
+        let joined = tl::enums::MessageAction::ChatAddUser(tl::types::MessageActionChatAddUser {
+            users: vec![9],
+        });
+        assert_eq!(
+            service_message_from_action(&joined, Some(9), None).action,
+            ServiceAction::UserJoined { user_id: 9 },
+        );
+
+        let migrate =
+            tl::enums::MessageAction::ChatMigrateTo(tl::types::MessageActionChatMigrateTo {
+                channel_id: 100,
+            });
+        assert_eq!(
+            service_message_from_action(&migrate, None, None).action,
+            ServiceAction::GroupMigratedToSupergroup { supergroup_id: 100 },
+        );
+
+        let channel =
+            tl::enums::MessageAction::ChannelCreate(tl::types::MessageActionChannelCreate {
+                title: "Updates".into(),
+            });
+        assert_eq!(
+            service_message_from_action(&channel, None, None).action,
+            ServiceAction::ChannelCreated {
+                title: "Updates".into()
+            },
+        );
+        let channel_from_group = tl::enums::MessageAction::ChannelMigrateFrom(
+            tl::types::MessageActionChannelMigrateFrom {
+                title: "Updates".into(),
+                chat_id: 17,
+            },
+        );
+        assert_eq!(
+            service_message_from_action(&channel_from_group, None, None).action,
+            ServiceAction::ChannelMigratedFromGroup {
+                title: "Updates".into(),
+                group_id: 17,
+            },
+        );
+    }
 
     #[test]
     fn maps_message_fields_without_losing_identifiers() {
