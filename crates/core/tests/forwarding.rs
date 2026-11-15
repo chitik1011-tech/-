@@ -261,7 +261,10 @@ fn reducer_evicts_forward_results_in_fifo_order() {
             outcomes: vec![],
         }));
     }
-    assert_eq!(state.forwarding.len(), tg_mobile_core::MAX_CACHED_FORWARD_REQUESTS);
+    assert_eq!(
+        state.forwarding.len(),
+        tg_mobile_core::MAX_CACHED_FORWARD_REQUESTS
+    );
     assert!(!state.forwarding.contains_key("request-0000"));
     assert!(state.forwarding.contains_key("request-0001"));
     assert!(state.forwarding.contains_key("request-0256"));
