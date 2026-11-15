@@ -3,12 +3,12 @@ package com.chitik.telegram
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -24,12 +24,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -53,6 +55,29 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
+import kotlin.math.roundToInt
+
+data class ConversationPollOptionUi(
+    val optionId: List<Int>,
+    val text: String,
+    val voterCount: Int?,
+    val chosen: Boolean,
+    val correct: Boolean?,
+)
+
+data class ConversationPollUi(
+    val id: Long,
+    val chatId: Long,
+    val messageId: Long,
+    val question: String,
+    val options: List<ConversationPollOptionUi>,
+    val totalVoters: Int?,
+    val publicVoters: Boolean,
+    val multipleChoice: Boolean,
+    val quiz: Boolean,
+    val closed: Boolean,
+    val explanation: String?,
+)
 
 /**
  * Display-ready message data supplied by the Rust-backed state layer.
@@ -67,6 +92,9 @@ data class ConversationMessageUi(
     val timestamp: String,
     val isOutgoing: Boolean,
     val attachments: List<MediaAttachmentUi> = emptyList(),
+    val poll: ConversationPollUi? = null,
+    val pollVoting: Boolean = false,
+    val pollError: String? = null,
 )
 
 data class ConversationScreenState(
@@ -80,8 +108,8 @@ data class ConversationScreenState(
 )
 
 /**
- * Stateless conversation state comes from Rust. Viewer selection is saveable UI state only;
- * media transfer ownership remains in the Rust core/backend.
+ * Stateless conversation UI. Message history and poll results always come from the Rust-backed
+ * state. Only an unsubmitted multiple-choice selection is kept locally.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -90,6 +118,7 @@ fun ConversationScreen(
     onBack: () -> Unit,
     onDraftChange: (String) -> Unit,
     onSend: (chatId: String, text: String) -> Unit,
+    onPollVote: (poll: ConversationPollUi, optionIds: List<List<Int>>) -> Unit,
     onRetry: () -> Unit,
     onDownloadMedia: (messageId: Long, attachmentIndex: Int, retry: Boolean) -> Unit,
     onCancelMedia: (messageId: Long, attachmentIndex: Int) -> Unit,
@@ -199,6 +228,7 @@ fun ConversationScreen(
                         ) { message ->
                             MessageBubble(
                                 message = message,
+                                onPollVote = onPollVote,
                                 onDownloadMedia = { attachmentIndex, retry ->
                                     message.id.toLongOrNull()?.let { messageId ->
                                         onDownloadMedia(messageId, attachmentIndex, retry)
@@ -265,6 +295,7 @@ fun ConversationScreen(
 @Composable
 private fun MessageBubble(
     message: ConversationMessageUi,
+    onPollVote: (ConversationPollUi, List<List<Int>>) -> Unit,
     onDownloadMedia: (attachmentIndex: Int, retry: Boolean) -> Unit,
     onCancelMedia: (attachmentIndex: Int) -> Unit,
     onOpenViewer: (MediaAttachmentUi) -> Unit,
@@ -293,7 +324,7 @@ private fun MessageBubble(
                 MaterialTheme.colorScheme.onSurfaceVariant
             },
         ) {
-            Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 10.dp)) {
+            Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
                 message.attachments.forEach { attachment ->
                     MediaAttachmentCard(
                         attachment = attachment,
@@ -308,8 +339,18 @@ private fun MessageBubble(
                 if (message.text.isNotBlank()) {
                     Text(
                         text = message.text,
-                        modifier = Modifier.padding(horizontal = 4.dp),
                         style = MaterialTheme.typography.bodyLarge,
+                    )
+                }
+                message.poll?.let { poll ->
+                    if (message.text.isNotBlank()) {
+                        Spacer(Modifier.height(8.dp))
+                    }
+                    PollContent(
+                        poll = poll,
+                        loading = message.pollVoting,
+                        error = message.pollError,
+                        onVote = { optionIds -> onPollVote(poll, optionIds) },
                     )
                 }
                 if (message.timestamp.isNotBlank()) {
@@ -324,6 +365,172 @@ private fun MessageBubble(
             }
         }
     }
+}
+
+@Composable
+private fun PollContent(
+    poll: ConversationPollUi,
+    loading: Boolean,
+    error: String?,
+    onVote: (List<List<Int>>) -> Unit,
+) {
+    val serverChosen = remember(poll.options) {
+        poll.options.filter { it.chosen }.map { it.optionId }.toSet()
+    }
+    var selected by remember(poll.id, serverChosen) { mutableStateOf(serverChosen) }
+    val enabled = !poll.closed && !loading
+    val resultsVisible = poll.totalVoters != null ||
+        poll.options.any { it.voterCount != null || it.chosen || it.correct != null }
+
+    Text(
+        text = poll.question,
+        style = MaterialTheme.typography.titleMedium,
+        fontWeight = FontWeight.SemiBold,
+    )
+    Spacer(Modifier.height(6.dp))
+
+    poll.options.forEach { option ->
+        val checked = if (poll.multipleChoice) {
+            option.optionId in selected
+        } else {
+            option.chosen
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (poll.multipleChoice) {
+                Checkbox(
+                    checked = checked,
+                    enabled = enabled,
+                    onCheckedChange = { value ->
+                        selected = selected.toMutableSet().apply {
+                            if (value) {
+                                add(option.optionId)
+                            } else {
+                                remove(option.optionId)
+                            }
+                        }
+                    },
+                )
+            } else {
+                RadioButton(
+                    selected = checked,
+                    enabled = enabled,
+                    onClick = {
+                        if (enabled) onVote(listOf(option.optionId))
+                    },
+                )
+            }
+
+            Column(modifier = Modifier.weight(1f)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = option.text,
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    optionStatus(option)?.let { status ->
+                        Text(
+                            text = status,
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                }
+                if (resultsVisible && option.voterCount != null) {
+                    val percent = pollPercent(option.voterCount, poll.totalVoters)
+                    Text(
+                        text = buildString {
+                            if (percent != null) append("$percent% · ")
+                            append(option.voterCount)
+                            append(if (option.voterCount == 1) " голос" else " голосов")
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    }
+
+    if (poll.multipleChoice && !poll.closed) {
+        Spacer(Modifier.height(4.dp))
+        Button(
+            onClick = { onVote(selected.toList()) },
+            enabled = enabled && selected.isNotEmpty(),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            if (loading) {
+                CircularProgressIndicator(
+                    modifier = Modifier.width(18.dp),
+                    strokeWidth = 2.dp,
+                )
+            } else {
+                Text("Отправить голос")
+            }
+        }
+    } else if (loading) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.Center,
+        ) {
+            CircularProgressIndicator(
+                modifier = Modifier.width(18.dp),
+                strokeWidth = 2.dp,
+            )
+        }
+    }
+
+    if (poll.totalVoters != null) {
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = "Всего проголосовало: ${poll.totalVoters}",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+    if (poll.closed) {
+        Text(
+            text = "Опрос закрыт",
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.SemiBold,
+        )
+    }
+    poll.explanation?.takeIf { it.isNotBlank() }?.let { explanation ->
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = explanation,
+            style = MaterialTheme.typography.bodySmall,
+        )
+    }
+    error?.takeIf { it.isNotBlank() }?.let { message ->
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = message,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.error,
+        )
+    }
+}
+
+private fun optionStatus(option: ConversationPollOptionUi): String? = when {
+    option.correct == true -> "✓"
+    option.chosen && option.correct == false -> "✕"
+    option.chosen -> "Выбрано"
+    else -> null
+}
+
+internal fun pollPercent(voterCount: Int?, totalVoters: Int?): Int? {
+    val votes = voterCount ?: return null
+    val total = totalVoters ?: return null
+    if (votes < 0 || total <= 0) return null
+    return ((votes.toDouble() / total.toDouble()) * 100.0)
+        .roundToInt()
+        .coerceIn(0, 100)
 }
 
 @Composable
