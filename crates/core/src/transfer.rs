@@ -254,11 +254,7 @@ impl TransferManager {
     /// and returning a new token generation for callbacks from the new attempt.
     pub fn retry(&self, token: TransferToken) -> Result<TransferToken, TransferError> {
         self.mutate(token, |record| {
-            record.generation = record
-                .generation
-                .checked_add(1)
-                .ok_or(TransferError::IdExhausted)?;
-            record.state = match (record.key.direction, record.state) {
+            let retry_state = match (record.key.direction, record.state) {
                 (
                     TransferDirection::Download,
                     TransferState::Download(DownloadState::Failed | DownloadState::Cancelled),
@@ -269,6 +265,11 @@ impl TransferManager {
                 ) => TransferState::Upload(UploadState::Pending),
                 _ => return Err(invalid(record)),
             };
+            record.generation = record
+                .generation
+                .checked_add(1)
+                .ok_or(TransferError::IdExhausted)?;
+            record.state = retry_state;
             Ok(())
         })
     }
