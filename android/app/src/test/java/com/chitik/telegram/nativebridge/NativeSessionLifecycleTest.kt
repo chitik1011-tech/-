@@ -2,6 +2,7 @@ package com.chitik.telegram.nativebridge
 
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.concurrent.thread
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -95,16 +96,21 @@ class NativeSessionLifecycleTest {
         val releaseCommand = CountDownLatch(1)
         val closeFinished = CountDownLatch(1)
         var closedHandle: Long? = null
+        val commandFailure = AtomicReference<Throwable?>(null)
 
         val commandThread = thread {
-            assertEquals(
-                LifecycleDispatchResult.Accepted,
-                lifecycle.dispatchCommand {
-                    commandEntered.countDown()
-                    assertTrue(releaseCommand.await(2, TimeUnit.SECONDS))
-                    true
-                },
-            )
+            try {
+                assertEquals(
+                    LifecycleDispatchResult.Accepted,
+                    lifecycle.dispatchCommand {
+                        commandEntered.countDown()
+                        assertTrue(releaseCommand.await(2, TimeUnit.SECONDS))
+                        true
+                    },
+                )
+            } catch (error: Throwable) {
+                commandFailure.set(error)
+            }
         }
         assertTrue(commandEntered.await(2, TimeUnit.SECONDS))
 
@@ -118,6 +124,7 @@ class NativeSessionLifecycleTest {
         commandThread.join(2_000)
         closeThread.join(2_000)
 
+        assertNull(commandFailure.get())
         assertEquals(7L, closedHandle)
         assertEquals(
             LifecycleDispatchResult.Closed,
