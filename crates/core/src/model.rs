@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -26,6 +28,84 @@ pub struct MessageSummary {
     pub text: String,
     pub timestamp_unix: i64,
     pub outgoing: bool,
+    /// Media attached to this message. Missing fields in older persisted messages
+    /// are treated as an empty list.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<MediaAttachment>,
+}
+
+/// Telegram media categories represented independently of the UI or downloader.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AttachmentKind {
+    Photo,
+    Video,
+    Document,
+    Audio,
+    Voice,
+    Animation,
+    Sticker,
+    VideoNote,
+}
+
+/// Metadata for an image preview associated with an attachment.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AttachmentThumbnail {
+    /// Opaque Telegram file reference for retrieving this thumbnail.
+    pub file_reference: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height: Option<u32>,
+}
+
+/// State of a media download. A local path exists only in the Downloaded
+/// variant, which represents bytes successfully written to local storage.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum AttachmentDownloadState {
+    #[default]
+    NotDownloaded,
+    Downloading,
+    Downloaded {
+        local_path: PathBuf,
+    },
+    Failed {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
+}
+
+/// Backend-neutral metadata for one Telegram attachment.
+///
+/// `file_reference` is opaque and must be retained as supplied by Telegram.
+/// Durations are stored in milliseconds to avoid floating-point serialization
+/// and equality issues. No local path is exposed until the download state is
+/// `Downloaded`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MediaAttachment {
+    pub kind: AttachmentKind,
+    pub file_reference: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filename: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thumbnail: Option<AttachmentThumbnail>,
+    #[serde(default)]
+    pub download_state: AttachmentDownloadState,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

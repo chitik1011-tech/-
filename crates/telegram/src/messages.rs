@@ -19,6 +19,7 @@ pub(crate) fn message_to_summary(message: &Message) -> MessageSummary {
         text: message.text(),
         timestamp_unix: message.date().as_second(),
         outgoing: message.outgoing(),
+        attachments: Vec::new(),
     })
 }
 
@@ -39,6 +40,7 @@ fn message_summary_from_fields(fields: MessageFields<'_>) -> MessageSummary {
         text: fields.text.to_owned(),
         timestamp_unix: fields.timestamp_unix,
         outgoing: fields.outgoing,
+        attachments: Vec::new(),
     }
 }
 
