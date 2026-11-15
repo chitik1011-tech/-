@@ -67,39 +67,36 @@ fn media_commands_use_the_canonical_json_wire_format() {
         let decoded = decode_command(json).unwrap();
         assert_eq!(decoded, expected);
         decoded.validate().unwrap();
-        assert_eq!(decode_command(&serde_json::to_string(&decoded).unwrap()).unwrap(), decoded);
+        assert_eq!(
+            decode_command(&serde_json::to_string(&decoded).unwrap()).unwrap(),
+            decoded
+        );
     }
 }
 
 #[test]
 fn invalid_media_targets_are_rejected_before_backend_dispatch() {
-    assert!(
-        CoreCommand::DownloadMedia {
-            chat_id: 0,
-            message_id: 7,
-            attachment_index: 0,
-        }
-        .validate()
-        .is_err()
-    );
-    assert!(
-        CoreCommand::DownloadMedia {
-            chat_id: 42,
-            message_id: 0,
-            attachment_index: 0,
-        }
-        .validate()
-        .is_err()
-    );
-    assert!(
-        CoreCommand::DownloadMedia {
-            chat_id: 42,
-            message_id: 7,
-            attachment_index: 32,
-        }
-        .validate()
-        .is_err()
-    );
+    assert!(CoreCommand::DownloadMedia {
+        chat_id: 0,
+        message_id: 7,
+        attachment_index: 0,
+    }
+    .validate()
+    .is_err());
+    assert!(CoreCommand::DownloadMedia {
+        chat_id: 42,
+        message_id: 0,
+        attachment_index: 0,
+    }
+    .validate()
+    .is_err());
+    assert!(CoreCommand::DownloadMedia {
+        chat_id: 42,
+        message_id: 7,
+        attachment_index: 32,
+    }
+    .validate()
+    .is_err());
 }
 
 #[test]
