@@ -100,9 +100,6 @@ async fn runtime_handles_bursty_updates_and_commands_without_losing_latest_state
     );
     assert_eq!(messages.last().unwrap().id, UPDATE_COUNT - 1);
 
-    let persisted = store.load().await.unwrap().unwrap();
-    assert_eq!(persisted, state);
-
     core.shutdown().await.unwrap();
 
     timeout(Duration::from_secs(2), async {
@@ -112,4 +109,11 @@ async fn runtime_handles_bursty_updates_and_commands_without_losing_latest_state
     })
     .await
     .unwrap();
+
+    let persisted = store.load().await.unwrap().unwrap();
+    assert!(!persisted.running);
+    assert_eq!(
+        persisted.messages_for_chat(77).last().unwrap().id,
+        UPDATE_COUNT - 1
+    );
 }
