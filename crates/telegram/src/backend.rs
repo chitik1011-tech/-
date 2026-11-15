@@ -34,6 +34,7 @@ use crate::{
         MessageDeduplicator, load_messages, load_messages_page, mark_read, message_to_summary,
         search_messages_page, send_text, send_text_idempotent,
     },
+    polls::{PollRegistry, new_poll_registry, poll_by_id, polls_from_updates, remember_poll},
     updates::{TelegramUpdate, UpdateWorkerInput, run_update_worker},
 };
 
@@ -73,6 +74,7 @@ pub struct GrammersBackend {
     auth: AuthFlow,
     peers: PeerRegistry,
     dedup: Arc<MessageDeduplicator>,
+    polls: PollRegistry,
     reliable_sends: HashMap<i64, ReliableSendRecord>,
     reliable_send_order: VecDeque<i64>,
     media_cache: MediaCache,
@@ -129,6 +131,7 @@ impl GrammersBackend {
             auth: AuthFlow::default(),
             peers: new_peer_registry(),
             dedup: Arc::new(MessageDeduplicator::new(MESSAGE_DEDUP_CAPACITY)),
+            polls: new_poll_registry(),
             reliable_sends: HashMap::new(),
             reliable_send_order: VecDeque::new(),
             media_cache,
@@ -175,6 +178,7 @@ impl GrammersBackend {
             catch_up: self.config.catch_up_updates,
             peers: Arc::clone(&self.peers),
             dedup: Arc::clone(&self.dedup),
+            polls: Arc::clone(&self.polls),
             events: self.update_tx.clone(),
             core_updates: self
                 .core_update_rx
@@ -653,9 +657,17 @@ impl GrammersBackend {
                 let peer = find_peer(&self.peers, chat_id)
                     .await
                     .ok_or(TelegramBackendError::UnknownChat(chat_id))?;
-                let mut messages = load_messages(&self.client, peer, limit).await?;
-                self.hydrate_cached_media(&mut messages);
-                vec![CoreEvent::MessagesLoaded { chat_id, messages }]
+                let mut loaded = load_messages(&self.client, peer, limit).await?;
+                self.hydrate_cached_media(&mut loaded.messages);
+                for poll in &loaded.polls {
+                    remember_poll(&self.polls, poll.clone()).await;
+                }
+                let mut events = vec![CoreEvent::MessagesLoaded {
+                    chat_id,
+                    messages: loaded.messages,
+                }];
+                events.extend(loaded.polls.into_iter().map(CoreEvent::PollUpdated));
+                events
             }
             CoreCommand::LoadMessagesPage {
                 chat_id,
@@ -669,13 +681,18 @@ impl GrammersBackend {
                 let mut page =
                     load_messages_page(&self.client, peer, before_message_id, limit).await?;
                 self.hydrate_cached_media(&mut page.messages);
-                vec![CoreEvent::MessagesPageLoaded {
+                for poll in &page.polls {
+                    remember_poll(&self.polls, poll.clone()).await;
+                }
+                let mut events = vec![CoreEvent::MessagesPageLoaded {
                     chat_id,
                     before_message_id,
                     messages: page.messages,
                     next_before_message_id: page.next_before_message_id,
                     has_more: page.has_more,
-                }]
+                }];
+                events.extend(page.polls.into_iter().map(CoreEvent::PollUpdated));
+                events
             }
             CoreCommand::MarkRead {
                 chat_id,
@@ -756,6 +773,45 @@ impl GrammersBackend {
                 message_id,
                 attachment_index,
             } => self.cancel_media_download(chat_id, message_id, attachment_index)?,
+            CoreCommand::VotePoll {
+                poll_id,
+                chat_id,
+                message_id,
+                option_ids,
+            } => {
+                self.require_ready().await?;
+
+                if let Some(poll) = poll_by_id(&self.polls, poll_id).await {
+                    if poll.chat_id != chat_id || poll.message_id != message_id {
+                        return Err(CoreError::InvalidInput(
+                            "poll vote identity does not match Telegram poll cache".into(),
+                        ));
+                    }
+                    poll.validate_vote_selection(&option_ids)?;
+                }
+
+                let peer = find_peer(&self.peers, chat_id)
+                    .await
+                    .ok_or(TelegramBackendError::UnknownChat(chat_id))?;
+                let msg_id = i32::try_from(message_id).map_err(|_| {
+                    CoreError::InvalidInput("poll message id exceeds Telegram range".into())
+                })?;
+
+                let updates = self
+                    .client
+                    .invoke(&tl::functions::messages::SendVote {
+                        peer: peer.clone().into(),
+                        msg_id,
+                        options: option_ids,
+                    })
+                    .await
+                    .map_err(|error| crate::error::api_error("vote on poll", error))?;
+
+                let polls = polls_from_updates(&updates, &self.polls).await?;
+                let mut events = vec![CoreEvent::PollVoteSubmitted { poll_id }];
+                events.extend(polls.into_iter().map(CoreEvent::PollUpdated));
+                events
+            }
             CoreCommand::ArchiveChat { chat_id } | CoreCommand::UnarchiveChat { chat_id } => {
                 self.require_ready().await?;
                 let archived = matches!(command, CoreCommand::ArchiveChat { .. });
@@ -1014,6 +1070,9 @@ impl TelegramBackend for GrammersBackend {
 
 impl Drop for GrammersBackend {
     fn drop(&mut self) {
+        for (_, task) in self.media_tasks.drain() {
+            task.handle.abort();
+        }
         if let Some(shutdown) = self.update_shutdown.take() {
             let _ = shutdown.send(true);
         }
