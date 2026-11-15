@@ -2,12 +2,16 @@ use std::collections::{HashSet, VecDeque};
 
 use grammers_client::{
     Client,
+    media::{Document, Media, Photo, PhotoSize},
     message::Message,
     sender::InvocationError,
     session::types::{PeerKind, PeerRef},
     tl,
 };
-use tg_mobile_core::{CoreError, ForwardedFrom, MessageSummary, ReplyMetadata};
+use tg_mobile_core::{
+    AttachmentDownloadState, AttachmentKind, AttachmentThumbnail, CoreError, ForwardedFrom,
+    MediaAttachment, MessageSummary, ReplyMetadata,
+};
 use tokio::sync::Mutex;
 
 use crate::{error::api_error, ids::peer_id_to_core};
@@ -26,6 +30,11 @@ pub(crate) fn message_to_summary(message: &Message) -> MessageSummary {
         outgoing: message.outgoing(),
     });
 
+    summary.attachments = message
+        .media()
+        .and_then(media_to_attachment)
+        .into_iter()
+        .collect();
     summary.forwarded_from = message
         .forward_header()
         .is_some()
@@ -45,6 +54,136 @@ pub(crate) fn message_to_summary(message: &Message) -> MessageSummary {
         });
 
     summary
+}
+
+fn media_to_attachment(media: Media) -> Option<MediaAttachment> {
+    match media {
+        Media::Photo(photo) => Some(photo_attachment(&photo)),
+        Media::Document(document) => Some(document_attachment(&document, None)),
+        Media::Sticker(sticker) => Some(document_attachment(
+            &sticker.document,
+            Some(AttachmentKind::Sticker),
+        )),
+        _ => None,
+    }
+}
+
+fn photo_attachment(photo: &Photo) -> MediaAttachment {
+    let (width, height) = photo_dimensions(photo);
+    MediaAttachment {
+        kind: AttachmentKind::Photo,
+        file_reference: format!("photo:{}", photo.id()),
+        size_bytes: photo.size().and_then(|size| u64::try_from(size).ok()),
+        mime_type: Some("image/jpeg".into()),
+        width,
+        height,
+        duration_ms: None,
+        filename: None,
+        thumbnail: None,
+        download_state: AttachmentDownloadState::NotDownloaded,
+    }
+}
+
+fn document_attachment(
+    document: &Document,
+    forced_kind: Option<AttachmentKind>,
+) -> MediaAttachment {
+    let kind = forced_kind.unwrap_or_else(|| document_kind(document));
+    let (width, height) = document
+        .resolution()
+        .and_then(|(width, height)| positive_dimensions(width, height))
+        .unwrap_or((None, None));
+    let duration_ms = document.duration().and_then(|seconds| {
+        (seconds.is_finite() && seconds >= 0.0)
+            .then(|| (seconds * 1000.0).round() as u64)
+    });
+    let thumbnail = best_thumbnail(document);
+    MediaAttachment {
+        kind,
+        file_reference: format!("document:{}", document.id()),
+        size_bytes: document.size().and_then(|size| u64::try_from(size).ok()),
+        mime_type: document.mime_type().map(str::to_owned),
+        width,
+        height,
+        duration_ms,
+        filename: document.name().map(str::to_owned),
+        thumbnail,
+        download_state: AttachmentDownloadState::NotDownloaded,
+    }
+}
+
+fn document_kind(document: &Document) -> AttachmentKind {
+    if let Some(tl::enums::Document::Document(raw)) = document.raw.document.as_ref() {
+        for attribute in &raw.attributes {
+            match attribute {
+                tl::enums::DocumentAttribute::Video(video) => {
+                    return if video.round_message {
+                        AttachmentKind::VideoNote
+                    } else {
+                        AttachmentKind::Video
+                    };
+                }
+                tl::enums::DocumentAttribute::Audio(audio) => {
+                    return if audio.voice {
+                        AttachmentKind::Voice
+                    } else {
+                        AttachmentKind::Audio
+                    };
+                }
+                tl::enums::DocumentAttribute::Sticker(_) => return AttachmentKind::Sticker,
+                tl::enums::DocumentAttribute::Animated => return AttachmentKind::Animation,
+                _ => {}
+            }
+        }
+    }
+
+    if document.mime_type().is_some_and(|mime| mime == "image/gif") {
+        AttachmentKind::Animation
+    } else {
+        AttachmentKind::Document
+    }
+}
+
+fn best_thumbnail(document: &Document) -> Option<AttachmentThumbnail> {
+    let thumb = document
+        .thumbs()
+        .into_iter()
+        .filter_map(|thumb| thumbnail_dimensions(&thumb).map(|dimensions| (thumb, dimensions)))
+        .max_by_key(|(_, (width, height))| u64::from(*width) * u64::from(*height))?;
+    let (thumb, (width, height)) = thumb;
+    Some(AttachmentThumbnail {
+        file_reference: format!("document-thumb:{}:{}", document.id(), thumb.photo_type()),
+        size_bytes: u64::try_from(thumb.size()).ok(),
+        mime_type: Some("image/jpeg".into()),
+        width: Some(width),
+        height: Some(height),
+    })
+}
+
+fn photo_dimensions(photo: &Photo) -> (Option<u32>, Option<u32>) {
+    photo
+        .thumbs()
+        .iter()
+        .filter_map(thumbnail_dimensions)
+        .max_by_key(|(width, height)| u64::from(*width) * u64::from(*height))
+        .map(|(width, height)| (Some(width), Some(height)))
+        .unwrap_or((None, None))
+}
+
+fn thumbnail_dimensions(thumb: &PhotoSize) -> Option<(u32, u32)> {
+    let (width, height) = match thumb {
+        PhotoSize::Size(size) => (size.width, size.height),
+        PhotoSize::Cached(size) => (size.width, size.height),
+        PhotoSize::Progressive(size) => (size.width, size.height),
+        PhotoSize::Empty(_) | PhotoSize::Stripped(_) | PhotoSize::Path(_) => return None,
+    };
+    positive_dimensions(width, height).and_then(|(width, height)| width.zip(height))
+}
+
+fn positive_dimensions(width: i32, height: i32) -> Option<(Option<u32>, Option<u32>)> {
+    let width = u32::try_from(width).ok().filter(|value| *value > 0);
+    let height = u32::try_from(height).ok().filter(|value| *value > 0);
+    (width.is_some() && height.is_some()).then_some((width, height))
 }
 
 struct MessageFields<'a> {
