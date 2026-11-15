@@ -1,7 +1,8 @@
 use std::time::Duration;
 
 use tg_mobile_core::{
-    spawn_core, AuthorizationState, CoreCommand, CoreEvent, CoreState, MockTelegramBackend,
+    decode_command, encode_event, encode_state, spawn_core, AuthorizationState, CoreCommand,
+    CoreEvent, CoreState, MockTelegramBackend,
 };
 use tokio::time::timeout;
 
@@ -24,6 +25,29 @@ fn reducer_updates_authorization_and_errors() {
     assert!(!state.running);
 }
 
+#[test]
+fn wire_protocol_round_trips_commands_events_and_state() {
+    let command_json =
+        r#"{"type":"send_text","payload":{"chat_id":42,"text":"hello from client"}}"#;
+    assert_eq!(
+        decode_command(command_json).unwrap(),
+        CoreCommand::SendText {
+            chat_id: 42,
+            text: "hello from client".into(),
+        }
+    );
+
+    let event = CoreEvent::AuthorizationChanged(AuthorizationState::Ready);
+    let encoded_event = encode_event(&event).unwrap();
+    let decoded_event: CoreEvent = serde_json::from_str(&encoded_event).unwrap();
+    assert_eq!(decoded_event, event);
+
+    let state = CoreState::default();
+    let encoded_state = encode_state(&state).unwrap();
+    let decoded_state: CoreState = serde_json::from_str(&encoded_state).unwrap();
+    assert_eq!(decoded_state, state);
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn mock_backend_can_authorize_load_chats_and_send() {
     let core = spawn_core(MockTelegramBackend::default());
@@ -38,7 +62,7 @@ async fn mock_backend_can_authorize_load_chats_and_send() {
         CoreEvent::AuthorizationChanged(AuthorizationState::WaitingForPhoneNumber)
     ));
 
-    core.send(CoreCommand::SetPhoneNumber("+10000000000".into()))
+    core.send(CoreCommand::SetPhoneNumber("test-phone".into()))
         .await
         .unwrap();
     let _ = timeout(Duration::from_secs(1), events.recv())
@@ -46,7 +70,7 @@ async fn mock_backend_can_authorize_load_chats_and_send() {
         .unwrap()
         .unwrap();
 
-    core.send(CoreCommand::SubmitCode("12345".into()))
+    core.send(CoreCommand::SubmitCode("test-code".into()))
         .await
         .unwrap();
     assert!(matches!(
