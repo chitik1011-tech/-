@@ -307,6 +307,10 @@ async fn shutdown_waits_for_in_flight_backend_command_before_stopping() {
         CoreEvent::Stopped
     );
     wait_until_closed(&core).await;
+    assert!(matches!(
+        core.send(CoreCommand::Start).await,
+        Err(CoreError::CommandChannelClosed)
+    ));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -314,7 +318,6 @@ async fn restart_restores_the_state_flushed_during_shutdown() {
     let store = MemoryStateStore::default();
     let mut initial = CoreState::default();
     initial.account.authorization = AuthorizationState::Ready;
-    initial.account.chats = vec![];
     store.save(&initial).await.unwrap();
 
     let first_run = spawn_core_with_store(MockTelegramBackend::default(), store.clone());
