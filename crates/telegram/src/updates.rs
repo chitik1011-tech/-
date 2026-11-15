@@ -132,6 +132,9 @@ fn is_transient_update_error(error: &InvocationError) -> bool {
                 || error.name.starts_with("FLOOD_WAIT_")
                 || matches!(error.name.as_str(), "RPC_CALL_FAIL" | "RPC_MCGET_FAIL")
         }
+        InvocationError::Transport(grammers_mtproto::transport::Error::BadStatus {
+            status: 429,
+        }) => true,
         // A dropped invocation is the signal grammers uses when the sender
         // pool or the updates receiver has closed. It cannot recover by polling
         // this same stream again.
@@ -459,6 +462,9 @@ mod tests {
             value: None,
             caused_by: None,
         })));
+        assert!(is_transient_update_error(&InvocationError::Transport(
+            grammers_mtproto::transport::Error::BadStatus { status: 429 }
+        )));
         assert!(!is_transient_update_error(&InvocationError::Rpc(
             RpcError {
                 code: 400,
@@ -469,6 +475,15 @@ mod tests {
         )));
         assert!(!is_transient_update_error(&InvocationError::Dropped(
             "updates channel was closed"
+        )));
+        assert!(!is_transient_update_error(&InvocationError::Transport(
+            grammers_mtproto::transport::Error::BadStatus { status: 404 }
+        )));
+        assert!(!is_transient_update_error(&InvocationError::Transport(
+            grammers_mtproto::transport::Error::BadCrc {
+                expected: 1,
+                got: 2,
+            }
         )));
     }
 
