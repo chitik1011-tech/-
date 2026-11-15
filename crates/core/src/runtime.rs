@@ -110,9 +110,7 @@ where
                         Err(error) => vec![CoreEvent::Error(error.to_string())],
                     };
 
-                    if !events.is_empty() {
-                        persistence_dirty = true;
-                    }
+                    persistence_dirty |= events.iter().any(|event| !event.is_transient());
 
                     let stopped = apply_events(
                         events, &mut reduced_state, &state_tx, &event_tx_task, &mut activity_tracker,
@@ -150,8 +148,8 @@ where
                 }
                 RuntimeInput::Update(Some(Ok(event))) => {
                     let stopped = event.is_terminal();
+                    persistence_dirty |= !event.is_transient();
                     apply_event(event, &mut reduced_state, &state_tx, &event_tx_task, &mut activity_tracker);
-                    persistence_dirty = true;
 
                     if stopped {
                         persist_state(&store, &mut reduced_state, &state_tx, &event_tx_task).await;
@@ -219,6 +217,7 @@ async fn next_runtime_input(
             tokio::select! {
                 command = commands.recv() => RuntimeInput::Command(command),
                 _ = persistence_tick.tick(), if persistence_dirty => RuntimeInput::Persist,
+                _ = activity_tick.tick(), if activity_active => RuntimeInput::ExpireActivities,
             }
         }
     }
@@ -273,8 +272,10 @@ fn apply_event(
     activity_tracker: &mut ChatActivityTracker,
 ) {
     activity_tracker.apply(&event, Instant::now().into_std());
-    state.reduce(&event);
-    let _ = state_tx.send(state.clone());
+    if !event.is_transient() {
+        state.reduce(&event);
+        let _ = state_tx.send(state.clone());
+    }
     let _ = event_tx.send(event);
 }
 
