@@ -80,7 +80,7 @@ fn multiple_pages_merge_duplicates_without_reordering() {
     let old_message = message(1, 2, 100, "old");
     let new_message = message(2, 2, 200, "new");
 
-    apply_page(&mut state, 
+    apply_page(&mut state,
         None,
         vec![
             summary(1, "first", 0, None),
@@ -298,6 +298,18 @@ fn failed_page_keeps_cursor_retryable_and_clears_error_on_success() {
         state.chat_pagination.error.as_deref(),
         Some("temporary network failure")
     );
+    assert_eq!(
+        state.chat_pagination.next_cursor.as_deref(),
+        Some("cursor-2")
+    );
+
+    state.reduce(&page(
+        Some("cursor-2"),
+        vec![summary(99, "late page", 0, None)],
+        None,
+    ));
+    assert!(state.chat(99).is_none());
+    assert!(!state.chat_pagination.loading);
     assert_eq!(
         state.chat_pagination.next_cursor.as_deref(),
         Some("cursor-2")
