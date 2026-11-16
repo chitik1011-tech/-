@@ -45,6 +45,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.chitik.telegram.notifications.TelegramNotificationRoute
 import com.chitik.telegram.nativebridge.NativeSessionViewModel
 import com.chitik.telegram.nativebridge.NativeUiState
 import com.chitik.telegram.deeplink.TelegramDeepLinkRouter
@@ -55,16 +56,20 @@ import com.chitik.telegram.deeplink.TelegramLinkTarget
 
 class MainActivity : ComponentActivity() {
     private var pendingTelegramLink by mutableStateOf<TelegramLinkIntent?>(null)
+    private var pendingNotificationChatId by mutableStateOf<Long?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         pendingTelegramLink = TelegramDeepLinkRouter.parseIntent(intent?.action, intent?.dataString)
+        pendingNotificationChatId = TelegramNotificationRoute.parse(intent)?.chatId
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     TelegramRustApp(
                         incomingLink = pendingTelegramLink,
+                        incomingNotificationChatId = pendingNotificationChatId,
+                        onDismissNotification = { pendingNotificationChatId = null },
                         onDismissLink = { pendingTelegramLink = null },
                     )
                 }
@@ -83,12 +88,24 @@ class MainActivity : ComponentActivity() {
 private fun TelegramRustApp(
     incomingLink: TelegramLinkIntent?,
     onDismissLink: () -> Unit,
+    incomingNotificationChatId: Long?,
+    onDismissNotification: () -> Unit,
     viewModel: NativeSessionViewModel = viewModel(),
 ) {
     val state by viewModel.state.collectAsState()
     val context = LocalContext.current
     val lifecycleOwner = remember(context) { context.findLifecycleOwner() }
     var selectedChatId by rememberSaveable { mutableLongStateOf(0L) }
+    LaunchedEffect(incomingNotificationChatId, state.authorization, state.chats) {
+        val target = incomingNotificationChatId ?: return@LaunchedEffect
+        if (state.authorization != AuthorizationUiStep.Ready) return@LaunchedEffect
+        // Never navigate to a chat absent from the current authorized account.
+        if (state.chats.any { it.id == target }) {
+            selectedChatId = target
+            viewModel.loadMessages(target)
+        }
+        onDismissNotification()
+    }
     var showContacts by rememberSaveable { mutableStateOf(false) }
     var draft by rememberSaveable { mutableStateOf("") }
     var pendingLocationChatId by rememberSaveable { mutableLongStateOf(0L) }
