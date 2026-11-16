@@ -77,8 +77,9 @@ object TelegramRuntimeConfigStore {
      */
     fun load(context: Context): TelegramRuntimeConfig? = synchronized(lock) {
         val appContext = context.applicationContext
+        buildTimeConfig(appContext)?.let { return@synchronized it }
         val encoded = preferences(appContext).getString(ENCRYPTED_CONFIG_KEY, null)
-            ?: return@synchronized buildTimeConfig(appContext)
+            ?: return@synchronized null
         val encrypted = try {
             Base64.decode(encoded, Base64.NO_WRAP)
         } catch (error: IllegalArgumentException) {

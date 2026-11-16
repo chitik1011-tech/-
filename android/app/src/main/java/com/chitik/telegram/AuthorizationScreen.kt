@@ -72,7 +72,6 @@ data class AuthorizationUiState(
 @Composable
 fun AuthorizationScreen(
     state: AuthorizationUiState,
-    onConfigureTelegram: (apiId: String, apiHash: String) -> Unit,
     onStart: () -> Unit,
     onSubmitPhoneNumber: (String) -> Unit,
     onSubmitCode: (String) -> Unit,
@@ -81,14 +80,9 @@ fun AuthorizationScreen(
     modifier: Modifier = Modifier,
 ) {
     // Credentials remain in Compose memory only and are intentionally not saveable.
-    var apiId by remember { mutableStateOf("") }
-    var apiHash by remember { mutableStateOf("") }
     var phoneNumber by remember { mutableStateOf("") }
     var code by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
-    var validationError by remember { mutableStateOf<String?>(null) }
-    val apiIdFocusRequester = remember { FocusRequester() }
-    val apiHashFocusRequester = remember { FocusRequester() }
     val phoneFocusRequester = remember { FocusRequester() }
     val codeFocusRequester = remember { FocusRequester() }
     val passwordFocusRequester = remember { FocusRequester() }
@@ -99,14 +93,12 @@ fun AuthorizationScreen(
 
     LaunchedEffect(state.isTelegramConfigured, state.authorization) {
         val fieldsToClear = authorizationInputsToClear(state)
-        if (AuthorizationInputField.ApiId in fieldsToClear) apiId = ""
-        if (AuthorizationInputField.ApiHash in fieldsToClear) apiHash = ""
         if (AuthorizationInputField.PhoneNumber in fieldsToClear) phoneNumber = ""
         if (AuthorizationInputField.LoginCode in fieldsToClear) code = ""
         if (AuthorizationInputField.TwoFactorPassword in fieldsToClear) password = ""
     }
 
-    BackHandler(enabled = true) {
+    BackHandler(enabled = state.isTelegramConfigured) {
         keyboard?.hide()
         onBack()
     }
@@ -115,8 +107,7 @@ fun AuthorizationScreen(
         if (state.isLoading) {
             keyboard?.hide()
         } else if (!state.isTelegramConfigured) {
-            apiIdFocusRequester.requestFocus()
-            keyboard?.show()
+            keyboard?.hide()
         } else if (authInputStep) {
             when (state.authorization) {
                 AuthorizationUiStep.WaitingForPhoneNumber -> phoneFocusRequester.requestFocus()
@@ -131,7 +122,7 @@ fun AuthorizationScreen(
     }
 
     val title = if (!state.isTelegramConfigured) {
-        "Configure Telegram"
+        "Configuration error"
     } else when (state.authorization) {
         AuthorizationUiStep.Starting -> "Connecting to Telegram"
         AuthorizationUiStep.WaitingForPhoneNumber -> "Your phone number"
@@ -142,11 +133,11 @@ fun AuthorizationScreen(
         AuthorizationUiStep.Closed -> "Sign in to Telegram"
     }
     val subtitle = if (!state.isTelegramConfigured) {
-        "Enter the Telegram API ID and API hash. The caller stores them using the app's protected runtime configuration store."
+        "This app build is missing Telegram's application credentials. Install a build configured by the maintainer; users should not enter an API ID or API hash."
     } else when (state.authorization) {
         AuthorizationUiStep.Starting -> "Waiting for the Rust client to initialize."
         AuthorizationUiStep.WaitingForPhoneNumber -> "Enter your number with the country code."
-        AuthorizationUiStep.WaitingForCode -> "Enter the code Telegram sent to your account."
+        AuthorizationUiStep.WaitingForCode -> "Check the Telegram service chat on another signed-in device first. Telegram chooses the delivery method; this app cannot show it or request a resend yet."
         AuthorizationUiStep.WaitingForPassword -> "Enter your Telegram two-step verification password."
         AuthorizationUiStep.Ready -> "Your Telegram account is connected."
         AuthorizationUiStep.LoggingOut -> "The session is closing."
@@ -179,85 +170,13 @@ fun AuthorizationScreen(
             )
 
             if (!state.isTelegramConfigured) {
-                val parsedApiId = apiId.trim().toIntOrNull()
-                val normalizedApiHash = apiHash.trim()
-                val apiIdValid = parsedApiId != null && parsedApiId > 0
-                val apiHashValid = normalizedApiHash.length == 32 &&
-                    normalizedApiHash.all { character -> character in '0'..'9' || character.lowercaseChar() in 'a'..'f' }
-
-                OutlinedTextField(
-                    value = apiId,
-                    onValueChange = {
-                        apiId = it.filter { character -> character in '0'..'9' }.take(10)
-                        validationError = null
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .focusRequester(apiIdFocusRequester),
-                    label = { Text("API ID") },
-                    singleLine = true,
-                    enabled = !state.isLoading,
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Number,
-                        imeAction = ImeAction.Next,
-                    ),
-                    keyboardActions = KeyboardActions(
-                        onNext = { apiHashFocusRequester.requestFocus() },
-                    ),
-                )
-                OutlinedTextField(
-                    value = apiHash,
-                    onValueChange = {
-                        apiHash = it
-                        validationError = null
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .focusRequester(apiHashFocusRequester),
-                    label = { Text("API hash") },
-                    singleLine = true,
-                    enabled = !state.isLoading,
-                    visualTransformation = PasswordVisualTransformation(),
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Ascii,
-                        imeAction = ImeAction.Done,
-                    ),
-                    keyboardActions = KeyboardActions(
-                        onDone = {
-                            if (!state.isLoading) {
-                                if (apiIdValid && apiHashValid) {
-                                    keyboard?.hide()
-                                    onConfigureTelegram(apiId.trim(), normalizedApiHash)
-                                } else {
-                                    validationError = "Enter a positive numeric API ID and a 32-character hexadecimal API hash."
-                                }
-                            }
-                        },
-                    ),
-                )
-                Button(
-                    onClick = {
-                        if (apiIdValid && apiHashValid) {
-                            validationError = null
-                            keyboard?.hide()
-                            onConfigureTelegram(apiId.trim(), normalizedApiHash)
-                        } else {
-                            validationError = "Enter a positive numeric API ID and a 32-character hexadecimal API hash."
-                        }
-                    },
-                    enabled = !state.isLoading,
+                Text(
+                    text = "The login form is unavailable until this build has valid app credentials.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    textAlign = TextAlign.Center,
+                    color = MaterialTheme.colorScheme.error,
                     modifier = Modifier.fillMaxWidth(),
-                ) {
-                    if (state.isLoading) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(18.dp),
-                            color = MaterialTheme.colorScheme.onPrimary,
-                            strokeWidth = 2.dp,
-                        )
-                        Spacer(Modifier.width(8.dp))
-                    }
-                    Text("Connect Telegram")
-                }
+                )
             } else {
                 when (state.authorization) {
                 AuthorizationUiStep.Closed -> {
@@ -423,7 +342,7 @@ fun AuthorizationScreen(
                 }
             }
 
-            (validationError ?: state.error)?.takeIf(String::isNotBlank)?.let { message ->
+            state.error?.takeIf(String::isNotBlank)?.let { message ->
                 Surface(
                     color = MaterialTheme.colorScheme.errorContainer,
                     contentColor = MaterialTheme.colorScheme.onErrorContainer,
