@@ -32,6 +32,9 @@ data class OutgoingMediaUi(
     val fileName: String,
     val mimeType: String,
     val sizeBytes: Long,
+    val videoDurationMs: Long? = null,
+    val videoWidth: Int? = null,
+    val videoHeight: Int? = null,
 )
 
 data class OutgoingTextSendUi(
@@ -79,9 +82,29 @@ internal fun parseOutgoingTextSend(value: JSONObject?): OutgoingTextSendUi? {
         val fileName = item.optString("file_name")
         val mimeType = item.optString("mime_type")
         val sizeBytes = item.optLong("size_bytes", 0L)
+        val videoDurationMs = item.optLong("video_duration_ms", -1L)
+            .takeIf { kind == "video" && it in 1..172_800_000L }
+        val videoWidth = item.optInt("video_width", -1)
+            .takeIf { kind == "video" && it in 1..32768 }
+        val videoHeight = item.optInt("video_height", -1)
+            .takeIf { kind == "video" && it in 1..32768 }
+        val dimensions = if (videoWidth != null && videoHeight != null) {
+            videoWidth to videoHeight
+        } else {
+            null
+        }
         if (kind in setOf("photo", "video", "document") && path.isNotBlank() &&
             fileName.isNotBlank() && mimeType.isNotBlank() && sizeBytes > 0L
-        ) OutgoingMediaUi(kind, path, fileName, mimeType, sizeBytes) else null
+        ) OutgoingMediaUi(
+            kind,
+            path,
+            fileName,
+            mimeType,
+            sizeBytes,
+            videoDurationMs,
+            dimensions?.first,
+            dimensions?.second,
+        ) else null
     }
     if (status == "uploading" && media == null) return null
     return OutgoingTextSendUi(
