@@ -142,7 +142,7 @@ private fun readPickedVideoMetadata(context: Context, uri: Uri): PickedVideoMeta
             width = height
             height = previousWidth
         }
-        if (width !in 1..32768 || height !in 1..32768) {
+        if (width == null || height == null || width !in 1..32768 || height !in 1..32768) {
             width = null
             height = null
         }
