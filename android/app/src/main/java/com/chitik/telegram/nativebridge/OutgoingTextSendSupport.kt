@@ -26,7 +26,7 @@ internal fun reliableTextCommand(clientId: Long, chatId: Long, text: String): St
         .toString()
 }
 
-internal data class OutgoingTextSendUi(
+data class OutgoingTextSendUi(
     val clientId: Long,
     val chatId: Long,
     val text: String,
