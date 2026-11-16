@@ -142,6 +142,7 @@ private fun TelegramRustApp(
                     sending = false,
                     error = state.error,
                     forwardingError = state.forwardError,
+                    forwardSuccessCount = state.forwardSuccessCount,
                 ),
                 onBack = {
                     selectedChatId = 0L
