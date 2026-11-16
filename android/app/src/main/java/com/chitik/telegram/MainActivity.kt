@@ -47,6 +47,7 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.chitik.telegram.nativebridge.NativeSessionViewModel
 import com.chitik.telegram.nativebridge.NativeUiState
+import com.chitik.telegram.nativebridge.textSendStatusForChat
 import com.chitik.telegram.deeplink.TelegramDeepLinkRouter
 import com.chitik.telegram.deeplink.TelegramJoinInviteIntent
 import com.chitik.telegram.deeplink.TelegramLinkAppRouter
@@ -262,6 +263,7 @@ private fun TelegramRustApp(
                     draft = draft,
                     loading = state.busy,
                     sending = state.sendingText && state.activeTextSendChatId == selectedChatId,
+                    sendStatus = state.textSendStatusForChat(selectedChatId),
                     error = state.textSendError ?: state.error,
                     pendingReactionKeys = state.pendingReactionKeys,
                     reactionErrors = state.reactionErrors,
