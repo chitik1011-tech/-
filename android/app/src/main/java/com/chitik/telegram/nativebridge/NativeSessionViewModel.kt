@@ -48,6 +48,16 @@ data class NativeUiState(
         get() = libraryLoaded && nativeHandle != 0L && error == null
 }
 
+internal fun NativeUiState.advanceSelectionGeneration(): NativeUiState = copy(
+    selectionGeneration = selectionGeneration + 1,
+    deletingMessages = false,
+    deleteError = if (deletingMessages) {
+        "Удаление прервано; обновите сообщения и проверьте результат"
+    } else {
+        deleteError
+    },
+)
+
 class NativeSessionViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _state = MutableStateFlow(NativeUiState())
@@ -628,8 +638,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
             }
             "connection_lifecycle" -> {
                 _state.update {
-                    it.copy(
-                        selectionGeneration = it.selectionGeneration + 1,
+                    it.advanceSelectionGeneration().copy(
                         lastEventType = type,
                         lastEventPayload = payload,
                     )
