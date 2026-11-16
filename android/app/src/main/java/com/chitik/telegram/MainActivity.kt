@@ -165,6 +165,7 @@ private fun TelegramRustApp(
                 onPollVote = viewModel::votePoll,
                 onEditMessage = viewModel::editMessage,
                 onDeleteMessageForEveryone = viewModel::deleteMessageForEveryone,
+                onDeleteMessageForMe = viewModel::deleteMessageForMe,
                 onForward = { sourceChatId, messageIds ->
                     forwardingSourceChatId = sourceChatId
                     forwardingMessageIds = messageIds
