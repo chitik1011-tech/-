@@ -270,6 +270,7 @@ fun ConversationScreen(
                                     onClick = {
                                         onCopy(selectedMessageText(state.messages, selectedMessageIds))
                                         selectedMessageIds = emptySet()
+                                        isSelectingMessages = false
                                         selectionMenuOpen = false
                                     },
                                 )
@@ -293,6 +294,7 @@ fun ConversationScreen(
                                     text = { Text("Снять выделение") },
                                     onClick = {
                                         selectedMessageIds = emptySet()
+                                        isSelectingMessages = false
                                         selectionMenuOpen = false
                                     },
                                 )
@@ -307,7 +309,7 @@ fun ConversationScreen(
             )
         },
         bottomBar = {
-            if (selectedMessageIds.isEmpty()) {
+            if (!selectionActive) {
                 ComposerBar(
                     draft = state.draft,
                     sending = state.sending,
