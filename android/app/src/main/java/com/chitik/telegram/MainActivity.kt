@@ -45,6 +45,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.chitik.telegram.notifications.NotificationPermissionRequester
 import com.chitik.telegram.notifications.TelegramNotificationRoute
 import com.chitik.telegram.nativebridge.NativeSessionViewModel
 import com.chitik.telegram.nativebridge.NativeUiState
@@ -57,9 +58,15 @@ import com.chitik.telegram.deeplink.TelegramLinkTarget
 class MainActivity : ComponentActivity() {
     private var pendingTelegramLink by mutableStateOf<TelegramLinkIntent?>(null)
     private var pendingNotificationChatId by mutableStateOf<Long?>(null)
+    private var notificationPermissionGranted by mutableStateOf(true)
+    private lateinit var notificationPermissionRequester: NotificationPermissionRequester
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        notificationPermissionRequester = NotificationPermissionRequester(this) { granted ->
+            notificationPermissionGranted = granted
+        }
+        notificationPermissionGranted = notificationPermissionRequester.isGranted()
         enableEdgeToEdge()
         pendingTelegramLink = TelegramDeepLinkRouter.parseIntent(intent?.action, intent?.dataString)
         pendingNotificationChatId = TelegramNotificationRoute.parse(intent)?.chatId
@@ -70,6 +77,8 @@ class MainActivity : ComponentActivity() {
                         incomingLink = pendingTelegramLink,
                         incomingNotificationChatId = pendingNotificationChatId,
                         onDismissNotification = { pendingNotificationChatId = null },
+                        onEnableNotifications = { notificationPermissionRequester.request() },
+                        showEnableNotifications = !notificationPermissionGranted,
                         onDismissLink = { pendingTelegramLink = null },
                     )
                 }
@@ -90,6 +99,8 @@ private fun TelegramRustApp(
     onDismissLink: () -> Unit,
     incomingNotificationChatId: Long?,
     onDismissNotification: () -> Unit,
+    onEnableNotifications: () -> Unit,
+    showEnableNotifications: Boolean,
     viewModel: NativeSessionViewModel = viewModel(),
 ) {
     val state by viewModel.state.collectAsState()
@@ -234,6 +245,8 @@ private fun TelegramRustApp(
             isLoading = state.busy,
             error = state.error,
             onRefresh = { viewModel.loadChats() },
+            onEnableNotifications = onEnableNotifications,
+            showEnableNotifications = showEnableNotifications,
             onOpenContacts = {
                 showContacts = true
                 viewModel.loadContacts(offset = 0)
