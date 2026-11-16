@@ -47,6 +47,7 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.chitik.telegram.nativebridge.NativeSessionViewModel
 import com.chitik.telegram.nativebridge.NativeUiState
+import com.chitik.telegram.nativebridge.textSendStatusForChat
 import com.chitik.telegram.deeplink.TelegramDeepLinkRouter
 import com.chitik.telegram.deeplink.TelegramJoinInviteIntent
 import com.chitik.telegram.deeplink.TelegramLinkAppRouter
@@ -91,6 +92,7 @@ private fun TelegramRustApp(
     var selectedChatId by rememberSaveable { mutableLongStateOf(0L) }
     var showContacts by rememberSaveable { mutableStateOf(false) }
     var draft by rememberSaveable { mutableStateOf("") }
+    var lastRestoredFailureId by rememberSaveable { mutableLongStateOf(0L) }
     var replyToMessageId by rememberSaveable { mutableStateOf<Long?>(null) }
     var replyToPreview by rememberSaveable { mutableStateOf<String?>(null) }
     var jumpToMessageId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -117,6 +119,14 @@ private fun TelegramRustApp(
             activeLocationRequest?.cancel()
             activeLocationRequest = null
             pendingLocationChatId = 0L
+        }
+    }
+    LaunchedEffect(state.failedTextSendId, state.failedTextSendText, selectedChatId) {
+        val failedId = state.failedTextSendId
+        if (failedId != null && failedId != lastRestoredFailureId &&
+            selectedChatId == state.outbox[failedId]?.chatId) {
+            if (draft.isBlank()) draft = state.failedTextSendText.orEmpty()
+            lastRestoredFailureId = failedId
         }
     }
     val sendCurrentLocation: (Long) -> Unit = { chatId ->
@@ -252,8 +262,9 @@ private fun TelegramRustApp(
                     messages = messages,
                     draft = draft,
                     loading = state.busy,
-                    sending = false,
-                    error = state.error,
+                    sending = state.sendingText && state.activeTextSendChatId == selectedChatId,
+                    sendStatus = state.textSendStatusForChat(selectedChatId),
+                    error = state.textSendError ?: state.error,
                     pendingReactionKeys = state.pendingReactionKeys,
                     reactionErrors = state.reactionErrors,
                     forwardingError = state.forwardError,
@@ -315,11 +326,14 @@ private fun TelegramRustApp(
                 onSend = { chatId, text ->
                     chatId.toLongOrNull()?.let { numericChatId ->
                         val target = replyToMessageId
-                        if (target != null) viewModel.replyMessage(numericChatId, target, text)
-                        else viewModel.sendText(numericChatId, text)
-                        draft = ""
-                        replyToMessageId = null
-                        replyToPreview = null
+                        if (target != null) {
+                            viewModel.replyMessage(numericChatId, target, text)
+                            draft = ""
+                            replyToMessageId = null
+                            replyToPreview = null
+                        } else if (viewModel.sendText(numericChatId, text)) {
+                            draft = ""
+                        }
                     }
                 },
                 onPollVote = viewModel::votePoll,

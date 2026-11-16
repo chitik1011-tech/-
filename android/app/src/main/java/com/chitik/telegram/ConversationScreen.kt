@@ -156,6 +156,7 @@ data class ConversationScreenState(
     val draft: String,
     val loading: Boolean = false,
     val sending: Boolean = false,
+    val sendStatus: String? = null,
     val error: String? = null,
     val pendingReactionKeys: Set<String> = emptySet(),
     val reactionErrors: Map<String, String> = emptyMap(),
@@ -485,6 +486,14 @@ fun ConversationScreen(
                         Text(
                             text = notice,
                             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    state.sendStatus?.let { status ->
+                        Text(
+                            text = status,
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )

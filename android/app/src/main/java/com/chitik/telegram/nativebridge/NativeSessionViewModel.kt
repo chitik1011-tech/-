@@ -77,12 +77,24 @@ data class NativeUiState(
     val selectionGeneration: Long = 0,
     val lastConnectionSessionGeneration: Long? = null,
     val deletingMessages: Boolean = false,
+    val outbox: Map<Long, OutgoingTextSendUi> = emptyMap(),
+    val activeTextSendId: Long? = null,
+    val lastTextSendId: Long? = null,
+    val activeTextSendChatId: Long? = null,
+    val activeTextSendText: String? = null,
+    val failedTextSendId: Long? = null,
+    val failedTextSendText: String? = null,
+    val textSendError: String? = null,
     val deleteError: String? = null,
     val busy: Boolean = false,
     val lastEventType: String = "none",
     val lastEventPayload: String = "",
     val error: String? = null,
 ) {
+    val sendingText: Boolean
+        get() = activeTextSendId != null &&
+            (outbox[activeTextSendId]?.isInFlight ?: true)
+
     val coreReady: Boolean
         get() = libraryLoaded && nativeHandle != 0L && error == null
 }
@@ -137,6 +149,21 @@ internal fun NativeUiState.applyConnectionLifecycle(payload: String): NativeUiSt
     }
 }
 
+internal fun NativeUiState.applyConnectionLifecycleAndGeneration(payload: String): NativeUiState {
+    val updated = applyConnectionLifecycle(payload)
+    val generation = connectionSessionGenerationFromEvent(payload)
+    return generation?.let(updated::recordConnectionSessionGeneration) ?: updated
+}
+
+internal fun NativeUiState.finishBulkDelete(
+    chatId: Long?,
+    ids: Set<Long>,
+): NativeUiState = removeDeletedMessages(chatId, ids).copy(
+    busy = false,
+    deletingMessages = false,
+    deleteError = null,
+)
+
 internal fun NativeUiState.clearPendingReactionsAfterConnectionChange(): NativeUiState {
     if (pendingReactionKeys.isEmpty()) return this
     val message = "Результат реакции не подтверждён после смены соединения"
@@ -186,11 +213,20 @@ private data class ParsedNativeState(
     val contacts: List<ContactListEntry>,
     val profiles: Map<Long, PeerProfileUi>,
     val chatCapabilities: Map<Long, ChatCapabilitiesUi>,
+    val outbox: Map<Long, OutgoingTextSendUi>,
 )
 
 internal fun NativeUiState.advanceSelectionGeneration(): NativeUiState = copy(
     selectionGeneration = selectionGeneration + 1,
     deletingMessages = false,
+    activeTextSendId = null,
+    lastTextSendId = null,
+    activeTextSendChatId = null,
+    activeTextSendText = null,
+    outbox = emptyMap(),
+    failedTextSendId = activeTextSendId ?: failedTextSendId,
+    failedTextSendText = activeTextSendText ?: failedTextSendText,
+    textSendError = if (activeTextSendId != null) "Сессия сменилась: проверьте, доставлено ли сообщение, перед повтором" else textSendError,
     pinnedMessages = emptyMap(),
     pendingPinnedMessageIds = emptySet(),
     pinnedError = null,
@@ -658,18 +694,31 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         )
     }
 
-    fun sendText(chatId: Long, text: String) {
-        sendCommand(
-            JSONObject()
-                .put("type", "send_text")
-                .put(
-                    "payload",
-                    JSONObject()
-                        .put("chat_id", chatId)
-                        .put("text", text),
-                )
-                .toString(),
-        )
+    fun sendText(chatId: Long, text: String): Boolean {
+        if (chatId == 0L || text.isBlank() || _state.value.sendingText) return false
+        val clientId = nextPositiveClientMessageId()
+        _state.update {
+            it.copy(
+                activeTextSendId = clientId,
+                lastTextSendId = clientId,
+                activeTextSendChatId = chatId,
+                activeTextSendText = text,
+                failedTextSendId = null,
+                failedTextSendText = null,
+                textSendError = null,
+            )
+        }
+        val accepted = sendCommand(reliableTextCommand(clientId, chatId, text))
+        if (!accepted) {
+            _state.update {
+                if (it.activeTextSendId == clientId) it.copy(
+                    activeTextSendId = null,
+                    activeTextSendChatId = null,
+                    activeTextSendText = null,
+                ) else it
+            }
+        }
+        return accepted
     }
 
     fun editMessage(chatId: Long, messageId: Long, text: String) {
@@ -1001,7 +1050,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         when (type) {
             "connection_lifecycle" -> {
                 _state.update { current ->
-                    current.applyConnectionLifecycle(payload).copy(
+                    current.applyConnectionLifecycleAndGeneration(payload).copy(
                         lastEventType = type,
                         lastEventPayload = payload,
                     )
@@ -1013,7 +1062,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                     if (deleted == null) {
                         current.copy(lastEventType = type, lastEventPayload = payload)
                     } else {
-                        current.removeDeletedMessages(deleted.first, deleted.second).copy(
+                        current.finishBulkDelete(deleted.first, deleted.second).copy(
                             lastEventType = type,
                             lastEventPayload = payload,
                         )
@@ -1021,6 +1070,16 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 }
             }
             "state" -> applyStatePayload(payload)
+            "message_send_state_changed" -> {
+                val send = parseOutgoingTextSendEvent(payload)
+                _state.update { current ->
+                    if (send == null) current.copy(lastEventType = type, lastEventPayload = "")
+                    else current.applyOutgoingTextSend(send).copy(
+                        lastEventType = type,
+                        lastEventPayload = "",
+                    )
+                }
+            }
             "authorization_changed" -> applyAuthorizationEvent(payload)
             "chats_loaded" -> {
                 _state.update {
@@ -1134,27 +1193,6 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                             lastEventPayload = payload,
                         )
                     }
-                }
-            }
-            "connection_lifecycle" -> {
-                val sessionGeneration = connectionSessionGenerationFromEvent(payload)
-                _state.update { current ->
-                    val updated = sessionGeneration?.let(current::recordConnectionSessionGeneration) ?: current
-                    updated.copy(
-                        lastEventType = type,
-                        lastEventPayload = payload,
-                    )
-                }
-            }
-            "messages_deleted" -> {
-                _state.update {
-                    it.copy(
-                        busy = false,
-                        deletingMessages = false,
-                        deleteError = null,
-                        lastEventType = type,
-                        lastEventPayload = payload,
-                    )
                 }
             }
             "messages_forwarded" -> {
@@ -1380,6 +1418,12 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
 
         _state.update { current ->
             current.clearPendingReactionsAfterConnectionChange().copy(
+                outbox = if (authorization == AuthorizationUiStep.Ready) current.outbox else emptyMap(),
+                activeTextSendId = if (authorization == AuthorizationUiStep.Ready) current.activeTextSendId else null,
+                lastTextSendId = if (authorization == AuthorizationUiStep.Ready) current.lastTextSendId else null,
+                activeTextSendChatId = if (authorization == AuthorizationUiStep.Ready) current.activeTextSendChatId else null,
+                activeTextSendText = if (authorization == AuthorizationUiStep.Ready) current.activeTextSendText else null,
+                textSendError = if (authorization == AuthorizationUiStep.Ready) current.textSendError else null,
                 authorization = authorization,
                 selectionGeneration = if (
                     authorization != AuthorizationUiStep.Ready &&
@@ -1422,7 +1466,9 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
             val contacts = parseContactListState(root.optJSONObject("contacts"))
             val capabilities = parseChatCapabilities(root.optJSONObject("chat_capabilities"))
             val pinnedMessages = parsePinnedMessages(root.optJSONObject("pinned_messages"))
-            ParsedNativeState(authorization, chats, messages, pinnedMessages, contacts, profiles, capabilities)
+            val outbox = parseOutgoingTextOutbox(root.optJSONObject("outbox"))
+            val ledger = parseOutgoingTextOutbox(root.optJSONObject("send_ledger"))
+            ParsedNativeState(authorization, chats, messages, pinnedMessages, contacts, profiles, capabilities, outbox + ledger)
         }.onSuccess { parsed ->
             _state.update {
                 it.copy(
@@ -1439,12 +1485,16 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                     pinnedMessages = parsed.pinnedMessages,
                     profiles = parsed.profiles,
                     chatCapabilities = parsed.chatCapabilities,
+                    outbox = parsed.outbox,
                     busy = false,
                     contactsLoading = false,
                     lastEventType = "state",
                     lastEventPayload = payloadWithoutPrivateState(payload),
                     error = null,
-                )
+                ).let { parsedState ->
+                    parsedState.activeTextSendId?.let(parsed.outbox::get)?.let(parsedState::applyOutgoingTextSend)
+                        ?: parsedState
+                }
             }
         }.onFailure { error ->
             _state.update {
