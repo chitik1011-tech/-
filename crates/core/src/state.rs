@@ -760,11 +760,26 @@ impl CoreState {
             }
             CoreEvent::MessageSendStateChanged(update) => {
                 let client_id = update.client_id;
+                let mut update = update.clone();
                 if let Some(existing) = self.send_ledger.get(&client_id) {
-                    if !existing.same_request(update.chat_id, &update.text) {
+                    if !existing.same_payload(&update) {
                         self.last_error = Some(format!(
                             "client message id {client_id} was reused for a different outgoing message"
                         ));
+                        return;
+                    }
+                    if update.transfer_generation < existing.transfer_generation {
+                        // Lower-generation upload progress is stale. Non-progress
+                        // outcomes from the current runtime retain the newest generation.
+                        if matches!(update.state, OutgoingSendState::Uploading { .. }) {
+                            return;
+                        }
+                        update.transfer_generation = existing.transfer_generation;
+                    }
+                    if matches!(update.state, OutgoingSendState::Uploading { .. })
+                        && update.transfer_generation == existing.transfer_generation
+                        && update.bytes_transferred < existing.bytes_transferred
+                    {
                         return;
                     }
                 }
@@ -775,6 +790,7 @@ impl CoreState {
                         self.outbox.remove(&client_id);
                     }
                     OutgoingSendState::Sending
+                    | OutgoingSendState::Uploading { .. }
                     | OutgoingSendState::AwaitingConfirmation { .. }
                     | OutgoingSendState::FloodWait { .. }
                     | OutgoingSendState::Failed {
