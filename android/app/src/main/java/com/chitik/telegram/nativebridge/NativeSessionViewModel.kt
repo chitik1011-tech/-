@@ -390,6 +390,14 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         )
     }
 
+    fun deleteMessageForMe(chatId: Long, messageId: Long) {
+        submitMessageMutation(
+            chatId = chatId,
+            messageId = messageId,
+            commandType = "delete_message_for_me",
+        )
+    }
+
     private fun submitMessageMutation(
         chatId: Long,
         messageId: Long,
