@@ -190,10 +190,13 @@ where
                         Err(error) => operation_error_events(&command, error),
                     };
                     if matches!(&command, CoreCommand::Logout) {
-                        events.push(CoreEvent::ConnectionLifecycle {
-                            token: result.generation,
-                            event: LinkEvent::Logout,
-                        });
+                        events.insert(
+                            0,
+                            CoreEvent::ConnectionLifecycle {
+                                token: result.generation,
+                                event: LinkEvent::Logout,
+                            },
+                        );
                     }
                     attach_pinned_snapshot_revision(&mut events, result.pinned_revision);
                     complete_operation_events(&command, &mut events);
