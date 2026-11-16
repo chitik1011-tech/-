@@ -328,7 +328,9 @@ private fun TelegramRustApp(
                         val target = replyToMessageId
                         if (target != null) {
                             viewModel.replyMessage(numericChatId, target, text)
-                            // Reply uses the existing one-shot command path; retain text until reliable replies exist.
+                            draft = ""
+                            replyToMessageId = null
+                            replyToPreview = null
                         } else if (viewModel.sendText(numericChatId, text)) {
                             draft = ""
                         }
