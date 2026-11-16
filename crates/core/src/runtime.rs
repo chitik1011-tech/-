@@ -340,7 +340,7 @@ where
                                             send.text,
                                             "shutdown interrupted the backend request; delivery is unknown",
                                             send.transfer_generation,
-                                        )),
+                                        ).with_session_token(send.session_generation, send.session_epoch)),
                                         &mut reduced_state,
                                         &state_tx,
                                         &event_tx_task,
@@ -363,7 +363,7 @@ where
                                             "shutdown interrupted the media upload",
                                             true,
                                             send.transfer_generation,
-                                        )),
+                                        ).with_session_token(send.session_generation, send.session_epoch)),
                                         &mut reduced_state,
                                         &state_tx,
                                         &event_tx_task,
@@ -450,6 +450,8 @@ where
                     if let CoreCommand::SendMediaReliable {
                         client_id,
                         transfer_generation,
+                        session_generation,
+                        session_epoch,
                         ..
                     } = &mut command
                     {
@@ -457,6 +459,9 @@ where
                             .send_ledger
                             .get(client_id)
                             .map_or(1, |send| send.transfer_generation.saturating_add(1));
+                        let token = reduced_state.connection_machine.token();
+                        *session_generation = token.generation;
+                        *session_epoch = token.epoch;
                     }
 
                     // Keep the permission boundary in Rust: Compose can make a
@@ -555,6 +560,8 @@ where
                         media,
                         caption,
                         transfer_generation,
+                        session_generation,
+                        session_epoch,
                     } = &command
                     {
                         if let Some(existing) = reduced_state.send_ledger.get(client_id) {
@@ -603,7 +610,8 @@ where
                                     caption.clone(),
                                     0,
                                     *transfer_generation,
-                                )),
+                                )
+                                .with_session_token(*session_generation, *session_epoch)),
                                 &mut reduced_state,
                                 &state_tx,
                                 &event_tx_task,
@@ -916,6 +924,8 @@ fn operation_error_events(command: &CoreCommand, error: CoreError) -> Vec<CoreEv
             media,
             caption,
             transfer_generation,
+            session_generation,
+            session_epoch,
         } => vec![CoreEvent::MessageSendStateChanged(send_media_error_state(
             *client_id,
             *chat_id,
@@ -923,6 +933,8 @@ fn operation_error_events(command: &CoreCommand, error: CoreError) -> Vec<CoreEv
             caption.clone(),
             error,
             *transfer_generation,
+            *session_generation,
+            *session_epoch,
         ))],
         CoreCommand::PinMessage {
             chat_id,
@@ -1481,7 +1493,7 @@ async fn restore_state<S: StateStore>(
                                 "process restarted during media upload",
                                 true,
                                 send.transfer_generation,
-                            )
+                            ).with_session_token(send.session_generation, send.session_epoch)
                         }
                         (OutgoingSendState::Sending, Some(media)) => {
                             OutgoingSend::awaiting_confirmation_media(
@@ -1491,14 +1503,14 @@ async fn restore_state<S: StateStore>(
                                 send.text,
                                 "process restarted while the send outcome was unknown",
                                 send.transfer_generation,
-                            )
+                            ).with_session_token(send.session_generation, send.session_epoch)
                         }
                         (OutgoingSendState::Sending, None) => OutgoingSend::awaiting_confirmation(
                             send.client_id,
                             send.chat_id,
                             send.text,
                             "process restarted while the send outcome was unknown",
-                        ),
+                        ).with_session_token(send.session_generation, send.session_epoch),
                         _ => continue,
                     };
                     state.outbox.insert(client_id, recovered.clone());
@@ -1533,8 +1545,10 @@ fn send_media_error_state(
     caption: String,
     error: CoreError,
     transfer_generation: u64,
+    session_generation: u64,
+    session_epoch: u64,
 ) -> OutgoingSend {
-    match error {
+    let send = match error {
         CoreError::SendOutcomeUnknown(reason) => OutgoingSend::awaiting_confirmation_media(
             client_id, chat_id, media, caption, reason, transfer_generation,
         ),
@@ -1556,7 +1570,8 @@ fn send_media_error_state(
         other => OutgoingSend::failed_media(
             client_id, chat_id, media, caption, other.to_string(), false, transfer_generation,
         ),
-    }
+    };
+    send.with_session_token(session_generation, session_epoch)
 }
 
 fn send_error_state(client_id: i64, chat_id: i64, text: String, error: CoreError) -> OutgoingSend {
