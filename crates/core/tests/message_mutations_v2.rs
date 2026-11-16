@@ -25,6 +25,7 @@ fn message(chat_id: i64, id: i64, timestamp_unix: i64, text: &str) -> MessageSum
 
 fn seed_chat(state: &mut CoreState, chat_id: i64) {
     state.account.chats.push(ChatSummary {
+        kind: None,
         id: chat_id,
         title: format!("Known chat {chat_id}"),
         unread_count: 0,
@@ -100,6 +101,7 @@ fn duplicate_edit_is_idempotent_and_does_not_clear_later_error() {
 fn edit_for_unknown_non_preview_message_does_not_create_sparse_history() {
     let mut state = CoreState::default();
     state.account.chats.push(ChatSummary {
+        kind: None,
         id: 7,
         title: "chat".into(),
         unread_count: 0,
@@ -120,6 +122,7 @@ fn edit_for_unknown_non_preview_message_does_not_create_sparse_history() {
 fn edit_updates_preview_even_when_history_page_is_not_cached() {
     let mut state = CoreState::default();
     state.account.chats.push(ChatSummary {
+        kind: None,
         id: 7,
         title: "chat".into(),
         unread_count: 0,
@@ -291,6 +294,7 @@ fn global_delete_batch_applies_across_cached_non_channel_histories() {
 fn deleting_preview_without_cached_history_clears_stale_preview() {
     let mut state = CoreState::default();
     state.account.chats.push(ChatSummary {
+        kind: None,
         id: 7,
         title: "chat".into(),
         unread_count: 3,

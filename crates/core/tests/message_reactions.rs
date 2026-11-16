@@ -46,6 +46,7 @@ fn revision(sequence: u64) -> ReactionRevision {
 fn loaded_state() -> CoreState {
     let mut state = CoreState::default();
     state.account.chats.push(ChatSummary {
+        kind: None,
         id: CHAT_ID,
         title: "Chat".into(),
         unread_count: 0,

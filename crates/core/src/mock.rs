@@ -27,6 +27,7 @@ impl Default for MockTelegramBackend {
             authorization: AuthorizationState::Closed,
             chats: vec![
                 ChatSummary {
+                    kind: None,
                     id: 1,
                     title: "Saved Messages".into(),
                     unread_count: 0,
@@ -37,6 +38,7 @@ impl Default for MockTelegramBackend {
                     last_message: None,
                 },
                 ChatSummary {
+                    kind: None,
                     id: 2,
                     title: "Rust Telegram".into(),
                     unread_count: 1,

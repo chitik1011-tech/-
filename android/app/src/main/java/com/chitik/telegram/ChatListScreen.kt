@@ -34,9 +34,12 @@ import androidx.compose.ui.unit.dp
  * The parent should construct these values from CoreState/ChatsLoaded; this
  * component deliberately has no built-in sample or placeholder chats.
  */
+enum class ChatKindUi { Private, Group, Supergroup, Channel, Unknown }
+
 data class ChatListEntry(
     val id: Long,
     val title: String,
+    val kind: ChatKindUi = ChatKindUi.Unknown,
     val unreadCount: Long,
     val lastMessage: ChatListPreview?,
     val capabilities: ChatCapabilitiesUi = ChatCapabilitiesUi(),
@@ -63,6 +66,8 @@ fun ChatListScreen(
     onRefresh: () -> Unit,
     onOpenContacts: () -> Unit,
     onChatSelected: (Long) -> Unit,
+    onEnableNotifications: () -> Unit = {},
+    showEnableNotifications: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val contentMode = resolveAsyncContentMode(isLoading, chats.isEmpty(), error != null)
@@ -96,6 +101,9 @@ fun ChatListScreen(
                 )
             }
             Spacer(Modifier.width(8.dp))
+            if (showEnableNotifications) {
+                TextButton(onClick = onEnableNotifications) { Text("Enable alerts") }
+            }
             TextButton(onClick = onOpenContacts) { Text("Contacts") }
             Spacer(Modifier.width(4.dp))
             OutlinedButton(

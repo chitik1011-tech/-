@@ -18,6 +18,16 @@ import java.util.concurrent.atomic.AtomicReference
  * navigation changes.
  */
 class TelegramNotificationPublisher(context: Context) {
+    /** Presentation-only preview policy; never changes Rust domain data. */
+    enum class PreviewPolicy { Full, SenderAndChat, Hidden }
+
+    @Volatile
+    private var previewPolicy: PreviewPolicy = PreviewPolicy.SenderAndChat
+
+    fun setPreviewPolicy(policy: PreviewPolicy) {
+        previewPolicy = policy
+    }
+
     private val appContext = context.applicationContext
     private val notificationManager =
         appContext.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
@@ -39,6 +49,16 @@ class TelegramNotificationPublisher(context: Context) {
         val senderName: String? = null,
         val timestampMillis: Long = System.currentTimeMillis(),
     )
+
+    /** Dismisses notices for one chat after a read, delete, or navigation event. */
+    fun cancelChat(chatId: Long) {
+        if (chatId != 0L) notificationManager?.cancel(notificationTag(chatId), NOTIFICATION_ID)
+    }
+
+    /** Only clears this application's message notification tags, not other channels. */
+    fun cancelAll() {
+        notificationManager?.cancelAll()
+    }
 
     /** Marks the currently visible chat; its incoming events are not shown as notifications. */
     fun setVisibleChat(chatId: Long?) {
@@ -62,16 +82,22 @@ class TelegramNotificationPublisher(context: Context) {
         } else {
             message.senderName?.takeIf(String::isNotBlank) ?: message.chatTitle
         }.ifBlank { "Telegram" }
-        val body = message.body.ifBlank { "New message" }
+        val policy = previewPolicy
+        val visibleTitle = if (policy == PreviewPolicy.Hidden) "Telegram" else title
+        val body = when (policy) {
+            PreviewPolicy.Full -> message.body.ifBlank { "New message" }
+            PreviewPolicy.SenderAndChat, PreviewPolicy.Hidden -> "New message"
+        }
 
         val notification = Notification.Builder(appContext, channelId)
             .setSmallIcon(android.R.drawable.sym_action_chat)
-            .setContentTitle(title)
+            .setContentTitle(visibleTitle)
             .setContentText(body)
             .setStyle(Notification.BigTextStyle().bigText(body))
             .setWhen(message.timestampMillis)
             .setShowWhen(true)
             .setCategory(Notification.CATEGORY_MESSAGE)
+            .setGroup(MESSAGE_NOTIFICATION_GROUP)
             .setVisibility(Notification.VISIBILITY_PRIVATE)
             .setPublicVersion(
                 Notification.Builder(appContext, channelId)
@@ -135,5 +161,6 @@ class TelegramNotificationPublisher(context: Context) {
         const val GROUP_CHANNEL_ID = "telegram_group_messages"
         const val NOTIFICATION_TAG_PREFIX = "telegram_chat_"
         const val NOTIFICATION_ID = 1
+        const val MESSAGE_NOTIFICATION_GROUP = "telegram_message_chats"
     }
 }

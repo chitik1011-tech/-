@@ -61,6 +61,7 @@ fn message_update_reorders_cache_when_timestamp_changes() {
 fn incoming_message_increments_unread_only_when_first_inserted() {
     let mut state = CoreState::default();
     state.account.chats.push(ChatSummary {
+        kind: None,
         id: 77,
         title: "existing".into(),
         unread_count: 4,
@@ -85,6 +86,7 @@ fn incoming_message_increments_unread_only_when_first_inserted() {
 fn outgoing_message_does_not_increment_unread() {
     let mut state = CoreState::default();
     state.account.chats.push(ChatSummary {
+        kind: None,
         id: 77,
         title: "existing".into(),
         unread_count: 4,
@@ -106,6 +108,7 @@ fn outgoing_message_does_not_increment_unread() {
 fn unread_increment_saturates_at_u32_max() {
     let mut state = CoreState::default();
     state.account.chats.push(ChatSummary {
+        kind: None,
         id: 77,
         title: "existing".into(),
         unread_count: u32::MAX,
@@ -139,6 +142,7 @@ fn state_query_helpers_return_chat_messages_and_unread_total() {
     let mut state = CoreState::default();
     state.account.chats = vec![
         ChatSummary {
+            kind: None,
             id: 1,
             title: "one".into(),
             unread_count: 3,
@@ -149,6 +153,7 @@ fn state_query_helpers_return_chat_messages_and_unread_total() {
             last_message: None,
         },
         ChatSummary {
+            kind: None,
             id: 2,
             title: "two".into(),
             unread_count: 4,

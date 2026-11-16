@@ -1283,6 +1283,7 @@ mod message_ordering_tests {
 
     fn seed_chat(state: &mut CoreState, unread_count: u32) {
         state.account.chats.push(ChatSummary {
+            kind: None,
             id: 42,
             title: "Known chat".into(),
             unread_count,

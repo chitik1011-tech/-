@@ -210,6 +210,7 @@ fn chats_loaded_prunes_pinned_bookkeeping_outside_the_bounded_chat_cache() {
     assert_eq!(state.pinned_message_pts.len(), 2_000);
 
     state.reduce(&CoreEvent::ChatsLoaded(vec![ChatSummary {
+        kind: None,
         id: 2_000,
         title: "recent chat".into(),
         unread_count: 0,
