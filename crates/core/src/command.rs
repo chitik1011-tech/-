@@ -17,6 +17,8 @@ pub const MAX_BULK_MESSAGE_IDS: usize = 100;
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 pub enum CoreCommand {
     Start,
+    /// Revoke the active Telegram authorization and clear account-scoped state.
+    Logout,
     SetPhoneNumber(String),
     SubmitCode(String),
     SubmitPassword(String),
@@ -180,6 +182,7 @@ impl CoreCommand {
     pub const fn kind(&self) -> &'static str {
         match self {
             Self::Start => "start",
+            Self::Logout => "logout",
             Self::SetPhoneNumber(_) => "set_phone_number",
             Self::SubmitCode(_) => "submit_code",
             Self::SubmitPassword(_) => "submit_password",
@@ -225,7 +228,7 @@ impl CoreCommand {
 
     pub fn validate(&self) -> Result<()> {
         match self {
-            Self::Start | Self::Shutdown => Ok(()),
+            Self::Start | Self::Logout | Self::Shutdown => Ok(()),
             Self::ResolvePeer { input } => {
                 parse_peer_reference(input).map(|_| ()).map_err(Into::into)
             }

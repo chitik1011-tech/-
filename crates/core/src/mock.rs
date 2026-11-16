@@ -517,6 +517,12 @@ impl MockTelegramBackend {
                     "message reactions are not implemented by the mock backend".into(),
                 ))
             }
+            CoreCommand::Logout => {
+                self.authorization = AuthorizationState::Closed;
+                Ok(vec![CoreEvent::AuthorizationChanged(
+                    self.authorization.clone(),
+                )])
+            }
             CoreCommand::Shutdown => Ok(Vec::new()),
             CoreCommand::ResolvePeer { .. } => Err(CoreError::Backend(
                 "peer resolution is unsupported by this backend".into(),

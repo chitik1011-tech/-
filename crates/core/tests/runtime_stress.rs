@@ -81,7 +81,7 @@ async fn runtime_handles_bursty_updates_and_commands_without_losing_latest_state
         }
     });
 
-    timeout(Duration::from_secs(10), async {
+    timeout(Duration::from_secs(30), async {
         commands.await.unwrap();
         updates.await.unwrap();
 

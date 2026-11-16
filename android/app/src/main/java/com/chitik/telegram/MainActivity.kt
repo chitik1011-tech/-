@@ -217,6 +217,15 @@ private fun TelegramRustApp(
                 showContacts = true
                 viewModel.loadContacts(offset = 0)
             },
+            onLogout = {
+                selectedChatId = 0L
+                showContacts = false
+                draft = ""
+                replyToMessageId = null
+                replyToPreview = null
+                jumpToMessageId = null
+                viewModel.logout()
+            },
             onChatSelected = { chatId ->
                 selectedChatId = chatId
                 replyToMessageId = null

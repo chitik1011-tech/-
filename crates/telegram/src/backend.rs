@@ -27,17 +27,20 @@ use tokio::{
 
 use crate::{
     auth::AuthFlow,
-    chats::{PeerRegistry, find_peer, load_chats, new_peer_registry},
+    chats::{PeerRegistry, clear_peer_registry, find_peer, load_chats, new_peer_registry},
     config::TelegramConfig,
     contacts::load_contacts,
     downloads::{MediaTarget, event as media_event, spawn_download, state_from_snapshot},
-    error::{TelegramBackendError, session_error},
+    error::{TelegramBackendError, api_error, session_error},
     messages::{
         MessageDeduplicator, load_messages, load_messages_page, load_pinned_message_ids, mark_read,
         message_to_summary, search_messages_page, send_location, send_reply, send_text,
         send_text_idempotent,
     },
-    polls::{PollRegistry, new_poll_registry, poll_by_id, polls_from_updates, remember_poll},
+    polls::{
+        PollRegistry, clear_poll_registry, new_poll_registry, poll_by_id, polls_from_updates,
+        remember_poll,
+    },
     updates::{TelegramUpdate, UpdateWorkerInput, run_update_worker},
 };
 
@@ -594,6 +597,35 @@ impl GrammersBackend {
         )])
     }
 
+    async fn logout(&mut self) -> tg_mobile_core::Result<Vec<CoreEvent>> {
+        let authorized = self
+            .client
+            .is_authorized()
+            .await
+            .map_err(|error| api_error("check authorization before logout", error))?;
+        if authorized {
+            self.client
+                .sign_out()
+                .await
+                .map_err(|error| api_error("log out of Telegram", error))?;
+        }
+
+        for (_, task) in self.media_tasks.drain() {
+            task.handle.abort();
+        }
+        self.transfers = Arc::new(TransferManager::new());
+        clear_peer_registry(&self.peers).await;
+        clear_poll_registry(&self.polls).await;
+        self.dedup.clear().await;
+        self.reliable_sends.clear();
+        self.reliable_send_order.clear();
+        self.auth.close();
+
+        Ok(vec![CoreEvent::AuthorizationChanged(
+            AuthorizationState::Closed,
+        )])
+    }
+
     async fn shutdown(&mut self) -> tg_mobile_core::Result<Vec<CoreEvent>> {
         if self.stopped {
             return Ok(Vec::new());
@@ -648,6 +680,7 @@ impl GrammersBackend {
                 }
                 vec![CoreEvent::AuthorizationChanged(state)]
             }
+            CoreCommand::Logout => self.logout().await?,
             CoreCommand::SetPhoneNumber(phone) => {
                 let state = self
                     .auth

@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -68,12 +69,14 @@ fun ChatListScreen(
     error: String?,
     onRefresh: () -> Unit,
     onOpenContacts: () -> Unit,
+    onLogout: () -> Unit,
     onChatSelected: (Long) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val contentMode = resolveAsyncContentMode(isLoading, chats.isEmpty(), error != null)
     var searching by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
+    var confirmLogout by rememberSaveable { mutableStateOf(false) }
     val visibleChats = filterLoadedChats(chats, query)
     Column(modifier = modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
         TopAppBar(
@@ -94,8 +97,27 @@ fun ChatListScreen(
                 IconButton(onClick = onOpenContacts) {
                     Icon(Icons.Default.People, contentDescription = "Contacts")
                 }
+                TextButton(onClick = { confirmLogout = true }) {
+                    Text("Log out")
+                }
             },
         )
+        if (confirmLogout) {
+            AlertDialog(
+                onDismissRequest = { confirmLogout = false },
+                title = { Text("Log out of Telegram?") },
+                text = { Text("This signs out this Telegram session. You can sign in again with the same account.") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        confirmLogout = false
+                        onLogout()
+                    }) { Text("Log out") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { confirmLogout = false }) { Text("Cancel") }
+                },
+            )
+        }
         if (searching) {
             OutlinedTextField(
                 value = query,

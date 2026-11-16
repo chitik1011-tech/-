@@ -17,6 +17,7 @@ The dependency is pinned to the crates.io `0.12.0` release so all agents build t
 - `SetPhoneNumber` -> request Telegram login code -> `WaitingForCode`.
 - `SubmitCode` -> `Ready` or `WaitingForPassword`.
 - `SubmitPassword` -> `Ready`.
+- `Logout` -> Telegram `auth.logOut`, connection-generation invalidation, and account-cache clearing.
 - `LoadChats { limit }` -> real dialog fetch -> `ChatsLoaded(Vec<ChatSummary>)` with stable chat ID, title, unread count and last message.
 - `SendText` -> real Telegram send -> `MessageAdded`.
 - A continuously running update worker after authorization. New messages are mapped to `MessageAdded`; message edits and deletions are preserved in the backend-native `TelegramUpdate` stream.

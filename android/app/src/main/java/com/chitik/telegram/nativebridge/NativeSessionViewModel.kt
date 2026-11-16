@@ -260,6 +260,8 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
     val state: StateFlow<NativeUiState> = _state.asStateFlow()
 
     private val lifecycle = NativeSessionLifecycle()
+    @Volatile
+    private var restartHandleAfterLogout = false
 
     init {
         initializeNativeSession()
@@ -356,6 +358,16 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                     }
                 }
             }
+        }
+    }
+
+    fun logout() {
+        if (_state.value.authorization != AuthorizationUiStep.Ready || _state.value.busy) return
+        restartHandleAfterLogout = true
+        _state.update { it.copy(busy = true, error = null) }
+        if (!sendCommand(JSONObject().put("type", "logout").toString())) {
+            restartHandleAfterLogout = false
+            _state.update { it.copy(busy = false) }
         }
     }
 
@@ -1381,6 +1393,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 }
             }
             "error" -> {
+                restartHandleAfterLogout = false
                 val message = runCatching {
                     val root = JSONObject(payload)
                     root.optString("payload").ifBlank {
@@ -1419,8 +1432,34 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
             parseAuthorization(root.optString("payload"))
         }.getOrDefault(AuthorizationUiStep.Closed)
 
+        val loggedOut = authorization == AuthorizationUiStep.Closed
         _state.update { current ->
             current.clearPendingReactionsAfterConnectionChange().copy(
+                chats = if (loggedOut) emptyList() else current.chats,
+                profiles = if (loggedOut) emptyMap() else current.profiles,
+                profileLoadingPeerId = if (loggedOut) null else current.profileLoadingPeerId,
+                profileError = if (loggedOut) null else current.profileError,
+                contacts = if (loggedOut) emptyList() else current.contacts,
+                contactTotal = if (loggedOut) 0 else current.contactTotal,
+                contactsLoading = false,
+                chatCapabilities = if (loggedOut) emptyMap() else current.chatCapabilities,
+                messages = if (loggedOut) emptyMap() else current.messages,
+                pendingReactionKeys = if (loggedOut) emptySet() else current.pendingReactionKeys,
+                reactionConnectionToken = if (loggedOut) null else current.reactionConnectionToken,
+                reactionErrors = if (loggedOut) emptyMap() else current.reactionErrors,
+                votingPollIds = if (loggedOut) emptySet() else current.votingPollIds,
+                pollVoteErrors = if (loggedOut) emptyMap() else current.pollVoteErrors,
+                pinnedMessages = if (loggedOut) emptyMap() else current.pinnedMessages,
+                pendingPinnedMessageIds = if (loggedOut) emptySet() else current.pendingPinnedMessageIds,
+                pinnedError = if (loggedOut) null else current.pinnedError,
+                pinnedFailureKey = if (loggedOut) null else current.pinnedFailureKey,
+                loadingHistoryBefore = if (loggedOut) emptyMap() else current.loadingHistoryBefore,
+                completedHistoryBefore = if (loggedOut) emptyMap() else current.completedHistoryBefore,
+                historyPageErrors = if (loggedOut) emptyMap() else current.historyPageErrors,
+                forwardError = if (loggedOut) null else current.forwardError,
+                forwardSuccessCount = if (loggedOut) 0 else current.forwardSuccessCount,
+                messageMutationPending = if (loggedOut) false else current.messageMutationPending,
+                messageMutationError = if (loggedOut) null else current.messageMutationError,
                 outbox = if (authorization == AuthorizationUiStep.Ready) current.outbox else emptyMap(),
                 activeTextSendId = if (authorization == AuthorizationUiStep.Ready) current.activeTextSendId else null,
                 lastTextSendId = if (authorization == AuthorizationUiStep.Ready) current.lastTextSendId else null,
@@ -1438,19 +1477,19 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 },
                 deletingMessages = false,
                 deleteError = null,
-                pendingPinnedMessageIds = if (authorization != AuthorizationUiStep.Ready) emptySet() else current.pendingPinnedMessageIds,
-                pinnedMessages = if (authorization != AuthorizationUiStep.Ready) emptyMap() else current.pinnedMessages,
-                pinnedError = if (authorization != AuthorizationUiStep.Ready) null else current.pinnedError,
-                pinnedFailureKey = if (authorization != AuthorizationUiStep.Ready) null else current.pinnedFailureKey,
                 busy = false,
-                contactsLoading = false,
                 lastEventType = "authorization_changed",
                 lastEventPayload = payload,
                 error = null,
             )
         }
 
-        if (authorization == AuthorizationUiStep.Ready) {
+        if (loggedOut && restartHandleAfterLogout) {
+            restartHandleAfterLogout = false
+            // The old Grammers update worker is scoped to this connection generation.
+            // Recreate the native handle so a later sign-in gets a fresh update stream.
+            restartAuthorization()
+        } else if (authorization == AuthorizationUiStep.Ready) {
             loadChats()
             loadContacts(offset = 0)
         }
