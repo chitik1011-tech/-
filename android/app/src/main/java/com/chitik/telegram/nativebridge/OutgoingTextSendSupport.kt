@@ -56,7 +56,9 @@ data class OutgoingTextSendUi(
         get() = status == "failed" || status == "rejected"
 
     val canRetry: Boolean
-        get() = status == "failed" && retryable && media != null
+        get() = media != null && (
+            status == "awaiting_confirmation" || (status == "failed" && retryable)
+        )
 
     val canCancel: Boolean
         get() = status == "uploading" && media != null
