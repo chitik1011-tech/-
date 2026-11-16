@@ -326,9 +326,12 @@ impl CoreState {
                 self.chat_capabilities
                     .retain(|chat_id, _| chat_ids.contains(chat_id));
                 // Bound pin snapshots and per-chat ordering metadata to the recent dialog cache.
-                self.pinned_messages.retain(|chat_id, _| chat_ids.contains(chat_id));
-                self.pinned_message_pts.retain(|chat_id, _| chat_ids.contains(chat_id));
-                self.pinned_message_revision.retain(|chat_id, _| chat_ids.contains(chat_id));
+                self.pinned_messages
+                    .retain(|chat_id, _| chat_ids.contains(chat_id));
+                self.pinned_message_pts
+                    .retain(|chat_id, _| chat_ids.contains(chat_id));
+                self.pinned_message_revision
+                    .retain(|chat_id, _| chat_ids.contains(chat_id));
                 if self.connection_machine.phase() == LinkPhase::Synchronizing {
                     let token = self.connection_machine.token();
                     if matches!(
