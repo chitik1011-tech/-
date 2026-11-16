@@ -3,7 +3,7 @@ use std::{
     pin::Pin,
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicU8, Ordering},
     },
     task::{Context, Poll},
 };
@@ -20,6 +20,37 @@ use tokio::{
 };
 
 use crate::messages::{MessageDeduplicator, send_media_idempotent};
+
+const STAGE_UPLOADING: u8 = 0;
+const STAGE_SENDING: u8 = 1;
+const STAGE_CANCELLED: u8 = 2;
+
+#[derive(Debug, Default)]
+pub(crate) struct MediaSendStage(AtomicU8);
+
+impl MediaSendStage {
+    pub(crate) fn try_begin_send(&self) -> bool {
+        self.0
+            .compare_exchange(
+                STAGE_UPLOADING,
+                STAGE_SENDING,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_ok()
+    }
+
+    pub(crate) fn try_cancel(&self) -> bool {
+        self.0
+            .compare_exchange(
+                STAGE_UPLOADING,
+                STAGE_CANCELLED,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_ok()
+    }
+}
 
 /// Spawn a single upload/send attempt. TransferManager owns cancellation and
 /// invalidates progress callbacks from any cancelled generation.
@@ -38,7 +69,7 @@ pub(crate) fn spawn_media_send(
     transfers: Arc<TransferManager>,
     updates: BackendUpdateSender,
     dedup: Arc<MessageDeduplicator>,
-    send_stage: Arc<AtomicBool>,
+    send_stage: Arc<MediaSendStage>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         let active = match transfers.start_upload(transfer_token) {
@@ -163,7 +194,9 @@ pub(crate) fn spawn_media_send(
 
         // From this point a server send may be in flight. Keep the same MTProto
         // random_id on retries; cancellation is refused once this phase starts.
-        send_stage.store(true, Ordering::Release);
+        if !send_stage.try_begin_send() {
+            return;
+        }
         let sending = OutgoingSend::sending_media(
             client_id,
             chat_id,
@@ -332,3 +365,22 @@ impl AsyncRead for ProgressReader {
         result
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn upload_cancellation_and_send_submission_are_mutually_exclusive() {
+        let cancelled = MediaSendStage::default();
+        assert!(cancelled.try_cancel());
+        assert!(!cancelled.try_begin_send());
+        assert!(!cancelled.try_cancel());
+
+        let sending = MediaSendStage::default();
+        assert!(sending.try_begin_send());
+        assert!(!sending.try_cancel());
+        assert!(!sending.try_begin_send());
+    }
+}
+
