@@ -242,7 +242,7 @@ pub(crate) fn spawn_media_send(
             }
             Err(error) => {
                 let retryable = matches!(
-                    error,
+                    &error,
                     CoreError::TransientSend(_)
                         | CoreError::TransientTransport(_)
                         | CoreError::FloodWait { .. }
