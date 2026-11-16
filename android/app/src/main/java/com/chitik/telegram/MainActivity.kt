@@ -262,7 +262,7 @@ private fun TelegramRustApp(
                     draft = draft,
                     loading = state.busy,
                     sending = state.sendingText && state.activeTextSendChatId == selectedChatId,
-                    error = state.error,
+                    error = state.textSendError ?: state.error,
                     pendingReactionKeys = state.pendingReactionKeys,
                     reactionErrors = state.reactionErrors,
                     forwardingError = state.forwardError,
