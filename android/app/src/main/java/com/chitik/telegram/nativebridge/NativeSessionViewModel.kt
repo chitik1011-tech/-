@@ -50,6 +50,7 @@ data class NativeUiState(
     val forwardError: String? = null,
     val forwardSuccessCount: Long = 0,
     val selectionGeneration: Long = 0,
+    val lastConnectionSessionGeneration: Long? = null,
     val deletingMessages: Boolean = false,
     val deleteError: String? = null,
     val busy: Boolean = false,
@@ -78,6 +79,19 @@ internal fun NativeUiState.advanceSelectionGeneration(): NativeUiState = copy(
         deleteError
     },
 )
+
+internal fun NativeUiState.recordConnectionSessionGeneration(generation: Long): NativeUiState =
+    when (lastConnectionSessionGeneration) {
+        null -> copy(lastConnectionSessionGeneration = generation)
+        generation -> this
+        else -> copy(lastConnectionSessionGeneration = generation).advanceSelectionGeneration()
+    }
+
+internal fun connectionSessionGenerationFromEvent(payload: String): Long? = runCatching {
+    val eventPayload = JSONObject(payload).optJSONObject("payload") ?: return@runCatching null
+    val token = eventPayload.optJSONObject("token") ?: return@runCatching null
+    token.optLong("generation", -1L).takeIf { it >= 0L }
+}.getOrNull()
 
 class NativeSessionViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -783,8 +797,10 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 }
             }
             "connection_lifecycle" -> {
-                _state.update {
-                    it.advanceSelectionGeneration().copy(
+                val sessionGeneration = connectionSessionGenerationFromEvent(payload)
+                _state.update { current ->
+                    val updated = sessionGeneration?.let(current::recordConnectionSessionGeneration) ?: current
+                    updated.copy(
                         lastEventType = type,
                         lastEventPayload = payload,
                     )
@@ -796,7 +812,6 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                         busy = false,
                         deletingMessages = false,
                         deleteError = null,
-                        selectionGeneration = it.selectionGeneration + 1,
                         lastEventType = type,
                         lastEventPayload = payload,
                     )
@@ -880,10 +895,13 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         _state.update {
             it.copy(
                 authorization = authorization,
-                selectionGeneration = if (authorization == AuthorizationUiStep.Ready) {
-                    it.selectionGeneration
-                } else {
+                selectionGeneration = if (
+                    authorization != AuthorizationUiStep.Ready &&
+                    it.authorization == AuthorizationUiStep.Ready
+                ) {
                     it.selectionGeneration + 1
+                } else {
+                    it.selectionGeneration
                 },
                 deletingMessages = false,
                 deleteError = null,
