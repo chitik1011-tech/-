@@ -213,8 +213,7 @@ pub(crate) fn spawn_media_send(
             &client,
             peer,
             uploaded,
-            media.kind,
-            &media.mime_type,
+            &media,
             caption.clone(),
             client_id,
         )
