@@ -143,6 +143,12 @@ private fun TelegramRustApp(
                     error = state.error,
                     forwardingError = state.forwardError,
                     forwardSuccessCount = state.forwardSuccessCount,
+                    messageMutationPending = state.messageMutationPending,
+                    messageMutationError = state.messageMutationError,
+                    messageMutationChatId = state.messageMutationChatId,
+                    messageMutationMessageId = state.messageMutationMessageId,
+                    messageMutationSuccessCount = state.messageMutationSuccessCount,
+                    messageMutationSuccessChatId = state.messageMutationSuccessChatId,
                 ),
                 onBack = {
                     selectedChatId = 0L
@@ -156,6 +162,8 @@ private fun TelegramRustApp(
                     }
                 },
                 onPollVote = viewModel::votePoll,
+                onEditMessage = viewModel::editMessage,
+                onDeleteMessageForEveryone = viewModel::deleteMessageForEveryone,
                 onForward = { sourceChatId, messageIds ->
                     forwardingSourceChatId = sourceChatId
                     forwardingMessageIds = messageIds
