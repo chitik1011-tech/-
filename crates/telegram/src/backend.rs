@@ -672,6 +672,26 @@ impl GrammersBackend {
                 let chats = load_chats(&self.client, &self.peers, limit).await?;
                 vec![CoreEvent::ChatsLoaded(chats)]
             }
+            CoreCommand::LoadProfile { peer_id } => {
+                self.require_ready().await?;
+                let peer_ref = find_peer(&self.peers, peer_id)
+                    .await
+                    .ok_or(TelegramBackendError::UnknownChat(peer_id))?;
+                let peer = self
+                    .client
+                    .resolve_peer(peer_ref)
+                    .await
+                    .map_err(|error| crate::error::api_error("load profile", error))?;
+                let mut profile = crate::profiles::profile_from_peer(peer_id, &peer);
+                crate::profiles::hydrate_profile(
+                    &self.client,
+                    &peer,
+                    &mut profile,
+                    &self.media_cache,
+                )
+                .await;
+                vec![CoreEvent::ProfileUpdated(profile)]
+            }
             CoreCommand::LoadContacts { offset, limit } => {
                 self.require_ready().await?;
                 let (total, contacts) =

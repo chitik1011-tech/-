@@ -138,3 +138,5 @@ Pinned message state is stored per chat as Telegram message IDs. `LoadPinnedMess
 ## Safety
 
 This crate forbids unsafe Rust. FFI-specific unsafe code belongs in a narrow Android or protocol bridge crate, not in core.
+
+No-pts pin RPC acknowledgements are provisional only until a Telegram update establishes a pts watermark for that chat; after that, only newer pts updates can change the cached pinned set. On each bounded recent-dialog refresh, pinned snapshots and their pts/revision guards are pruned for chats outside the cache.

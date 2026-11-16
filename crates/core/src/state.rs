@@ -9,7 +9,7 @@ use crate::{
     event::CoreEvent,
     model::{
         AccountState, AttachmentDownloadState, ChatFolder, ChatSummary, Draft, MessageHistoryState,
-        MessageSummary, ReadDirection, ReadReceipt,
+        MessageSummary, PeerProfile, ReadDirection, ReadReceipt,
     },
     poll::PollSummary,
     search::MessageSearchState,
@@ -18,6 +18,7 @@ use crate::{
 
 pub const MAX_CACHED_MESSAGES_PER_CHAT: usize = 512;
 pub const MAX_CACHED_POLLS: usize = 512;
+pub const MAX_CACHED_PROFILES: usize = 128;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CoreState {
@@ -33,6 +34,11 @@ pub struct CoreState {
     #[serde(default)]
     pub connection_machine: ConnectionMachine,
     pub messages: BTreeMap<i64, Vec<MessageSummary>>,
+    #[serde(default)]
+    pub profiles: BTreeMap<i64, PeerProfile>,
+    /// FIFO order for the bounded, in-memory profile cache.
+    #[serde(default)]
+    pub profile_order: VecDeque<i64>,
     /// Telegram's monotonic per-chat inbox and outbox read boundaries.
     #[serde(default)]
     pub read_receipts: BTreeMap<i64, ReadReceipt>,
@@ -83,6 +89,8 @@ impl Default for CoreState {
             connection_state: ConnectionState::Disconnected,
             connection_machine: ConnectionMachine::default(),
             messages: BTreeMap::new(),
+            profiles: BTreeMap::new(),
+            profile_order: VecDeque::new(),
             read_receipts: BTreeMap::new(),
             message_history: BTreeMap::new(),
             message_search: MessageSearchState::default(),
@@ -101,14 +109,19 @@ impl Default for CoreState {
 }
 
 impl CoreState {
-    /// Clone the live state for persistence, omitting session-only contacts.
-    /// Contact fields remain available in the live JNI state.
+    /// Clone live state for persistence, omitting session-only contacts and
+    /// transient personal profile data while retaining both in live state.
     pub fn persistence_snapshot(&self) -> Self {
         let mut snapshot = self.clone();
         snapshot.contacts = ContactBook::default();
+        snapshot.profiles.clear();
+        snapshot.profile_order.clear();
         snapshot
     }
 
+    pub fn profile(&self, peer_id: i64) -> Option<&PeerProfile> {
+        self.profiles.get(&peer_id)
+    }
     /// Validate persisted or externally constructed state invariants.
     pub fn validate(&self) -> crate::error::Result<()> {
         use crate::error::CoreError;
@@ -243,6 +256,19 @@ impl CoreState {
 
     pub fn reduce(&mut self, event: &CoreEvent) {
         match event {
+            CoreEvent::ProfileUpdated(profile) => {
+                let peer_id = profile.peer_id;
+                if !self.profiles.contains_key(&peer_id) {
+                    self.profile_order.push_back(peer_id);
+                }
+                self.profiles.insert(profile.peer_id, profile.clone());
+                while self.profile_order.len() > MAX_CACHED_PROFILES {
+                    if let Some(evicted) = self.profile_order.pop_front() {
+                        self.profiles.remove(&evicted);
+                    }
+                }
+                self.last_error = None;
+            }
             CoreEvent::State(account) => {
                 self.account = account.clone();
                 self.last_error = None;
