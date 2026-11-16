@@ -5,6 +5,7 @@ use std::{
 
 use crate::{
     backend::{BackendFuture, TelegramBackend},
+    capabilities::{CapabilityValue, ChatCapabilities, ChatKind},
     command::CoreCommand,
     error::{CoreError, Result},
     event::CoreEvent,
@@ -115,8 +116,13 @@ impl MockTelegramBackend {
                 )])
             }
             CoreCommand::LoadChats { limit } => {
-                let chats = self.chats.iter().take(limit).cloned().collect();
-                Ok(vec![CoreEvent::ChatsLoaded(chats)])
+                let chats: Vec<_> = self.chats.iter().take(limit).cloned().collect();
+                let mut events = vec![CoreEvent::ChatsLoaded(chats.clone())];
+                events.extend(
+                    chats.into_iter()
+                        .map(|chat| CoreEvent::ChatCapabilitiesUpdated(mock_capabilities(chat.id))),
+                );
+                Ok(events)
             }
             CoreCommand::LoadProfile { peer_id } => Ok(vec![CoreEvent::ProfileUpdated(
                 PeerProfile::unknown(peer_id),
@@ -453,4 +459,19 @@ fn unix_timestamp() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs() as i64)
         .unwrap_or_default()
+}
+
+fn mock_capabilities(chat_id: i64) -> ChatCapabilities {
+    let mut capabilities = ChatCapabilities {
+        chat_id,
+        chat_kind: ChatKind::Private,
+        can_send_messages: CapabilityValue::Known(true),
+        can_send_media: CapabilityValue::Known(true),
+        can_forward_messages: CapabilityValue::Known(true),
+        slow_mode_enabled: CapabilityValue::Known(false),
+        slow_mode_remaining_seconds: CapabilityValue::Known(None),
+        ..ChatCapabilities::default()
+    };
+    capabilities.refresh_derived();
+    capabilities
 }
