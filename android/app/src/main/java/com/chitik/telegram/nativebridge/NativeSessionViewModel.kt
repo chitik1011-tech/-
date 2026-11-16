@@ -87,6 +87,7 @@ data class NativeUiState(
     val failedTextSendId: Long? = null,
     val failedTextSendText: String? = null,
     val textSendError: String? = null,
+    val mediaImportInProgress: Boolean = false,
     val deleteError: String? = null,
     val busy: Boolean = false,
     val lastEventType: String = "none",
@@ -94,8 +95,8 @@ data class NativeUiState(
     val error: String? = null,
 ) {
     val sendingText: Boolean
-        get() = activeTextSendId != null &&
-            (outbox[activeTextSendId]?.isInFlight ?: true)
+        get() = mediaImportInProgress || (activeTextSendId != null &&
+            (outbox[activeTextSendId]?.isInFlight ?: true))
 
     val coreReady: Boolean
         get() = libraryLoaded && nativeHandle != 0L && error == null
@@ -748,17 +749,27 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         caption: String,
         onQueued: (Boolean) -> Unit = {},
     ) {
-        if (chatId == 0L || _state.value.sendingText) {
+        if (chatId == 0L || _state.value.authorization != AuthorizationUiStep.Ready ||
+            _state.value.sendingText
+        ) {
             onQueued(false)
             return
         }
+        _state.update { it.copy(mediaImportInProgress = true, textSendError = null, error = null) }
         viewModelScope.launch(Dispatchers.IO) {
             val accepted = runCatching {
                 val media = importPickedMedia(getApplication(), uri)
-                queueMediaSend(nextPositiveClientMessageId(), chatId, media, caption)
+                if (_state.value.authorization != AuthorizationUiStep.Ready) {
+                    java.io.File(media.path).delete()
+                    false
+                } else {
+                    queueMediaSend(nextPositiveClientMessageId(), chatId, media, caption)
+                }
             }.onFailure { error ->
+                _state.update { it.copy(mediaImportInProgress = false) }
                 setErrorIfOpen(error.message ?: "Could not import selected media")
             }.getOrDefault(false)
+            if (!accepted) _state.update { it.copy(mediaImportInProgress = false) }
             withContext(Dispatchers.Main) { onQueued(accepted) }
         }
     }
@@ -785,7 +796,9 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         media: PickedOutgoingMedia,
         caption: String,
     ): Boolean {
-        if (clientId <= 0L || chatId == 0L || _state.value.sendingText) return false
+        if (clientId <= 0L || chatId == 0L ||
+            (_state.value.sendingText && !_state.value.mediaImportInProgress)
+        ) return false
         _state.update {
             it.copy(
                 activeTextSendId = clientId,
@@ -795,6 +808,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 failedTextSendId = null,
                 failedTextSendText = null,
                 textSendError = null,
+                mediaImportInProgress = false,
             )
         }
         val mediaPayload = JSONObject()
