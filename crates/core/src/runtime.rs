@@ -472,7 +472,6 @@ where
                                 OutgoingSendState::Sent { .. }
                                     | OutgoingSendState::Rejected { .. }
                                     | OutgoingSendState::Sending
-                                    | OutgoingSendState::AwaitingConfirmation { .. }
                                     | OutgoingSendState::Failed {
                                         retryable: false,
                                         ..
@@ -549,7 +548,6 @@ where
                                     | OutgoingSendState::Rejected { .. }
                                     | OutgoingSendState::Sending
                                     | OutgoingSendState::Uploading { .. }
-                                    | OutgoingSendState::AwaitingConfirmation { .. }
                                     | OutgoingSendState::Failed {
                                         retryable: false,
                                         ..
