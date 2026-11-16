@@ -348,7 +348,10 @@ impl AsyncRead for ProgressReader {
                 let current = this.transferred;
                 if current.saturating_sub(this.last_reported) >= this.threshold {
                     if this.transfers.report_progress(this.token, current).is_err() {
-                        return result;
+                        return Poll::Ready(Err(io::Error::new(
+                            io::ErrorKind::Interrupted,
+                            "media upload was cancelled",
+                        )));
                     }
                     let progress = this
                         .base
