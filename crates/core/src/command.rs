@@ -384,9 +384,9 @@ impl CoreCommand {
                 chat_id,
                 text,
             } => {
-                if *client_id == 0 {
+                if *client_id <= 0 {
                     return Err(CoreError::InvalidInput(
-                        "client message id must be non-zero".into(),
+                        "client message id must be positive".into(),
                     ));
                 }
                 validate_chat_id(*chat_id)?;
@@ -414,9 +414,9 @@ impl CoreCommand {
                 Ok(())
             }
             Self::CancelMediaSend { client_id } => {
-                if *client_id == 0 {
+                if *client_id <= 0 {
                     Err(CoreError::InvalidInput(
-                        "client message id must be non-zero".into(),
+                        "client message id must be positive".into(),
                     ))
                 } else {
                     Ok(())
