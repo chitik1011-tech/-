@@ -32,8 +32,7 @@ use crate::{
     error::{TelegramBackendError, session_error},
     messages::{
         MessageDeduplicator, load_messages, load_messages_page, mark_read, message_to_summary,
-        send_reply,
-        search_messages_page, send_text, send_text_idempotent,
+        search_messages_page, send_reply, send_text, send_text_idempotent,
     },
     polls::{PollRegistry, new_poll_registry, poll_by_id, polls_from_updates, remember_poll},
     updates::{TelegramUpdate, UpdateWorkerInput, run_update_worker},
