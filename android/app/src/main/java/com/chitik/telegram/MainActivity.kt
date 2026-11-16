@@ -90,6 +90,7 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         pendingTelegramLink = TelegramDeepLinkRouter.parseIntent(intent.action, intent.dataString)
+        pendingNotificationChatId = TelegramNotificationRoute.parse(intent)?.chatId
     }
 }
 
