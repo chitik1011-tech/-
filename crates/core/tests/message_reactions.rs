@@ -178,7 +178,10 @@ fn newer_connection_revision_wins_and_deleted_messages_cannot_be_resurrected() {
     state.reduce(&mk_update(old_token, 50, vec![emoji("👍", 1, false)]));
     state.reduce(&mk_update(new_token, 1, vec![emoji("❤️", 2, true)]));
     state.reduce(&mk_update(old_token, 99, vec![emoji("🔥", 3, false)]));
-    assert_eq!(state.messages_for_chat(CHAT_ID)[0].reactions, vec![emoji("❤️", 2, true)]);
+    assert_eq!(
+        state.messages_for_chat(CHAT_ID)[0].reactions,
+        vec![emoji("❤️", 2, true)]
+    );
 
     state.reduce(&CoreEvent::MessagesDeleted {
         chat_id: Some(CHAT_ID),
