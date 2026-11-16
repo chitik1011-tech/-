@@ -66,3 +66,11 @@ jobs:
           apk="app/build/outputs/apk/debug/app-debug.apk"
           test -f "$apk"
           unzip -Z1 "$apk" | grep -Fx "lib/arm64-v8a/libtg_android_bridge.so"
+
+      - name: Upload debug APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tg-mobile-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
