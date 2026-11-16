@@ -18,6 +18,16 @@ import java.util.concurrent.atomic.AtomicReference
  * navigation changes.
  */
 class TelegramNotificationPublisher(context: Context) {
+    /** Presentation-only preview policy; never changes Rust domain data. */
+    enum class PreviewPolicy { Full, SenderAndChat, Hidden }
+
+    @Volatile
+    private var previewPolicy: PreviewPolicy = PreviewPolicy.SenderAndChat
+
+    fun setPreviewPolicy(policy: PreviewPolicy) {
+        previewPolicy = policy
+    }
+
     private val appContext = context.applicationContext
     private val notificationManager =
         appContext.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
@@ -72,11 +82,16 @@ class TelegramNotificationPublisher(context: Context) {
         } else {
             message.senderName?.takeIf(String::isNotBlank) ?: message.chatTitle
         }.ifBlank { "Telegram" }
-        val body = message.body.ifBlank { "New message" }
+        val policy = previewPolicy
+        val visibleTitle = if (policy == PreviewPolicy.Hidden) "Telegram" else title
+        val body = when (policy) {
+            PreviewPolicy.Full -> message.body.ifBlank { "New message" }
+            PreviewPolicy.SenderAndChat, PreviewPolicy.Hidden -> "New message"
+        }
 
         val notification = Notification.Builder(appContext, channelId)
             .setSmallIcon(android.R.drawable.sym_action_chat)
-            .setContentTitle(title)
+            .setContentTitle(visibleTitle)
             .setContentText(body)
             .setStyle(Notification.BigTextStyle().bigText(body))
             .setWhen(message.timestampMillis)
