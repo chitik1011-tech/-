@@ -77,12 +77,22 @@ data class NativeUiState(
     val selectionGeneration: Long = 0,
     val lastConnectionSessionGeneration: Long? = null,
     val deletingMessages: Boolean = false,
+    val outbox: Map<Long, OutgoingTextSendUi> = emptyMap(),
+    val activeTextSendId: Long? = null,
+    val activeTextSendChatId: Long? = null,
+    val activeTextSendText: String? = null,
+    val failedTextSendId: Long? = null,
+    val failedTextSendText: String? = null,
     val deleteError: String? = null,
     val busy: Boolean = false,
     val lastEventType: String = "none",
     val lastEventPayload: String = "",
     val error: String? = null,
 ) {
+    val sendingText: Boolean
+        get() = activeTextSendId != null &&
+            (outbox[activeTextSendId]?.isInFlight ?: true)
+
     val coreReady: Boolean
         get() = libraryLoaded && nativeHandle != 0L && error == null
 }
@@ -186,11 +196,18 @@ private data class ParsedNativeState(
     val contacts: List<ContactListEntry>,
     val profiles: Map<Long, PeerProfileUi>,
     val chatCapabilities: Map<Long, ChatCapabilitiesUi>,
+    val outbox: Map<Long, OutgoingTextSendUi>,
 )
 
 internal fun NativeUiState.advanceSelectionGeneration(): NativeUiState = copy(
     selectionGeneration = selectionGeneration + 1,
     deletingMessages = false,
+    activeTextSendId = null,
+    activeTextSendChatId = null,
+    activeTextSendText = null,
+    outbox = emptyMap(),
+    failedTextSendId = null,
+    failedTextSendText = null,
     pinnedMessages = emptyMap(),
     pendingPinnedMessageIds = emptySet(),
     pinnedError = null,
@@ -658,18 +675,30 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         )
     }
 
-    fun sendText(chatId: Long, text: String) {
-        sendCommand(
-            JSONObject()
-                .put("type", "send_text")
-                .put(
-                    "payload",
-                    JSONObject()
-                        .put("chat_id", chatId)
-                        .put("text", text),
-                )
-                .toString(),
-        )
+    fun sendText(chatId: Long, text: String): Boolean {
+        if (chatId == 0L || text.isBlank() || _state.value.sendingText) return false
+        val clientId = nextPositiveClientMessageId()
+        _state.update {
+            it.copy(
+                activeTextSendId = clientId,
+                activeTextSendChatId = chatId,
+                activeTextSendText = text,
+                failedTextSendId = null,
+                failedTextSendText = null,
+                error = null,
+            )
+        }
+        val accepted = sendCommand(reliableTextCommand(clientId, chatId, text))
+        if (!accepted) {
+            _state.update {
+                if (it.activeTextSendId == clientId) it.copy(
+                    activeTextSendId = null,
+                    activeTextSendChatId = null,
+                    activeTextSendText = null,
+                ) else it
+            }
+        }
+        return accepted
     }
 
     fun editMessage(chatId: Long, messageId: Long, text: String) {
@@ -1001,7 +1030,9 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         when (type) {
             "connection_lifecycle" -> {
                 _state.update { current ->
-                    current.applyConnectionLifecycle(payload).copy(
+                    val updated = current.applyConnectionLifecycle(payload)
+                    val generation = connectionSessionGenerationFromEvent(payload)
+                    (generation?.let(updated::recordConnectionSessionGeneration) ?: updated).copy(
                         lastEventType = type,
                         lastEventPayload = payload,
                     )
@@ -1014,6 +1045,9 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                         current.copy(lastEventType = type, lastEventPayload = payload)
                     } else {
                         current.removeDeletedMessages(deleted.first, deleted.second).copy(
+                            busy = false,
+                            deletingMessages = false,
+                            deleteError = null,
                             lastEventType = type,
                             lastEventPayload = payload,
                         )
@@ -1021,6 +1055,16 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 }
             }
             "state" -> applyStatePayload(payload)
+            "message_send_state_changed" -> {
+                val send = parseOutgoingTextSendEvent(payload)
+                _state.update { current ->
+                    if (send == null) current.copy(lastEventType = type, lastEventPayload = "")
+                    else current.applyOutgoingTextSend(send).copy(
+                        lastEventType = type,
+                        lastEventPayload = "",
+                    )
+                }
+            }
             "authorization_changed" -> applyAuthorizationEvent(payload)
             "chats_loaded" -> {
                 _state.update {
@@ -1134,27 +1178,6 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                             lastEventPayload = payload,
                         )
                     }
-                }
-            }
-            "connection_lifecycle" -> {
-                val sessionGeneration = connectionSessionGenerationFromEvent(payload)
-                _state.update { current ->
-                    val updated = sessionGeneration?.let(current::recordConnectionSessionGeneration) ?: current
-                    updated.copy(
-                        lastEventType = type,
-                        lastEventPayload = payload,
-                    )
-                }
-            }
-            "messages_deleted" -> {
-                _state.update {
-                    it.copy(
-                        busy = false,
-                        deletingMessages = false,
-                        deleteError = null,
-                        lastEventType = type,
-                        lastEventPayload = payload,
-                    )
                 }
             }
             "messages_forwarded" -> {
@@ -1380,6 +1403,10 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
 
         _state.update { current ->
             current.clearPendingReactionsAfterConnectionChange().copy(
+                outbox = if (authorization == AuthorizationUiStep.Ready) current.outbox else emptyMap(),
+                activeTextSendId = if (authorization == AuthorizationUiStep.Ready) current.activeTextSendId else null,
+                activeTextSendChatId = if (authorization == AuthorizationUiStep.Ready) current.activeTextSendChatId else null,
+                activeTextSendText = if (authorization == AuthorizationUiStep.Ready) current.activeTextSendText else null,
                 authorization = authorization,
                 selectionGeneration = if (
                     authorization != AuthorizationUiStep.Ready &&
@@ -1422,7 +1449,9 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
             val contacts = parseContactListState(root.optJSONObject("contacts"))
             val capabilities = parseChatCapabilities(root.optJSONObject("chat_capabilities"))
             val pinnedMessages = parsePinnedMessages(root.optJSONObject("pinned_messages"))
-            ParsedNativeState(authorization, chats, messages, pinnedMessages, contacts, profiles, capabilities)
+            val outbox = parseOutgoingTextOutbox(root.optJSONObject("outbox"))
+            val ledger = parseOutgoingTextOutbox(root.optJSONObject("send_ledger"))
+            ParsedNativeState(authorization, chats, messages, pinnedMessages, contacts, profiles, capabilities, outbox + ledger)
         }.onSuccess { parsed ->
             _state.update {
                 it.copy(
@@ -1439,6 +1468,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                     pinnedMessages = parsed.pinnedMessages,
                     profiles = parsed.profiles,
                     chatCapabilities = parsed.chatCapabilities,
+                    outbox = parsed.outbox,
                     busy = false,
                     contactsLoading = false,
                     lastEventType = "state",
