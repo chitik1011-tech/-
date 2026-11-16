@@ -143,6 +143,9 @@ private fun TelegramRustApp(
                     error = state.error,
                     forwardingError = state.forwardError,
                     forwardSuccessCount = state.forwardSuccessCount,
+                    selectionGeneration = state.selectionGeneration,
+                    deletingMessages = state.deletingMessages,
+                    deleteError = state.deleteError,
                 ),
                 onBack = {
                     selectedChatId = 0L
@@ -160,6 +163,14 @@ private fun TelegramRustApp(
                     forwardingSourceChatId = sourceChatId
                     forwardingMessageIds = messageIds
                     showForwardTargets = messageIds.isNotEmpty()
+                },
+                onDelete = viewModel::deleteMessages,
+                onCopy = { text ->
+                    if (text.isNotBlank()) {
+                        context.getSystemService(android.content.ClipboardManager::class.java)
+                            ?.setPrimaryClip(android.content.ClipData.newPlainText("Telegram messages", text))
+                        Toast.makeText(context, "Сообщения скопированы", Toast.LENGTH_SHORT).show()
+                    }
                 },
                 onRetry = { viewModel.loadMessages(selectedChatId) },
                 onDownloadMedia = { messageId, attachmentIndex, retry ->
