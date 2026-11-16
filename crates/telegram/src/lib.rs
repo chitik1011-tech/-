@@ -13,6 +13,7 @@ mod error;
 mod ids;
 mod messages;
 mod polls;
+mod profiles;
 mod updates;
 
 pub use backend::GrammersBackend;

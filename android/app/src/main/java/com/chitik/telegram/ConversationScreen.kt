@@ -174,6 +174,7 @@ fun ConversationScreen(
     onDelete: (chatId: Long, messageIds: List<Long>) -> Unit,
     onCopy: (text: String) -> Unit,
     onRetry: () -> Unit,
+    onOpenProfile: () -> Unit,
     onDownloadMedia: (messageId: Long, attachmentIndex: Int, retry: Boolean) -> Unit,
     onCancelMedia: (messageId: Long, attachmentIndex: Int) -> Unit,
     onOpenDocument: (MediaAttachmentUi) -> Unit,
@@ -223,7 +224,7 @@ fun ConversationScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Column {
+                    Column(modifier = Modifier.clickable(onClick = onOpenProfile)) {
                         Text(
                             text = if (selectionActive) {
                                 "${selectedMessageIds.size} выбрано"

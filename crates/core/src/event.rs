@@ -7,7 +7,7 @@ use crate::{
     forwarding::ForwardMessagesResult,
     model::{
         AccountState, AttachmentDownloadState, AuthorizationState, ChatActivityKind, ChatSummary,
-        MessageSummary,
+        MessageSummary, PeerProfile,
     },
     peer::PeerResolution,
     poll::PollSummary,
@@ -83,6 +83,7 @@ pub enum CoreEvent {
         error: String,
     },
     MessageAdded(MessageSummary),
+    ProfileUpdated(PeerProfile),
     ChatArchived {
         chat_id: i64,
         archived: bool,
@@ -178,6 +179,7 @@ impl CoreEvent {
             Self::MessageSearchCompleted(_) => "message_search_completed",
             Self::MessageSearchFailed { .. } => "message_search_failed",
             Self::MessageAdded(_) => "message_added",
+            Self::ProfileUpdated(_) => "profile_updated",
             Self::ChatArchived { .. } => "chat_archived",
             Self::ChatMuted { .. } => "chat_muted",
             Self::ChatPinned { .. } => "chat_pinned",

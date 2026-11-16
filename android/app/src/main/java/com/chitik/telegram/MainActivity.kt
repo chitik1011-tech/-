@@ -140,6 +140,7 @@ private fun TelegramRustApp(
     var showForwardTargets by remember { mutableStateOf(false) }
     var forwardingSourceChatId by remember { mutableLongStateOf(0L) }
     var forwardingMessageIds by remember { mutableStateOf<List<Long>>(emptyList()) }
+    var profilePeerId by rememberSaveable { mutableLongStateOf(0L) }
     LaunchedEffect(state.selectionGeneration, state.authorization) {
         showForwardTargets = false
         forwardingMessageIds = emptyList()
@@ -278,6 +279,10 @@ private fun TelegramRustApp(
                     }
                 },
                 onRetry = { viewModel.loadMessages(selectedChatId) },
+                onOpenProfile = {
+                    profilePeerId = selectedChatId
+                    viewModel.loadProfile(selectedChatId)
+                },
                 onDownloadMedia = { messageId, attachmentIndex, retry ->
                     viewModel.downloadMedia(
                         chatId = selectedChatId,
@@ -320,6 +325,14 @@ private fun TelegramRustApp(
                 },
             )
         }
+    }
+    if (profilePeerId != 0L) {
+        PeerProfileDialog(
+            profile = state.profiles[profilePeerId],
+            loading = state.profileLoadingPeerId == profilePeerId,
+            error = state.profileError,
+            onDismiss = { profilePeerId = 0L },
+        )
     }
     if (showForwardTargets) {
         AlertDialog(
