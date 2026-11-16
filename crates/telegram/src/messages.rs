@@ -322,9 +322,7 @@ pub(crate) fn message_reactions(message: &tl::enums::Message) -> Vec<MessageReac
 }
 
 pub(crate) fn map_reactions(snapshot: &tl::enums::MessageReactions) -> Vec<MessageReaction> {
-    let tl::enums::MessageReactions::Reactions(snapshot) = snapshot else {
-        return Vec::new();
-    };
+    let tl::enums::MessageReactions::Reactions(snapshot) = snapshot;
     let mut seen = std::collections::BTreeSet::new();
     snapshot
         .results
