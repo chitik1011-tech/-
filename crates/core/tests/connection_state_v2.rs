@@ -363,6 +363,9 @@ async fn runtime_drops_updates_from_the_previous_session_generation() {
         service: None,
         media_caption: None,
         reply_to: None,
+
+        reactions: Vec::new(),
+        reaction_revision: None,
     };
     updates_tx
         .send(Ok(CoreEvent::SessionUpdate {

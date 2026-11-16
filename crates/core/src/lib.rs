@@ -2,6 +2,7 @@
 
 pub mod activity;
 pub mod backend;
+pub mod capabilities;
 pub mod command;
 pub mod connection;
 pub mod connection_machine;
@@ -28,7 +29,11 @@ pub use backend::{
     backend_update_channel, BackendFuture, BackendUpdateReceiver, BackendUpdateSender,
     TelegramBackend, DEFAULT_BACKEND_UPDATE_CAPACITY,
 };
-pub use command::{CoreCommand, MAX_CHAT_LOAD_LIMIT, MAX_MESSAGE_LOAD_LIMIT};
+pub use capabilities::{CapabilityValue, ChatAction, ChatCapabilities, ChatKind};
+pub use command::{
+    CoreCommand, MAX_CHAT_LOAD_LIMIT, MAX_EDIT_MESSAGE_TEXT_BYTES, MAX_MESSAGE_LOAD_LIMIT,
+    MAX_REACTION_BYTES,
+};
 pub use connection::ConnectionState;
 pub use connection_machine::{
     ConnectionEpoch, ConnectionMachine, ConnectionToken, LinkError, LinkEvent, LinkPhase,
@@ -36,7 +41,7 @@ pub use connection_machine::{
 };
 pub use contacts::{Contact, ContactBook, MAX_CONTACT_PAGE_LIMIT};
 pub use error::{CoreError, Result};
-pub use event::CoreEvent;
+pub use event::{CoreEvent, MessageMutationAction};
 pub use forwarding::{
     ForwardMessagesRequest, ForwardMessagesResult, ForwardOutcome, MAX_FORWARD_MESSAGES,
 };
@@ -44,8 +49,9 @@ pub use mock::MockTelegramBackend;
 pub use model::{
     AccountState, AttachmentDownloadState, AttachmentKind, AttachmentThumbnail, AuthorizationState,
     AvatarReference, ChatActivityKind, ChatFolder, ChatFolderFacts, ChatSummary, Draft,
-    ForwardedFrom, GeoPoint, MediaAttachment, MessageHistoryState, MessageLocation, MessageSummary,
-    PeerKind, PeerPresence, PeerProfile, ReadDirection, ReadReceipt, ReplyMetadata, Venue,
+    ForwardedFrom, GeoPoint, MediaAttachment, MessageHistoryState, MessageLocation,
+    MessageReaction, MessageReactionType, MessageSummary, PeerKind, PeerPresence, PeerProfile,
+    ReactionRevision, ReadDirection, ReadReceipt, ReplyMetadata, Venue,
 };
 pub use peer::{
     parse_peer_reference, MessageLink, MessageLinkMetadata, MessageLinkResolution, MessagePeer,

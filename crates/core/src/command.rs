@@ -9,6 +9,9 @@ use crate::{
 
 pub const MAX_CHAT_LOAD_LIMIT: usize = 500;
 pub const MAX_MESSAGE_LOAD_LIMIT: usize = 200;
+pub const MAX_EDIT_MESSAGE_TEXT_BYTES: usize = 64 * 1024;
+pub const MAX_REACTION_BYTES: usize = 128;
+pub const MAX_BULK_MESSAGE_IDS: usize = 100;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
@@ -58,6 +61,11 @@ pub enum CoreCommand {
     },
     SearchMessages(SearchMessagesRequest),
     ForwardMessages(crate::forwarding::ForwardMessagesRequest),
+    /// Delete a bounded selection from one chat after Telegram accepts the request.
+    DeleteMessages {
+        chat_id: i64,
+        message_ids: Vec<i64>,
+    },
     SendText {
         chat_id: i64,
         text: String,
@@ -68,11 +76,33 @@ pub enum CoreCommand {
         chat_id: i64,
         location: crate::model::GeoPoint,
     },
+    /// Send text as a reply to a message in the same chat.
+    ReplyMessage {
+        chat_id: i64,
+        reply_to_message_id: i64,
+        text: String,
+    },
     /// Reliable text send. Retrying the same client_id with the same payload is idempotent.
     SendTextReliable {
         client_id: i64,
         chat_id: i64,
         text: String,
+    },
+    /// Edit the text of an existing Telegram message.
+    EditMessage {
+        chat_id: i64,
+        message_id: i64,
+        text: String,
+    },
+    /// Delete a message only for the current account where Telegram supports it.
+    DeleteMessageForMe {
+        chat_id: i64,
+        message_id: i64,
+    },
+    /// Delete a message for everyone.
+    DeleteMessageForEveryone {
+        chat_id: i64,
+        message_id: i64,
     },
     /// Submit one or more opaque Telegram option identifiers for an existing poll.
     VotePoll {
@@ -80,6 +110,17 @@ pub enum CoreCommand {
         chat_id: i64,
         message_id: i64,
         option_ids: Vec<Vec<u8>>,
+    },
+    /// Add or change the current user's reaction on a Telegram message.
+    AddReaction {
+        chat_id: i64,
+        message_id: i64,
+        reaction: crate::model::MessageReactionType,
+    },
+    /// Remove the current user's reaction from a Telegram message.
+    RemoveReaction {
+        chat_id: i64,
+        message_id: i64,
     },
     ArchiveChat {
         chat_id: i64,
@@ -153,10 +194,17 @@ impl CoreCommand {
             Self::MarkRead { .. } => "mark_read",
             Self::SearchMessages(_) => "search_messages",
             Self::ForwardMessages(_) => "forward_messages",
+            Self::DeleteMessages { .. } => "delete_messages",
             Self::SendText { .. } => "send_text",
+            Self::ReplyMessage { .. } => "reply_message",
             Self::SendLocation { .. } => "send_location",
             Self::SendTextReliable { .. } => "send_text_reliable",
+            Self::EditMessage { .. } => "edit_message",
+            Self::DeleteMessageForMe { .. } => "delete_message_for_me",
+            Self::DeleteMessageForEveryone { .. } => "delete_message_for_everyone",
             Self::VotePoll { .. } => "vote_poll",
+            Self::AddReaction { .. } => "add_reaction",
+            Self::RemoveReaction { .. } => "remove_reaction",
             Self::ArchiveChat { .. } => "archive_chat",
             Self::UnarchiveChat { .. } => "unarchive_chat",
             Self::MuteChat { .. } => "mute_chat",
@@ -264,9 +312,42 @@ impl CoreCommand {
             }
             Self::SearchMessages(request) => request.validate(),
             Self::ForwardMessages(request) => request.validate(),
+            Self::DeleteMessages {
+                chat_id,
+                message_ids,
+            } => {
+                validate_chat_id(*chat_id)?;
+                if message_ids.is_empty() || message_ids.len() > MAX_BULK_MESSAGE_IDS {
+                    return Err(CoreError::InvalidInput(format!(
+                        "delete selection must contain 1..={MAX_BULK_MESSAGE_IDS} messages"
+                    )));
+                }
+                let mut unique = std::collections::HashSet::with_capacity(message_ids.len());
+                for message_id in message_ids {
+                    if *message_id <= 0 || !unique.insert(*message_id) {
+                        return Err(CoreError::InvalidInput(
+                            "delete selection contains an invalid or duplicate message id".into(),
+                        ));
+                    }
+                }
+                Ok(())
+            }
             Self::SendText { chat_id, text } => {
                 validate_chat_id(*chat_id)?;
                 require_non_blank("message text", text)
+            }
+            Self::ReplyMessage {
+                chat_id,
+                reply_to_message_id,
+                text,
+            } => {
+                validate_chat_id(*chat_id)?;
+                if *reply_to_message_id <= 0 {
+                    return Err(CoreError::InvalidInput(
+                        "reply target message id must be positive".into(),
+                    ));
+                }
+                require_non_blank("reply text", text)
             }
             Self::SendLocation { chat_id, location } => {
                 validate_chat_id(*chat_id)?;
@@ -285,6 +366,29 @@ impl CoreCommand {
                 validate_chat_id(*chat_id)?;
                 require_non_blank("message text", text)
             }
+            Self::EditMessage {
+                chat_id,
+                message_id,
+                text,
+            } => {
+                validate_message_target(*chat_id, *message_id)?;
+                require_non_blank("message text", text)?;
+                if text.len() > MAX_EDIT_MESSAGE_TEXT_BYTES {
+                    Err(CoreError::InvalidInput(format!(
+                        "message text exceeds {MAX_EDIT_MESSAGE_TEXT_BYTES} UTF-8 bytes"
+                    )))
+                } else {
+                    Ok(())
+                }
+            }
+            Self::DeleteMessageForEveryone {
+                chat_id,
+                message_id,
+            } => validate_message_target(*chat_id, *message_id),
+            Self::DeleteMessageForMe {
+                chat_id,
+                message_id,
+            } => validate_message_target(*chat_id, *message_id),
             Self::VotePoll {
                 poll_id,
                 chat_id,
@@ -325,6 +429,18 @@ impl CoreCommand {
                 }
                 Ok(())
             }
+            Self::AddReaction {
+                chat_id,
+                message_id,
+                reaction,
+            } => {
+                validate_reaction_target(*chat_id, *message_id)?;
+                reaction.validate()
+            }
+            Self::RemoveReaction {
+                chat_id,
+                message_id,
+            } => validate_reaction_target(*chat_id, *message_id),
             Self::ArchiveChat { chat_id }
             | Self::UnarchiveChat { chat_id }
             | Self::MuteChat { chat_id }
@@ -368,15 +484,30 @@ impl CoreCommand {
 }
 
 fn validate_media_target(chat_id: i64, message_id: i64, attachment_index: usize) -> Result<()> {
+    validate_message_target(chat_id, message_id)?;
+    if attachment_index > 31 {
+        return Err(CoreError::InvalidInput(
+            "attachment index must be in 0..=31".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_message_target(chat_id: i64, message_id: i64) -> Result<()> {
     validate_chat_id(chat_id)?;
     if message_id <= 0 {
         return Err(CoreError::InvalidInput(
             "message id must be positive".into(),
         ));
     }
-    if attachment_index > 31 {
+    Ok(())
+}
+
+fn validate_reaction_target(chat_id: i64, message_id: i64) -> Result<()> {
+    validate_chat_id(chat_id)?;
+    if message_id <= 0 {
         return Err(CoreError::InvalidInput(
-            "attachment index must be in 0..=31".into(),
+            "message id must be positive".into(),
         ));
     }
     Ok(())

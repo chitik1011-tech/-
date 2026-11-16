@@ -5,6 +5,7 @@ use std::{
 
 use crate::{
     backend::{BackendFuture, TelegramBackend},
+    capabilities::{CapabilityValue, ChatCapabilities, ChatKind},
     command::CoreCommand,
     error::{CoreError, Result},
     event::CoreEvent,
@@ -59,6 +60,8 @@ impl Default for MockTelegramBackend {
                         service: None,
                         media_caption: None,
                         reply_to: None,
+                        reactions: Vec::new(),
+                        reaction_revision: None,
                     }),
                 },
             ],
@@ -115,8 +118,14 @@ impl MockTelegramBackend {
                 )])
             }
             CoreCommand::LoadChats { limit } => {
-                let chats = self.chats.iter().take(limit).cloned().collect();
-                Ok(vec![CoreEvent::ChatsLoaded(chats)])
+                let chats: Vec<_> = self.chats.iter().take(limit).cloned().collect();
+                let mut events = vec![CoreEvent::ChatsLoaded(chats.clone())];
+                events.extend(
+                    chats
+                        .into_iter()
+                        .map(|chat| CoreEvent::ChatCapabilitiesUpdated(mock_capabilities(chat.id))),
+                );
+                Ok(events)
             }
             CoreCommand::LoadProfile { peer_id } => Ok(vec![CoreEvent::ProfileUpdated(
                 PeerProfile::unknown(peer_id),
@@ -241,6 +250,30 @@ impl MockTelegramBackend {
             CoreCommand::ForwardMessages(_) => Err(CoreError::Backend(
                 "message forwarding is not implemented by the mock backend".into(),
             )),
+            CoreCommand::ReplyMessage {
+                chat_id,
+                reply_to_message_id,
+                text,
+            } => {
+                let mut events = self.handle_inner(CoreCommand::SendText { chat_id, text })?;
+                for event in &mut events {
+                    if let CoreEvent::MessageAdded(message) = event {
+                        message.reply_to = Some(crate::model::ReplyMetadata {
+                            message_id: reply_to_message_id,
+                            chat_id: Some(chat_id),
+                            sender_id: None,
+                            sender_display_name: None,
+                        });
+                        if let Some(chat) = self.chats.iter_mut().find(|chat| chat.id == chat_id) {
+                            chat.last_message = Some(message.clone());
+                        }
+                    }
+                }
+                Ok(events)
+            }
+            CoreCommand::DeleteMessages { .. } => Err(CoreError::Backend(
+                "message deletion is not implemented by the mock backend".into(),
+            )),
             CoreCommand::SendText { chat_id, text } => {
                 if self.authorization != AuthorizationState::Ready {
                     return Err(CoreError::Backend("not authorized".into()));
@@ -267,6 +300,8 @@ impl MockTelegramBackend {
                     service: None,
                     media_caption: None,
                     reply_to: None,
+                    reactions: Vec::new(),
+                    reaction_revision: None,
                 };
                 self.next_message_id += 1;
 
@@ -276,6 +311,15 @@ impl MockTelegramBackend {
 
                 Ok(vec![CoreEvent::MessageAdded(message)])
             }
+            CoreCommand::EditMessage { .. } => Err(CoreError::Backend(
+                "message editing is not implemented by the mock backend".into(),
+            )),
+            CoreCommand::DeleteMessageForEveryone { .. } => Err(CoreError::Backend(
+                "message deletion is not implemented by the mock backend".into(),
+            )),
+            CoreCommand::DeleteMessageForMe { .. } => Err(CoreError::Backend(
+                "message deletion is not implemented by the mock backend".into(),
+            )),
             CoreCommand::SendLocation { chat_id, location } => {
                 if self.authorization != AuthorizationState::Ready {
                     return Err(CoreError::Backend("not authorized".into()));
@@ -297,6 +341,8 @@ impl MockTelegramBackend {
                     service: None,
                     media_caption: None,
                     reply_to: None,
+                    reactions: Vec::new(),
+                    reaction_revision: None,
                 };
                 self.next_message_id += 1;
                 if let Some(chat) = self.chats.iter_mut().find(|chat| chat.id == chat_id) {
@@ -371,6 +417,8 @@ impl MockTelegramBackend {
                     service: None,
                     media_caption: None,
                     reply_to: None,
+                    reactions: Vec::new(),
+                    reaction_revision: None,
                 };
                 self.next_message_id += 1;
 
@@ -464,6 +512,11 @@ impl MockTelegramBackend {
                     unread: false,
                 },
             ),
+            CoreCommand::AddReaction { .. } | CoreCommand::RemoveReaction { .. } => {
+                Err(CoreError::Backend(
+                    "message reactions are not implemented by the mock backend".into(),
+                ))
+            }
             CoreCommand::Shutdown => Ok(Vec::new()),
             CoreCommand::ResolvePeer { .. } => Err(CoreError::Backend(
                 "peer resolution is unsupported by this backend".into(),
@@ -495,4 +548,19 @@ fn unix_timestamp() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs() as i64)
         .unwrap_or_default()
+}
+
+fn mock_capabilities(chat_id: i64) -> ChatCapabilities {
+    let mut capabilities = ChatCapabilities {
+        chat_id,
+        chat_kind: ChatKind::Private,
+        can_send_messages: CapabilityValue::Known(true),
+        can_send_media: CapabilityValue::Known(true),
+        can_forward_messages: CapabilityValue::Known(true),
+        slow_mode_enabled: CapabilityValue::Known(false),
+        slow_mode_remaining_seconds: CapabilityValue::Known(None),
+        ..ChatCapabilities::default()
+    };
+    capabilities.refresh_derived();
+    capabilities
 }

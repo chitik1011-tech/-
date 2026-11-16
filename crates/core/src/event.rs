@@ -1,19 +1,28 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    capabilities::ChatCapabilities,
     connection::ConnectionState,
     connection_machine::{ConnectionToken, LinkEvent},
     contacts::Contact,
     forwarding::ForwardMessagesResult,
     model::{
         AccountState, AttachmentDownloadState, AuthorizationState, ChatActivityKind, ChatSummary,
-        MessageSummary, PeerProfile,
+        MessageReaction, MessageSummary, PeerProfile, ReactionRevision,
     },
     peer::PeerResolution,
     poll::PollSummary,
     search::{MessageSearchPage, SearchMessagesRequest},
     send::OutgoingSend,
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MessageMutationAction {
+    Edit,
+    DeleteForMe,
+    DeleteForEveryone,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
@@ -35,6 +44,8 @@ pub enum CoreEvent {
     /// Legacy untagged state event. Runtime reducers ignore it; use `ConnectionLifecycle`.
     ConnectionStateChanged(ConnectionState),
     ChatsLoaded(Vec<ChatSummary>),
+    /// Replaces one chat's authoritative capability snapshot from Telegram.
+    ChatCapabilitiesUpdated(ChatCapabilities),
     /// Replaces the contact snapshot at offset zero and appends later pages.
     ContactsLoaded {
         offset: usize,
@@ -125,6 +136,18 @@ pub enum CoreEvent {
         unread: bool,
     },
     MessageEdited(MessageSummary),
+    /// A user requested message mutation failed at the backend; this is an ephemeral UI error.
+    MessageMutationSucceeded {
+        chat_id: i64,
+        message_id: i64,
+        action: MessageMutationAction,
+    },
+    MessageMutationFailed {
+        chat_id: i64,
+        message_id: i64,
+        action: MessageMutationAction,
+        error: String,
+    },
     MediaTransferUpdated {
         chat_id: i64,
         message_id: i64,
@@ -146,6 +169,24 @@ pub enum CoreEvent {
     /// The Telegram vote RPC failed without replacing the last server-confirmed poll snapshot.
     PollVoteFailed {
         poll_id: i64,
+        error: String,
+    },
+    /// Authoritative Telegram reaction state for a cached message.
+    MessageReactionsUpdated {
+        chat_id: i64,
+        message_id: i64,
+        reactions: Vec<MessageReaction>,
+        revision: ReactionRevision,
+    },
+    /// Finishes the UI's pending indicator after the reaction RPC completes.
+    ReactionOperationSucceeded {
+        chat_id: i64,
+        message_id: i64,
+    },
+    /// Reports a reaction RPC failure without losing the last server snapshot.
+    ReactionOperationFailed {
+        chat_id: i64,
+        message_id: i64,
         error: String,
     },
     /// Forward results; successful messages also arrive as `MessageAdded`.
@@ -191,6 +232,7 @@ impl CoreEvent {
             Self::SessionUpdate { .. } => "session_update",
             Self::ConnectionStateChanged(_) => "connection_state_changed",
             Self::ChatsLoaded(_) => "chats_loaded",
+            Self::ChatCapabilitiesUpdated(_) => "chat_capabilities_updated",
             Self::ContactsLoaded { .. } => "contacts_loaded",
             Self::ContactsRefreshRequested => "contacts_refresh_requested",
             Self::MessagesLoaded { .. } => "messages_loaded",
@@ -212,11 +254,16 @@ impl CoreEvent {
             Self::ChatPinned { .. } => "chat_pinned",
             Self::ChatUnreadChanged { .. } => "chat_unread_changed",
             Self::MessageEdited(_) => "message_edited",
+            Self::MessageMutationSucceeded { .. } => "message_mutation_succeeded",
+            Self::MessageMutationFailed { .. } => "message_mutation_failed",
             Self::MediaTransferUpdated { .. } => "media_transfer_updated",
             Self::MessagesDeleted { .. } => "messages_deleted",
             Self::PollUpdated(_) => "poll_updated",
             Self::PollVoteSubmitted { .. } => "poll_vote_submitted",
             Self::PollVoteFailed { .. } => "poll_vote_failed",
+            Self::MessageReactionsUpdated { .. } => "message_reactions_updated",
+            Self::ReactionOperationSucceeded { .. } => "reaction_operation_succeeded",
+            Self::ReactionOperationFailed { .. } => "reaction_operation_failed",
             Self::MessagesForwarded(_) => "messages_forwarded",
             Self::MessageSendStateChanged(_) => "message_send_state_changed",
             Self::ChatActivityChanged { .. } => "chat_activity_changed",
@@ -233,13 +280,16 @@ impl CoreEvent {
     pub const fn is_transient(&self) -> bool {
         matches!(
             self,
-            Self::PollVoteSubmitted { .. }
+            Self::ChatCapabilitiesUpdated(_)
+                | Self::PollVoteSubmitted { .. }
                 | Self::PollVoteFailed { .. }
                 | Self::ContactsRefreshRequested
                 | Self::MessagesForwarded(_)
                 | Self::ChatActivityChanged { .. }
                 | Self::ChatActivityEnded { .. }
                 | Self::ChatActivityExpired { .. }
+                | Self::ReactionOperationSucceeded { .. }
+                | Self::ReactionOperationFailed { .. }
         )
     }
 

@@ -13,6 +13,8 @@ fn message_with_photo() -> MessageSummary {
         text: String::new(),
         timestamp_unix: 1,
         outgoing: false,
+        reactions: Vec::new(),
+        reaction_revision: None,
         location: None,
         attachments: vec![MediaAttachment {
             kind: AttachmentKind::Photo,
