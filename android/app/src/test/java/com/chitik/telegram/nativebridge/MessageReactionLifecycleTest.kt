@@ -24,6 +24,7 @@ class MessageReactionLifecycleTest {
         )
     }
 
+    // Sync events within the same connection token must not invalidate an in-flight RPC.
     @Test
     fun syncCompletedDoesNotClearPendingReaction() {
         val state = NativeUiState(
