@@ -282,7 +282,7 @@ fun ConversationScreen(
                 .fillMaxSize()
                 .padding(innerPadding),
         ) {
-            state.error?.takeIf { contentMode != AsyncContentMode.Loading }?.let { message ->
+            state.error?.takeIf { contentMode != AsyncContentMode.Loading && state.deleteError == null }?.let { message ->
                 ErrorRetryState(
                     title = "Не удалось загрузить сообщения",
                     message = message,
