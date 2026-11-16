@@ -1079,11 +1079,11 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 authorization = authorization,
                 selectionGeneration = if (
                     authorization != AuthorizationUiStep.Ready &&
-                    it.authorization == AuthorizationUiStep.Ready
+                    current.authorization == AuthorizationUiStep.Ready
                 ) {
-                    it.selectionGeneration + 1
+                    current.selectionGeneration + 1
                 } else {
-                    it.selectionGeneration
+                    current.selectionGeneration
                 },
                 deletingMessages = false,
                 deleteError = null,
