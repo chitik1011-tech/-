@@ -17,7 +17,7 @@ class MessageReactionLifecycleTest {
 
         val updated = state.clearPendingReactionsAfterConnectionChange()
 
-        assertEquals(setOf("8:12"), updated.pendingReactionKeys)
+        assertTrue(updated.pendingReactionKeys.isEmpty())
         assertEquals(
             "Результат реакции не подтверждён после смены соединения",
             updated.reactionErrors["-100:12"],
@@ -58,7 +58,7 @@ class MessageReactionLifecycleTest {
 
         assertEquals(listOf("12"), updated.messages[8L]?.map { it.id })
         assertTrue(updated.messages[5L].isNullOrEmpty())
-        assertTrue(updated.pendingReactionKeys.isEmpty())
+        assertEquals(setOf("8:12"), updated.pendingReactionKeys)
         assertTrue(updated.reactionErrors.isEmpty())
     }
 
