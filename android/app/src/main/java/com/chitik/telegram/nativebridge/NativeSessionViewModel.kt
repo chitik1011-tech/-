@@ -387,7 +387,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
             messageIds.any { it <= 0L } || messageIds.distinct().size != messageIds.size
         ) return
         _state.update { it.copy(deletingMessages = true, deleteError = null, busy = true, error = null) }
-        val ids = JSONArray().apply { messageIds.forEach(::put) }
+        val ids = JSONArray().apply { messageIds.forEach { put(it) } }
         val accepted = sendCommand(
             JSONObject()
                 .put("type", "delete_messages")
