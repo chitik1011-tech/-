@@ -59,6 +59,21 @@ class OutgoingTextSendSupportTest {
     }
 
     @Test
+    fun videoOutboxPreservesValidMetadataAndDropsInvalidDimensions() {
+        val event = """{"type":"message_send_state_changed","payload":{"client_id":42,"chat_id":99,"text":"clip","media":{"kind":"video","path":"/private/clip.mp4","file_name":"clip.mp4","mime_type":"video/mp4","size_bytes":4096,"video_duration_ms":12345,"video_width":1920,"video_height":1080},"state":{"status":"failed","retryable":true}}}"""
+        val send = parseOutgoingTextSendEvent(event)
+        assertEquals(12_345L, send?.media?.videoDurationMs)
+        assertEquals(1920, send?.media?.videoWidth)
+        assertEquals(1080, send?.media?.videoHeight)
+
+        val incomplete = event.replace("\\"video_height\\":1080,", "")
+        val withoutDimensions = parseOutgoingTextSendEvent(incomplete)
+        assertEquals(null, withoutDimensions?.media?.videoWidth)
+        assertEquals(null, withoutDimensions?.media?.videoHeight)
+        assertEquals(12_345L, withoutDimensions?.media?.videoDurationMs)
+    }
+
+    @Test
     fun mediaImportBlocksComposerUntilQueued() {
         assertTrue(NativeUiState(mediaImportInProgress = true).sendingText)
         assertFalse(NativeUiState(mediaImportInProgress = false).sendingText)
