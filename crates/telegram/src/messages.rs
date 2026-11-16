@@ -466,7 +466,7 @@ pub(crate) async fn send_reply(
         .map_err(|_| CoreError::InvalidInput("reply target exceeds Telegram range".into()))?;
     let input = grammers_client::message::InputMessage::new()
         .text(text)
-        .reply_to(reply_id);
+        .reply_to(Some(reply_id));
     let message = client
         .send_message(peer, input)
         .await
