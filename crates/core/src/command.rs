@@ -235,16 +235,25 @@ impl CoreCommand {
                 validate_chat_id(*chat_id)?;
                 require_non_blank("message text", text)
             }
-            Self::EditMessage { chat_id, message_id, text } => {
+            Self::EditMessage {
+                chat_id,
+                message_id,
+                text,
+            } => {
                 validate_message_target(*chat_id, *message_id)?;
                 require_non_blank("message text", text)?;
                 if text.len() > MAX_EDIT_MESSAGE_TEXT_BYTES {
-                    Err(CoreError::InvalidInput(format!("message text exceeds {MAX_EDIT_MESSAGE_TEXT_BYTES} UTF-8 bytes")))
+                    Err(CoreError::InvalidInput(format!(
+                        "message text exceeds {MAX_EDIT_MESSAGE_TEXT_BYTES} UTF-8 bytes"
+                    )))
                 } else {
                     Ok(())
                 }
             }
-            Self::DeleteMessageForEveryone { chat_id, message_id } => {
+            Self::DeleteMessageForEveryone {
+                chat_id,
+                message_id,
+            } => {
                 validate_message_target(*chat_id, *message_id)
             }
             Self::VotePoll {
