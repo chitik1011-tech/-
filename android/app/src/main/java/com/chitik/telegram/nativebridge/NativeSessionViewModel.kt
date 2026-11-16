@@ -934,6 +934,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
             }.getOrNull() ?: return
             val chatId = message.optLong("chat_id", 0L)
             val messageId = message.optLong("id", 0L)
+            if (!message.has("outgoing")) return
             val outgoing = message.optBoolean("outgoing", false)
             if (_state.value.authorization != AuthorizationUiStep.Ready) return
             val identity = NotificationDecisionPlanner.Identity(generation, chatId, messageId)
@@ -947,7 +948,14 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 "voice" -> "Voice message"
                 "document" -> "Document"
                 "sticker" -> "Sticker"
-                else -> if (message.has("location")) "Location" else "New message"
+                "animation" -> "Animation"
+                else -> when {
+                    !message.isNull("location") && message.has("location") -> "Location"
+                    message.optBoolean("service_message", false) -> "Service message"
+                    message.optJSONObject("reply_to") != null -> "Reply"
+                    message.optJSONObject("forwarded_from") != null -> "Forwarded message"
+                    else -> "New message"
+                }
             }
             val preview = message.optString("text").ifBlank {
                 message.optString("media_caption").ifBlank { fallback }
@@ -975,6 +983,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
             val info = runCatching { JSONObject(payload).optJSONObject("payload") }.getOrNull()
             val chatId = info?.optLong("chat_id", 0L) ?: 0L
             if (chatId != 0L) notifications.cancelChat(chatId)
+            else if (type == "messages_deleted") notifications.cancelAll()
         }
     }
 
