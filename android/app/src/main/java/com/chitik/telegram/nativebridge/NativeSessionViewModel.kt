@@ -149,6 +149,21 @@ internal fun NativeUiState.applyConnectionLifecycle(payload: String): NativeUiSt
     }
 }
 
+internal fun NativeUiState.applyConnectionLifecycleAndGeneration(payload: String): NativeUiState {
+    val updated = applyConnectionLifecycle(payload)
+    val generation = connectionSessionGenerationFromEvent(payload)
+    return generation?.let(updated::recordConnectionSessionGeneration) ?: updated
+}
+
+internal fun NativeUiState.finishBulkDelete(
+    chatId: Long?,
+    ids: Set<Long>,
+): NativeUiState = removeDeletedMessages(chatId, ids).copy(
+    busy = false,
+    deletingMessages = false,
+    deleteError = null,
+)
+
 internal fun NativeUiState.clearPendingReactionsAfterConnectionChange(): NativeUiState {
     if (pendingReactionKeys.isEmpty()) return this
     val message = "Результат реакции не подтверждён после смены соединения"
@@ -1035,9 +1050,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         when (type) {
             "connection_lifecycle" -> {
                 _state.update { current ->
-                    val updated = current.applyConnectionLifecycle(payload)
-                    val generation = connectionSessionGenerationFromEvent(payload)
-                    (generation?.let(updated::recordConnectionSessionGeneration) ?: updated).copy(
+                    current.applyConnectionLifecycleAndGeneration(payload).copy(
                         lastEventType = type,
                         lastEventPayload = payload,
                     )
@@ -1049,10 +1062,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                     if (deleted == null) {
                         current.copy(lastEventType = type, lastEventPayload = payload)
                     } else {
-                        current.removeDeletedMessages(deleted.first, deleted.second).copy(
-                            busy = false,
-                            deletingMessages = false,
-                            deleteError = null,
+                        current.finishBulkDelete(deleted.first, deleted.second).copy(
                             lastEventType = type,
                             lastEventPayload = payload,
                         )
