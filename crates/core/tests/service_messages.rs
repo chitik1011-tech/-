@@ -135,7 +135,9 @@ fn every_action_maps_to_a_stable_presentation_icon() {
             ServiceIcon::Channel,
         ),
         (
-            ServiceAction::GroupMigratedToSupergroup { supergroup_id: -100 },
+            ServiceAction::GroupMigratedToSupergroup {
+                supergroup_id: -100,
+            },
             ServiceIcon::Migration,
         ),
         (
