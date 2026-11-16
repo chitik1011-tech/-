@@ -64,14 +64,19 @@ impl OutgoingMediaAttachment {
         {
             return Err("video metadata can only be set for video media".into());
         }
-        if self.video_duration_ms.is_some_and(|duration| duration > 48 * 60 * 60 * 1000) {
+        if self
+            .video_duration_ms
+            .is_some_and(|duration| duration > 48 * 60 * 60 * 1000)
+        {
             return Err("video duration exceeds the 48 hour upload limit".into());
         }
         match (self.video_width, self.video_height) {
             (None, None) => {}
             (Some(width), Some(height))
                 if width > 0 && height > 0 && width <= 32768 && height <= 32768 => {}
-            _ => return Err("video dimensions must be provided together and be in 1..=32768".into()),
+            _ => {
+                return Err("video dimensions must be provided together and be in 1..=32768".into())
+            }
         }
         Ok(())
     }
@@ -407,6 +412,27 @@ mod tests {
         media = valid_media();
         media.size_bytes = MAX_OUTGOING_MEDIA_BYTES + 1;
         assert!(media.validate().is_err());
+    }
+
+    #[test]
+    fn video_metadata_is_bounded_and_only_valid_for_video() {
+        let mut video = valid_media();
+        video.kind = OutgoingMediaKind::Video;
+        video.video_duration_ms = Some(90_000);
+        video.video_width = Some(1920);
+        video.video_height = Some(1080);
+        assert!(video.validate().is_ok());
+
+        video.video_width = None;
+        assert!(video.validate().is_err());
+        video.video_width = Some(1920);
+        video.video_duration_ms = Some(48 * 60 * 60 * 1000 + 1);
+        assert!(video.validate().is_err());
+
+        let mut photo = valid_media();
+        photo.video_width = Some(100);
+        photo.video_height = Some(100);
+        assert!(photo.validate().is_err());
     }
 
     #[test]
