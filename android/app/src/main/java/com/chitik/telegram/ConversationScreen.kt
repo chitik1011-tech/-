@@ -454,16 +454,18 @@ private fun MessageActionDialog(
     onDismiss: () -> Unit,
     onSelectForForward: () -> Unit,
 ) {
+    val editAvailability = messageMutationAvailability(MessageMutationAction.Edit)
+    val deleteAvailability = messageMutationAvailability(MessageMutationAction.Delete)
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Действия с сообщением") },
         text = {
             Column {
                 TextButton(onClick = onSelectForForward) { Text("Выбрать для пересылки") }
-                TextButton(onClick = {}, enabled = false) { Text("Изменить — недоступно") }
-                Text(messageMutationUnavailableReason(MessageMutationAction.Edit))
-                TextButton(onClick = {}, enabled = false) { Text("Удалить — недоступно") }
-                Text(messageMutationUnavailableReason(MessageMutationAction.Delete))
+                TextButton(onClick = {}, enabled = editAvailability.enabled) { Text("Изменить — недоступно") }
+                Text(editAvailability.explanation)
+                TextButton(onClick = {}, enabled = deleteAvailability.enabled) { Text("Удалить — недоступно") }
+                Text(deleteAvailability.explanation)
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Закрыть") } },
