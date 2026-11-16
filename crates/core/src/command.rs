@@ -98,6 +98,9 @@ pub enum CoreCommand {
         chat_id: i64,
         media: OutgoingMediaAttachment,
         caption: String,
+        /// Runtime-assigned monotonically increasing upload attempt generation.
+        #[serde(default)]
+        transfer_generation: u64,
     },
     /// Cancel an active outgoing upload while retaining its retryable outbox entry.
     CancelMediaSend {
