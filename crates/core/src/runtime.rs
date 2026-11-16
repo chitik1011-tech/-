@@ -355,15 +355,21 @@ where
                                 }
                                 (OutgoingSendState::Uploading { .. }, Some(media)) => {
                                     apply_event(
-                                        CoreEvent::MessageSendStateChanged(OutgoingSend::failed_media(
-                                            send.client_id,
-                                            send.chat_id,
-                                            media,
-                                            send.text,
-                                            "shutdown interrupted the media upload",
-                                            true,
-                                            send.transfer_generation,
-                                        ).with_session_token(send.session_generation, send.session_epoch)),
+                                        CoreEvent::MessageSendStateChanged(
+                                            OutgoingSend::failed_media(
+                                                send.client_id,
+                                                send.chat_id,
+                                                media,
+                                                send.text,
+                                                "shutdown interrupted the media upload",
+                                                true,
+                                                send.transfer_generation,
+                                            )
+                                            .with_session_token(
+                                                send.session_generation,
+                                                send.session_epoch,
+                                            ),
+                                        ),
                                         &mut reduced_state,
                                         &state_tx,
                                         &event_tx_task,
@@ -460,8 +466,8 @@ where
                             .get(client_id)
                             .map_or(1, |send| send.transfer_generation.saturating_add(1));
                         let token = reduced_state.connection_machine.token();
-                        *session_generation = token.generation;
-                        *session_epoch = token.epoch;
+                        *session_generation = token.generation();
+                        *session_epoch = token.epoch();
                     }
 
                     // Keep the permission boundary in Rust: Compose can make a
@@ -603,15 +609,17 @@ where
                             // The durable payload, including the private copied path,
                             // is saved before any upload bytes leave the device.
                             apply_event(
-                                CoreEvent::MessageSendStateChanged(OutgoingSend::uploading_media(
-                                    *client_id,
-                                    *chat_id,
-                                    media.clone(),
-                                    caption.clone(),
-                                    0,
-                                    *transfer_generation,
-                                )
-                                .with_session_token(*session_generation, *session_epoch)),
+                                CoreEvent::MessageSendStateChanged(
+                                    OutgoingSend::uploading_media(
+                                        *client_id,
+                                        *chat_id,
+                                        media.clone(),
+                                        caption.clone(),
+                                        0,
+                                        *transfer_generation,
+                                    )
+                                    .with_session_token(*session_generation, *session_epoch),
+                                ),
                                 &mut reduced_state,
                                 &state_tx,
                                 &event_tx_task,
@@ -1474,10 +1482,12 @@ async fn restore_state<S: StateStore>(
             let recovering: Vec<_> = state
                 .outbox
                 .values()
-                .filter(|send| matches!(
-                    send.state,
-                    OutgoingSendState::Sending | OutgoingSendState::Uploading { .. }
-                ))
+                .filter(|send| {
+                    matches!(
+                        send.state,
+                        OutgoingSendState::Sending | OutgoingSendState::Uploading { .. }
+                    )
+                })
                 .map(|send| send.client_id)
                 .collect();
             let mut recovered_any = false;
@@ -1493,7 +1503,8 @@ async fn restore_state<S: StateStore>(
                                 "process restarted during media upload",
                                 true,
                                 send.transfer_generation,
-                            ).with_session_token(send.session_generation, send.session_epoch)
+                            )
+                            .with_session_token(send.session_generation, send.session_epoch)
                         }
                         (OutgoingSendState::Sending, Some(media)) => {
                             OutgoingSend::awaiting_confirmation_media(
@@ -1503,14 +1514,16 @@ async fn restore_state<S: StateStore>(
                                 send.text,
                                 "process restarted while the send outcome was unknown",
                                 send.transfer_generation,
-                            ).with_session_token(send.session_generation, send.session_epoch)
+                            )
+                            .with_session_token(send.session_generation, send.session_epoch)
                         }
                         (OutgoingSendState::Sending, None) => OutgoingSend::awaiting_confirmation(
                             send.client_id,
                             send.chat_id,
                             send.text,
                             "process restarted while the send outcome was unknown",
-                        ).with_session_token(send.session_generation, send.session_epoch),
+                        )
+                        .with_session_token(send.session_generation, send.session_epoch),
                         _ => continue,
                     };
                     state.outbox.insert(client_id, recovered.clone());
@@ -1550,7 +1563,12 @@ fn send_media_error_state(
 ) -> OutgoingSend {
     let send = match error {
         CoreError::SendOutcomeUnknown(reason) => OutgoingSend::awaiting_confirmation_media(
-            client_id, chat_id, media, caption, reason, transfer_generation,
+            client_id,
+            chat_id,
+            media,
+            caption,
+            reason,
+            transfer_generation,
         ),
         CoreError::FloodWait { seconds } => OutgoingSend::failed_media(
             client_id,
@@ -1562,13 +1580,33 @@ fn send_media_error_state(
             transfer_generation,
         ),
         CoreError::TransientTransport(reason) | CoreError::TransientSend(reason) => {
-            OutgoingSend::failed_media(client_id, chat_id, media, caption, reason, true, transfer_generation)
+            OutgoingSend::failed_media(
+                client_id,
+                chat_id,
+                media,
+                caption,
+                reason,
+                true,
+                transfer_generation,
+            )
         }
         CoreError::SendRejected(reason) => OutgoingSend::failed_media(
-            client_id, chat_id, media, caption, reason, false, transfer_generation,
+            client_id,
+            chat_id,
+            media,
+            caption,
+            reason,
+            false,
+            transfer_generation,
         ),
         other => OutgoingSend::failed_media(
-            client_id, chat_id, media, caption, other.to_string(), false, transfer_generation,
+            client_id,
+            chat_id,
+            media,
+            caption,
+            other.to_string(),
+            false,
+            transfer_generation,
         ),
     };
     send.with_session_token(session_generation, session_epoch)
