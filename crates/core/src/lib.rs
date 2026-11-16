@@ -30,9 +30,7 @@ pub use backend::{
     TelegramBackend, DEFAULT_BACKEND_UPDATE_CAPACITY,
 };
 pub use capabilities::{CapabilityValue, ChatAction, ChatCapabilities, ChatKind};
-pub use command::{
-    CoreCommand, MAX_CHAT_LOAD_LIMIT, MAX_MESSAGE_LOAD_LIMIT, MAX_REACTION_BYTES,
-};
+pub use command::{CoreCommand, MAX_CHAT_LOAD_LIMIT, MAX_MESSAGE_LOAD_LIMIT, MAX_REACTION_BYTES};
 pub use connection::ConnectionState;
 pub use connection_machine::{
     ConnectionEpoch, ConnectionMachine, ConnectionToken, LinkError, LinkEvent, LinkPhase,
