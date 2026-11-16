@@ -133,8 +133,9 @@ impl CoreState {
         let connection_machine = self.connection_machine.clone();
         let running = self.running;
         *self = Self::default();
+        let connection_state = connection_machine.transport_state();
         self.connection_machine = connection_machine;
-        self.connection_state = connection_machine.transport_state();
+        self.connection_state = connection_state;
         self.running = running;
     }
     /// Validate persisted or externally constructed state invariants.
