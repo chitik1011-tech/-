@@ -42,6 +42,7 @@ data class NativeUiState(
     val messageMutationMessageId: Long = 0L,
     val messageMutationSuccessCount: Long = 0L,
     val messageMutationSuccessChatId: Long = 0L,
+    val messageMutationSuccessMessageId: Long = 0L,
     val busy: Boolean = false,
     val lastEventType: String = "none",
     val lastEventPayload: String = "",
@@ -707,27 +708,36 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                     }
                 }
             }
+            "message_mutation_succeeded" -> {
+                val target = runCatching {
+                    val body = JSONObject(payload).optJSONObject("payload") ?: JSONObject()
+                    body.optLong("chat_id") to body.optLong("message_id")
+                }.getOrDefault(0L to 0L)
+                _state.update {
+                    if (
+                        it.messageMutationPending &&
+                        it.messageMutationChatId == target.first &&
+                        it.messageMutationMessageId == target.second
+                    ) {
+                        it.copy(
+                            messageMutationPending = false,
+                            messageMutationError = null,
+                            messageMutationSuccessCount = it.messageMutationSuccessCount + 1,
+                            messageMutationSuccessChatId = target.first,
+                            messageMutationSuccessMessageId = target.second,
+                            lastEventType = type,
+                            lastEventPayload = payload,
+                        )
+                    } else {
+                        it.copy(lastEventType = type, lastEventPayload = payload)
+                    }
+                }
+            }
             "message_edited",
             "messages_deleted",
             -> {
-                val target = runCatching {
-                    val body = JSONObject(payload).optJSONObject("payload") ?: JSONObject()
-                    val chatId = if (type == "message_edited") {
-                        body.optLong("chat_id")
-                    } else {
-                        body.optLong("chat_id")
-                    }
-                    chatId
-                }.getOrDefault(0L)
                 _state.update {
-                    it.copy(
-                        messageMutationPending = false,
-                        messageMutationError = null,
-                        messageMutationSuccessCount = it.messageMutationSuccessCount + 1,
-                        messageMutationSuccessChatId = target,
-                        lastEventType = type,
-                        lastEventPayload = payload,
-                    )
+                    it.copy(lastEventType = type, lastEventPayload = payload)
                 }
             }
             "message_added",
