@@ -23,8 +23,21 @@ pub enum AuthorizationState {
     Closed,
 }
 
+/// Telegram peer category, used by presentation for notification routing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChatKind {
+    Private,
+    Group,
+    Supergroup,
+    Channel,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChatSummary {
+    /// Optional for backwards compatibility with persisted chat lists.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<ChatKind>,
     pub id: i64,
     pub title: String,
     pub unread_count: u32,
