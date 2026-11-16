@@ -211,7 +211,10 @@ impl CoreCommand {
             }
             Self::SearchMessages(request) => request.validate(),
             Self::ForwardMessages(request) => request.validate(),
-            Self::DeleteMessages { chat_id, message_ids } => {
+            Self::DeleteMessages {
+                chat_id,
+                message_ids,
+            } => {
                 validate_chat_id(*chat_id)?;
                 if message_ids.is_empty() || message_ids.len() > MAX_BULK_MESSAGE_IDS {
                     return Err(CoreError::InvalidInput(format!(
