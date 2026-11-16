@@ -76,14 +76,10 @@ impl AuthFlow {
         api_hash: &str,
         phone: String,
     ) -> tg_mobile_core::Result<AuthorizationState> {
-        if phone.trim().is_empty() {
-            return Err(CoreError::InvalidInput(
-                "phone number must not be empty".into(),
-            ));
-        }
+        let phone = normalize_phone_number(&phone)?;
 
         let token = client
-            .request_login_code(phone.trim(), api_hash)
+            .request_login_code(&phone, api_hash)
             .await
             .map_err(|error| auth_api_error("request login code", error))?;
         self.password_token = None;
@@ -203,10 +199,35 @@ impl AuthFlow {
     }
 }
 
+/// Accept country-code numbers and common visual separators, but never guess a
+/// country prefix. Telegram expects an international phone number.
+fn normalize_phone_number(input: &str) -> tg_mobile_core::Result<String> {
+    let stripped: String = input.chars().filter(|c| matches!(c, ' ' | '-' | '(' | ')') == false).collect();
+    let digits = stripped.strip_prefix('+').unwrap_or(&stripped);
+    if !(8..=15).contains(&digits.len())
+        || !digits.bytes().all(|byte| byte.is_ascii_digit())
+        || digits.starts_with('0')
+    {
+        return Err(CoreError::InvalidInput(
+            "PHONE_NUMBER_INVALID: enter a number with country code, e.g. +15551234567".into(),
+        ));
+    }
+    Ok(format!("+{digits}"))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::AuthPhase;
+    use super::{AuthPhase, normalize_phone_number};
     use tg_mobile_core::AuthorizationState;
+
+    #[test]
+    fn international_phone_numbers_are_normalized_and_invalid_numbers_rejected() {
+        assert_eq!(normalize_phone_number("+1 (555) 123-4567").unwrap(), "+15551234567");
+        assert_eq!(normalize_phone_number("15551234567").unwrap(), "+15551234567");
+        for invalid in ["", "123", "+0123456789", "1234567890123456", "+1555abc4567", "++15551234567"] {
+            assert!(normalize_phone_number(invalid).is_err(), "{invalid}");
+        }
+    }
 
     #[test]
     fn maps_authentication_phases_to_core_states() {
