@@ -1,4 +1,4 @@
-use std::collections::{HashSet, VecDeque};
+use std::{collections::{HashSet, VecDeque}, time::Duration};
 
 use grammers_client::{
     Client,
@@ -11,7 +11,7 @@ use grammers_client::{
 use tg_mobile_core::{
     AttachmentDownloadState, AttachmentKind, AttachmentThumbnail, CoreError, ForwardedFrom,
     GeoPoint, MediaAttachment, MessageLocation, MessageReaction, MessageReactionType,
-    MessageSummary, OutgoingMediaKind, PollSummary, ReplyMetadata, ServiceAction, ServiceMessage,
+    MessageSummary, OutgoingMediaAttachment, OutgoingMediaKind, PollSummary, ReplyMetadata, ServiceAction, ServiceMessage,
     Venue,
 };
 use tokio::sync::Mutex;
@@ -659,8 +659,7 @@ pub(crate) async fn send_media_idempotent(
     client: &Client,
     peer: PeerRef,
     uploaded: Uploaded,
-    kind: OutgoingMediaKind,
-    mime_type: &str,
+    attachment: &OutgoingMediaAttachment,
     caption: String,
     random_id: i64,
 ) -> tg_mobile_core::Result<MessageSummary> {
@@ -670,10 +669,23 @@ pub(crate) async fn send_media_idempotent(
         ));
     }
 
-    let media = match kind {
+    let media = match attachment.kind {
         OutgoingMediaKind::Photo => InputMedia::new().photo(uploaded),
-        OutgoingMediaKind::Video => InputVideo::new(uploaded).mime_type(mime_type).into(),
-        OutgoingMediaKind::Document => InputMedia::new().document(uploaded).mime_type(mime_type),
+        OutgoingMediaKind::Video => {
+            let mut video = InputVideo::new(uploaded)
+                .mime_type(&attachment.mime_type)
+                .supports_streaming(true);
+            if let Some(duration_ms) = attachment.video_duration_ms {
+                video = video.duration(Duration::from_millis(duration_ms));
+            }
+            if let (Some(width), Some(height)) = (attachment.video_width, attachment.video_height) {
+                video = video.size(width as i32, height as i32);
+            }
+            video.into()
+        }
+        OutgoingMediaKind::Document => InputMedia::new()
+            .document(uploaded)
+            .mime_type(&attachment.mime_type),
     }
     .caption(caption.clone());
 
