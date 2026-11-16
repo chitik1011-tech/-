@@ -36,6 +36,9 @@ data class NativeUiState(
     val pollVoteErrors: Map<Long, String> = emptyMap(),
     val forwardError: String? = null,
     val forwardSuccessCount: Long = 0,
+    val selectionGeneration: Long = 0,
+    val deletingMessages: Boolean = false,
+    val deleteError: String? = null,
     val busy: Boolean = false,
     val lastEventType: String = "none",
     val lastEventPayload: String = "",
@@ -379,6 +382,29 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         if (!accepted) _state.update { it.copy(busy = false, error = "Не удалось отправить запрос пересылки") }
     }
 
+    fun deleteMessages(chatId: Long, messageIds: List<Long>) {
+        if (chatId == 0L || messageIds.isEmpty() || messageIds.size > 100 ||
+            messageIds.any { it <= 0L } || messageIds.distinct().size != messageIds.size
+        ) return
+        _state.update { it.copy(deletingMessages = true, deleteError = null, busy = true, error = null) }
+        val ids = JSONArray().apply { messageIds.forEach(::put) }
+        val accepted = sendCommand(
+            JSONObject()
+                .put("type", "delete_messages")
+                .put("payload", JSONObject().put("chat_id", chatId).put("message_ids", ids))
+                .toString(),
+        )
+        if (!accepted) {
+            _state.update {
+                it.copy(
+                    deletingMessages = false,
+                    deleteError = "Не удалось отправить запрос удаления",
+                    busy = false,
+                )
+            }
+        }
+    }
+
     fun votePoll(poll: ConversationPollUi, optionIds: List<List<Int>>) {
         if (poll.closed) {
             _state.update {
@@ -600,6 +626,26 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                     }
                 }
             }
+            "connection_lifecycle" -> {
+                _state.update {
+                    it.copy(
+                        selectionGeneration = it.selectionGeneration + 1,
+                        lastEventType = type,
+                        lastEventPayload = payload,
+                    )
+                }
+            }
+            "messages_deleted" -> {
+                _state.update {
+                    it.copy(
+                        busy = false,
+                        deletingMessages = false,
+                        deleteError = null,
+                        lastEventType = type,
+                        lastEventPayload = payload,
+                    )
+                }
+            }
             "messages_forwarded" -> {
                 val (succeeded, failed, firstError) = runCatching {
                     val result = JSONObject(payload).optJSONObject("payload") ?: JSONObject()
@@ -647,6 +693,8 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 _state.update {
                     it.copy(
                         busy = false,
+                        deletingMessages = false,
+                        deleteError = if (it.deletingMessages) message else it.deleteError,
                         lastEventType = type,
                         lastEventPayload = payload,
                         error = message,
@@ -673,6 +721,13 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         _state.update {
             it.copy(
                 authorization = authorization,
+                selectionGeneration = if (authorization == AuthorizationUiStep.Ready) {
+                    it.selectionGeneration
+                } else {
+                    it.selectionGeneration + 1
+                },
+                deletingMessages = false,
+                deleteError = null,
                 busy = false,
                 lastEventType = "authorization_changed",
                 lastEventPayload = payload,
