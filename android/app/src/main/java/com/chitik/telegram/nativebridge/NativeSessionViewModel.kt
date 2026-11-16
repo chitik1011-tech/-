@@ -819,6 +819,9 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
             .put("file_name", media.fileName)
             .put("mime_type", media.mimeType)
             .put("size_bytes", media.sizeBytes)
+        media.videoDurationMs?.let { mediaPayload.put("video_duration_ms", it) }
+        media.videoWidth?.let { mediaPayload.put("video_width", it) }
+        media.videoHeight?.let { mediaPayload.put("video_height", it) }
         val command = JSONObject()
             .put("type", "send_media_reliable")
             .put(
@@ -866,6 +869,9 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         fileName = fileName,
         mimeType = mimeType,
         sizeBytes = sizeBytes,
+        videoDurationMs = videoDurationMs,
+        videoWidth = videoWidth,
+        videoHeight = videoHeight,
     )
 
     private fun submitMessageMutation(
