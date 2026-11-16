@@ -797,6 +797,11 @@ fn operation_error_events(command: &CoreCommand, error: CoreError) -> Vec<CoreEv
 }
 
 fn command_capability_error(command: &CoreCommand, state: &CoreState) -> Option<String> {
+    // Unauthenticated requests must retain the backend's authorization error;
+    // no session-bound rights exist to consult until authorization completes.
+    if state.account.authorization != crate::model::AuthorizationState::Ready {
+        return None;
+    }
     let require_send = |chat_id: i64| match state.chat_capabilities.get(&chat_id) {
         Some(capabilities) if capabilities.can_send_now() == CapabilityValue::Known(true) => None,
         Some(capabilities) if capabilities.can_send_now() == CapabilityValue::Known(false) => {
