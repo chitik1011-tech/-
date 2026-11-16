@@ -257,7 +257,6 @@ fn invalid_deserialized_thumbnail_dimensions_do_not_bypass_validation() {
     assert!(serde_json::from_value::<MediaAttachment>(serialized).is_err());
 }
 
-
 #[test]
 fn voice_waveform_is_optional_and_preserves_legacy_wire_shape() {
     let mut voice = media(AttachmentKind::Voice);
@@ -270,14 +269,17 @@ fn voice_waveform_is_optional_and_preserves_legacy_wire_shape() {
     assert_eq!(serialized["duration_ms"], json!(4_200));
     assert_eq!(serialized["mime_type"], json!("audio/ogg"));
 
-    let reloaded: MediaAttachment = serde_json::from_value(serialized.clone())
-        .expect("voice metadata deserializes");
+    let reloaded: MediaAttachment =
+        serde_json::from_value(serialized.clone()).expect("voice metadata deserializes");
     assert_eq!(reloaded, voice);
 
     let mut legacy = serialized;
-    legacy.as_object_mut().expect("object").remove("voice_waveform");
-    let old: MediaAttachment = serde_json::from_value(legacy)
-        .expect("old stored media needs no waveform");
+    legacy
+        .as_object_mut()
+        .expect("object")
+        .remove("voice_waveform");
+    let old: MediaAttachment =
+        serde_json::from_value(legacy).expect("old stored media needs no waveform");
     assert_eq!(old.voice_waveform, None);
     assert_eq!(old.kind, AttachmentKind::Voice);
 
