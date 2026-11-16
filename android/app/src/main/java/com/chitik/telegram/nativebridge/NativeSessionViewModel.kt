@@ -260,6 +260,8 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
     val state: StateFlow<NativeUiState> = _state.asStateFlow()
 
     private val lifecycle = NativeSessionLifecycle()
+    @Volatile
+    private var restartHandleAfterLogout = false
 
     init {
         initializeNativeSession()
@@ -361,8 +363,10 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
 
     fun logout() {
         if (_state.value.authorization != AuthorizationUiStep.Ready || _state.value.busy) return
+        restartHandleAfterLogout = true
         _state.update { it.copy(busy = true, error = null) }
         if (!sendCommand(JSONObject().put("type", "logout").toString())) {
+            restartHandleAfterLogout = false
             _state.update { it.copy(busy = false) }
         }
     }
@@ -1389,6 +1393,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 }
             }
             "error" -> {
+                restartHandleAfterLogout = false
                 val message = runCatching {
                     val root = JSONObject(payload)
                     root.optString("payload").ifBlank {
@@ -1484,7 +1489,12 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
             )
         }
 
-        if (authorization == AuthorizationUiStep.Ready) {
+        if (loggedOut && restartHandleAfterLogout) {
+            restartHandleAfterLogout = false
+            // The old Grammers update worker is scoped to this connection generation.
+            // Recreate the native handle so a later sign-in gets a fresh update stream.
+            restartAuthorization()
+        } else if (authorization == AuthorizationUiStep.Ready) {
             loadChats()
             loadContacts(offset = 0)
         }
