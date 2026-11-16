@@ -11,6 +11,7 @@ import com.chitik.telegram.ConversationPollOptionUi
 import com.chitik.telegram.ConversationPollUi
 import com.chitik.telegram.MediaAttachmentUi
 import com.chitik.telegram.matchesMutationTarget
+import com.chitik.telegram.mutationEventAcknowledges
 import com.chitik.telegram.mediaDownloadStateFromWire
 import com.chitik.telegram.mediaKindFromWire
 import java.time.Instant
@@ -739,7 +740,8 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 _state.update {
                     if (
                         it.messageMutationPending &&
-                        matchesMutationTarget(
+                        mutationEventAcknowledges(
+                            type,
                             it.messageMutationChatId,
                             it.messageMutationMessageId,
                             target.first,
