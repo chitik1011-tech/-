@@ -61,7 +61,7 @@ fn message_update_reorders_cache_when_timestamp_changes() {
 fn incoming_message_increments_unread_only_when_first_inserted() {
     let mut state = CoreState::default();
     state.account.chats.push(ChatSummary {
-            kind: None,
+        kind: None,
         id: 77,
         title: "existing".into(),
         unread_count: 4,
@@ -86,7 +86,7 @@ fn incoming_message_increments_unread_only_when_first_inserted() {
 fn outgoing_message_does_not_increment_unread() {
     let mut state = CoreState::default();
     state.account.chats.push(ChatSummary {
-            kind: None,
+        kind: None,
         id: 77,
         title: "existing".into(),
         unread_count: 4,
@@ -108,7 +108,7 @@ fn outgoing_message_does_not_increment_unread() {
 fn unread_increment_saturates_at_u32_max() {
     let mut state = CoreState::default();
     state.account.chats.push(ChatSummary {
-            kind: None,
+        kind: None,
         id: 77,
         title: "existing".into(),
         unread_count: u32::MAX,
