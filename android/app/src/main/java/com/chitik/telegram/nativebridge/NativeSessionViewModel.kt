@@ -851,6 +851,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         profile: PeerProfileUi,
     ): Map<Long, PeerProfileUi> = (current + (profile.peerId to profile))
         .entries
+        .toList()
         .takeLast(128)
         .associate { it.toPair() }
 
