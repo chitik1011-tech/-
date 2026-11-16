@@ -8,7 +8,7 @@ use crate::{
     command::CoreCommand,
     error::{CoreError, Result},
     event::CoreEvent,
-    model::{AuthorizationState, ChatSummary, MessageLocation, MessageSummary},
+    model::{AuthorizationState, ChatSummary, MessageLocation, MessageSummary, PeerProfile},
     send::OutgoingSend,
 };
 
@@ -116,6 +116,9 @@ impl MockTelegramBackend {
                 let chats = self.chats.iter().take(limit).cloned().collect();
                 Ok(vec![CoreEvent::ChatsLoaded(chats)])
             }
+            CoreCommand::LoadProfile { peer_id } => Ok(vec![CoreEvent::ProfileUpdated(
+                PeerProfile::unknown(peer_id),
+            )]),
             CoreCommand::LoadContacts { .. } => Err(CoreError::Backend(
                 "contacts are unavailable in the mock backend".into(),
             )),
