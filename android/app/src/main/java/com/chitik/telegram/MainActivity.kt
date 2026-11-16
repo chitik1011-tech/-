@@ -1,8 +1,14 @@
 package com.chitik.telegram
 
+import android.Manifest
+import android.content.Context
+import android.content.ContextWrapper
+import android.content.pm.PackageManager
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Arrangement
@@ -22,6 +28,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -34,6 +41,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.chitik.telegram.nativebridge.NativeSessionViewModel
 import com.chitik.telegram.nativebridge.NativeUiState
@@ -77,8 +87,56 @@ private fun TelegramRustApp(
 ) {
     val state by viewModel.state.collectAsState()
     val context = LocalContext.current
+    val lifecycleOwner = remember(context) { context.findLifecycleOwner() }
     var selectedChatId by rememberSaveable { mutableLongStateOf(0L) }
+    var showContacts by rememberSaveable { mutableStateOf(false) }
     var draft by rememberSaveable { mutableStateOf("") }
+    var pendingLocationChatId by rememberSaveable { mutableLongStateOf(0L) }
+    var activeLocationRequest by remember { mutableStateOf<LocationRequestHandle?>(null) }
+    DisposableEffect(lifecycleOwner) {
+        if (lifecycleOwner == null) {
+            onDispose { }
+        } else {
+            val observer = LifecycleEventObserver { _, event ->
+                if (event == Lifecycle.Event.ON_STOP) {
+                    activeLocationRequest?.cancel()
+                    activeLocationRequest = null
+                    pendingLocationChatId = 0L
+                }
+            }
+            lifecycleOwner.lifecycle.addObserver(observer)
+            onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+        }
+    }
+    DisposableEffect(selectedChatId) {
+        onDispose {
+            activeLocationRequest?.cancel()
+            activeLocationRequest = null
+            pendingLocationChatId = 0L
+        }
+    }
+    val sendCurrentLocation: (Long) -> Unit = { chatId ->
+        activeLocationRequest?.cancel()
+        activeLocationRequest = requestCurrentLocation(context) { result ->
+            if (selectedChatId == chatId) {
+                result.onSuccess { point ->
+                    viewModel.sendLocation(chatId, point.latitude, point.longitude, point.accuracyRadiusMeters)
+                }.onFailure {
+                    viewModel.reportLocationError("Unable to get current location")
+                }
+            }
+        }
+    }
+    val locationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { grants ->
+        val chatId = pendingLocationChatId
+        pendingLocationChatId = 0L
+        val granted = grants[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+            grants[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+        if (granted && chatId != 0L && selectedChatId == chatId) sendCurrentLocation(chatId)
+        else if (chatId != 0L && selectedChatId == chatId) viewModel.reportLocationError("Location permission is required to send your location")
+    }
     var showForwardTargets by remember { mutableStateOf(false) }
     var forwardingSourceChatId by remember { mutableLongStateOf(0L) }
     var forwardingMessageIds by remember { mutableStateOf<List<Long>>(emptyList()) }
@@ -111,12 +169,30 @@ private fun TelegramRustApp(
             },
         )
 
+        selectedChatId == 0L && showContacts -> ContactsScreen(
+            contacts = state.contacts,
+            total = state.contactTotal,
+            isLoading = state.contactsLoading,
+            error = state.error,
+            onBack = { showContacts = false },
+            onRefresh = { viewModel.loadContacts(offset = 0) },
+            onLoadMore = { viewModel.loadContacts(offset = state.contacts.size) },
+            onContactSelected = { contact ->
+                selectedChatId = contact.userId
+                viewModel.loadMessages(contact.userId)
+            },
+        )
+
         selectedChatId == 0L -> ChatListScreen(
             chats = state.chats,
             selectedChatId = null,
             isLoading = state.busy,
             error = state.error,
             onRefresh = { viewModel.loadChats() },
+            onOpenContacts = {
+                showContacts = true
+                viewModel.loadContacts(offset = 0)
+            },
             onChatSelected = { chatId ->
                 selectedChatId = chatId
                 viewModel.loadMessages(chatId)
@@ -125,6 +201,7 @@ private fun TelegramRustApp(
 
         else -> {
             val chat = state.chats.firstOrNull { it.id == selectedChatId }
+            val contact = state.contacts.firstOrNull { it.userId == selectedChatId }
             val messages = state.messages[selectedChatId].orEmpty().map { message ->
                 val pollId = message.poll?.id
                 if (pollId == null) {
@@ -140,7 +217,7 @@ private fun TelegramRustApp(
             ConversationScreen(
                 state = ConversationScreenState(
                     chatId = selectedChatId.toString(),
-                    chatTitle = chat?.title.orEmpty(),
+                    chatTitle = chat?.title ?: contact?.displayName.orEmpty(),
                     messages = messages,
                     draft = draft,
                     loading = state.busy,
@@ -164,6 +241,29 @@ private fun TelegramRustApp(
                     }
                 },
                 onPollVote = viewModel::votePoll,
+                onSendLocation = { chatId ->
+                    val numericChatId = chatId.toLongOrNull() ?: return@ConversationScreen
+                    val granted =
+                        context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+                            context.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+                    if (granted) sendCurrentLocation(numericChatId) else {
+                        pendingLocationChatId = numericChatId
+                        locationPermissionLauncher.launch(arrayOf(
+                            Manifest.permission.ACCESS_COARSE_LOCATION,
+                            Manifest.permission.ACCESS_FINE_LOCATION,
+                        ))
+                    }
+                },
+                onOpenLocation = { location ->
+                    val point = location.point ?: return@ConversationScreen
+                    val label = when (location) {
+                        is ConversationLocationUi.Point -> "Location"
+                        is ConversationLocationUi.Venue -> location.title
+                    }
+                    if (!openLocationInMap(context, point.latitude, point.longitude, label)) {
+                        viewModel.reportLocationError("No map application is available")
+                    }
+                },
                 onForward = { sourceChatId, messageIds ->
                     forwardingSourceChatId = sourceChatId
                     forwardingMessageIds = messageIds
@@ -308,4 +408,14 @@ private fun StartupScreen(state: NativeUiState) {
             },
         )
     }
+}
+
+
+private tailrec fun Context.findLifecycleOwner(): LifecycleOwner? = when (this) {
+    is LifecycleOwner -> this
+    is ContextWrapper -> {
+        val base = baseContext
+        if (base === this) null else base.findLifecycleOwner()
+    }
+    else -> null
 }

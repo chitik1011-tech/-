@@ -60,6 +60,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
+import java.util.Locale
 import kotlin.math.roundToInt
 
 data class ConversationPollOptionUi(
@@ -83,13 +84,35 @@ data class ConversationPollUi(
     val closed: Boolean,
     val explanation: String?,
 )
-
 /**
  * Display-ready message data supplied by the Rust-backed state layer.
  *
  * [timestamp] is formatted by the caller for the user's locale and timezone.
  * [id] should be the stable Telegram message identifier scoped to [chatId].
  */
+data class ConversationGeoPointUi(
+    val latitude: Double,
+    val longitude: Double,
+    val accuracyRadiusMeters: Int?,
+)
+
+sealed interface ConversationLocationUi {
+    val point: ConversationGeoPointUi?
+
+    data class Point(
+        override val point: ConversationGeoPointUi,
+    ) : ConversationLocationUi
+
+    data class Venue(
+        override val point: ConversationGeoPointUi?,
+        val title: String,
+        val address: String,
+        val provider: String,
+        val venueId: String,
+        val venueType: String?,
+    ) : ConversationLocationUi
+}
+
 data class ConversationMessageUi(
     val id: String,
     val chatId: String,
@@ -102,6 +125,8 @@ data class ConversationMessageUi(
     val pollVoting: Boolean = false,
     val pollError: String? = null,
     val forwardedFrom: String? = null,
+    val serviceAction: ServiceActionUi? = null,
+    val location: ConversationLocationUi? = null,
 )
 
 data class ConversationScreenState(
@@ -140,6 +165,8 @@ fun ConversationScreen(
     onDraftChange: (String) -> Unit,
     onSend: (chatId: String, text: String) -> Unit,
     onPollVote: (poll: ConversationPollUi, optionIds: List<List<Int>>) -> Unit,
+    onSendLocation: (chatId: String) -> Unit,
+    onOpenLocation: (ConversationLocationUi) -> Unit,
     onForward: (chatId: Long, messageIds: List<Long>) -> Unit,
     onDelete: (chatId: Long, messageIds: List<Long>) -> Unit,
     onCopy: (text: String) -> Unit,
@@ -271,6 +298,7 @@ fun ConversationScreen(
                     sending = state.sending,
                     onDraftChange = onDraftChange,
                     onSend = submitMessage,
+                    onSendLocation = { onSendLocation(state.chatId) },
                 )
             } else {
                 TextButton(onClick = { selectedMessageIds = emptySet() }) { Text("Отменить выбор") }
@@ -340,6 +368,7 @@ fun ConversationScreen(
                             MessageBubble(
                                 message = message,
                                 onPollVote = onPollVote,
+                                onOpenLocation = onOpenLocation,
                                 onDownloadMedia = { attachmentIndex, retry ->
                                     message.id.toLongOrNull()?.let { messageId ->
                                         onDownloadMedia(messageId, attachmentIndex, retry)
@@ -438,6 +467,7 @@ fun ConversationScreen(
 private fun MessageBubble(
     message: ConversationMessageUi,
     onPollVote: (ConversationPollUi, List<List<Int>>) -> Unit,
+    onOpenLocation: (ConversationLocationUi) -> Unit,
     onDownloadMedia: (attachmentIndex: Int, retry: Boolean) -> Unit,
     onCancelMedia: (attachmentIndex: Int) -> Unit,
     onOpenViewer: (MediaAttachmentUi) -> Unit,
@@ -446,6 +476,22 @@ private fun MessageBubble(
     onClick: () -> Unit,
     onLongPress: () -> Unit,
 ) {
+    message.serviceAction?.let { action ->
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f),
+                shape = RoundedCornerShape(14.dp),
+            ) {
+                Text(
+                    text = "•  ${action.displayText()}  •",
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        return
+    }
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = if (message.isOutgoing) Arrangement.End else Arrangement.Start,
@@ -472,6 +518,10 @@ private fun MessageBubble(
             },
         ) {
             Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                message.location?.let { location ->
+                    LocationMessageCard(location = location, onClick = { onOpenLocation(location) })
+                    Spacer(Modifier.height(8.dp))
+                }
                 message.attachments.forEach { attachment ->
                     MediaAttachmentCard(
                         attachment = attachment,
@@ -995,11 +1045,76 @@ private fun MediaTransferControls(
 }
 
 @Composable
+private fun LocationMessageCard(
+    location: ConversationLocationUi,
+    onClick: () -> Unit,
+) {
+    val point = location.point
+    val title = when (location) {
+        is ConversationLocationUi.Point -> "Location"
+        is ConversationLocationUi.Venue -> location.title
+    }
+    val subtitle = when (location) {
+        is ConversationLocationUi.Point -> formatCoordinates(location.point)
+        is ConversationLocationUi.Venue -> location.address
+    }
+    val accuracy = point?.accuracyRadiusMeters?.let { "Accuracy ±$it m" }
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(enabled = point != null, onClick = onClick),
+        shape = RoundedCornerShape(14.dp),
+        tonalElevation = 2.dp,
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text("📍", style = MaterialTheme.typography.headlineSmall)
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                if (subtitle.isNotBlank()) {
+                    Text(
+                        text = subtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (location is ConversationLocationUi.Venue && point != null) {
+                    Text(
+                        text = formatCoordinates(point),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                accuracy?.let {
+                    Text(
+                        text = it,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun formatCoordinates(point: ConversationGeoPointUi): String =
+    String.format(Locale.US, "%.5f, %.5f", point.latitude, point.longitude)
+
+@Composable
 private fun ComposerBar(
     draft: String,
     sending: Boolean,
     onDraftChange: (String) -> Unit,
     onSend: () -> Unit,
+    onSendLocation: () -> Unit,
 ) {
     val canSend = draft.isNotBlank() && !sending
 
@@ -1019,6 +1134,13 @@ private fun ComposerBar(
                 verticalAlignment = Alignment.Bottom,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+                TextButton(
+                    onClick = onSendLocation,
+                    enabled = !sending,
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 12.dp),
+                ) {
+                    Text("📍")
+                }
                 OutlinedTextField(
                     value = draft,
                     onValueChange = onDraftChange,

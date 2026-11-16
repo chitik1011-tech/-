@@ -7,11 +7,17 @@ import com.chitik.telegram.AuthorizationUiStep
 import com.chitik.telegram.ChatListEntry
 import com.chitik.telegram.ChatListPreview
 import com.chitik.telegram.ConversationMessageUi
+import com.chitik.telegram.ConversationLocationUi
+import com.chitik.telegram.ConversationGeoPointUi
+import com.chitik.telegram.ContactListEntry
+import com.chitik.telegram.parseContactListState
+import com.chitik.telegram.parseContactPage
 import com.chitik.telegram.ConversationPollOptionUi
 import com.chitik.telegram.ConversationPollUi
 import com.chitik.telegram.MediaAttachmentUi
 import com.chitik.telegram.mediaDownloadStateFromWire
 import com.chitik.telegram.mediaKindFromWire
+import com.chitik.telegram.parseServiceAction
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -31,6 +37,9 @@ data class NativeUiState(
     val telegramConfigured: Boolean = false,
     val authorization: AuthorizationUiStep = AuthorizationUiStep.Closed,
     val chats: List<ChatListEntry> = emptyList(),
+    val contacts: List<ContactListEntry> = emptyList(),
+    val contactTotal: Int = 0,
+    val contactsLoading: Boolean = false,
     val messages: Map<Long, List<ConversationMessageUi>> = emptyMap(),
     val votingPollIds: Set<Long> = emptySet(),
     val pollVoteErrors: Map<Long, String> = emptyMap(),
@@ -47,6 +56,13 @@ data class NativeUiState(
     val coreReady: Boolean
         get() = libraryLoaded && nativeHandle != 0L && error == null
 }
+
+private data class ParsedNativeState(
+    val authorization: AuthorizationUiStep,
+    val chats: List<ChatListEntry>,
+    val messages: Map<Long, List<ConversationMessageUi>>,
+    val contacts: List<ContactListEntry>,
+)
 
 internal fun NativeUiState.advanceSelectionGeneration(): NativeUiState = copy(
     selectionGeneration = selectionGeneration + 1,
@@ -361,6 +377,26 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         )
     }
 
+    fun loadContacts(offset: Int = 0, limit: Int = 100) {
+        if (offset < 0 || limit !in 1..100) {
+            setErrorIfOpen("Invalid contacts page")
+            return
+        }
+        _state.update { it.copy(contactsLoading = true, error = null) }
+        val accepted = sendCommand(
+            JSONObject()
+                .put("type", "load_contacts")
+                .put(
+                    "payload",
+                    JSONObject()
+                        .put("offset", offset)
+                        .put("limit", limit),
+                )
+                .toString(),
+        )
+        if (!accepted) _state.update { it.copy(contactsLoading = false) }
+    }
+
     fun sendText(chatId: Long, text: String) {
         sendCommand(
             JSONObject()
@@ -373,6 +409,43 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 )
                 .toString(),
         )
+    }
+
+    fun sendLocation(
+        chatId: Long,
+        latitude: Double,
+        longitude: Double,
+        accuracyRadiusMeters: Int?,
+    ) {
+        if (!latitude.isFinite() || !longitude.isFinite() ||
+            latitude !in -90.0..90.0 || longitude !in -180.0..180.0
+        ) {
+            setErrorIfOpen("Invalid location coordinates")
+            return
+        }
+        if (accuracyRadiusMeters != null && accuracyRadiusMeters !in 0..1_500) {
+            setErrorIfOpen("Invalid location accuracy radius")
+            return
+        }
+        val point = JSONObject()
+            .put("latitude", latitude)
+            .put("longitude", longitude)
+        accuracyRadiusMeters?.let { point.put("accuracy_radius_meters", it) }
+        sendCommand(
+            JSONObject()
+                .put("type", "send_location")
+                .put(
+                    "payload",
+                    JSONObject()
+                        .put("chat_id", chatId)
+                        .put("location", point),
+                )
+                .toString(),
+        )
+    }
+
+    fun reportLocationError(message: String) {
+        setErrorIfOpen(message)
     }
 
     fun forwardMessages(sourceChatId: Long, messageIds: List<Long>, destinationChatId: Long) {
@@ -553,6 +626,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
             _state.update {
                 it.copy(
                     busy = false,
+                    contactsLoading = false,
                     error = message,
                 )
             }
@@ -580,11 +654,39 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                     )
                 }
             }
+            "contacts_loaded" -> {
+                val page = parseContactPage(payload)
+                if (page == null) {
+                    _state.update {
+                        it.copy(contactsLoading = false, error = "Invalid contacts response")
+                    }
+                } else {
+                    _state.update {
+                        val contacts = if (page.offset == 0) {
+                            page.contacts
+                        } else {
+                            (it.contacts + page.contacts).distinctBy(ContactListEntry::userId)
+                                .sortedBy(ContactListEntry::userId)
+                        }
+                        it.copy(
+                            contacts = contacts,
+                            contactsLoading = false,
+                            contactTotal = page.total,
+                            lastEventType = type,
+                            // Keep contact names and usernames out of diagnostic state.
+                            lastEventPayload = "{\"offset\":${page.offset},\"count\":${page.contacts.size},\"total\":${page.total}}",
+                            error = null,
+                        )
+                    }
+                }
+            }
+            "contacts_refresh_requested" -> loadContacts(offset = 0)
             "messages_loaded" -> {
                 val target = parseReadTarget(payload)
                 _state.update {
                     it.copy(
                         busy = false,
+                        contactsLoading = false,
                         lastEventType = type,
                         lastEventPayload = payload,
                         error = null,
@@ -703,6 +805,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 _state.update {
                     it.copy(
                         busy = false,
+                        contactsLoading = false,
                         deletingMessages = false,
                         deleteError = if (it.deletingMessages) message else it.deleteError,
                         lastEventType = type,
@@ -739,6 +842,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 deletingMessages = false,
                 deleteError = null,
                 busy = false,
+                contactsLoading = false,
                 lastEventType = "authorization_changed",
                 lastEventPayload = payload,
                 error = null,
@@ -747,6 +851,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
 
         if (authorization == AuthorizationUiStep.Ready) {
             loadChats()
+            loadContacts(offset = 0)
         }
     }
 
@@ -759,16 +864,20 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
             val polls = parsePolls(root.optJSONObject("polls"))
             val readOutboxMaxIds = parseReadOutboxMaxIds(root.optJSONObject("read_receipts"))
             val messages = parseMessages(root.optJSONObject("messages"), polls, readOutboxMaxIds)
-            Triple(authorization, chats, messages)
-        }.onSuccess { (authorization, chats, messages) ->
+            val contacts = parseContactListState(root.optJSONObject("contacts"))
+            ParsedNativeState(authorization, chats, messages, contacts)
+        }.onSuccess { (authorization, chats, messages, contacts) ->
             _state.update {
                 it.copy(
                     authorization = authorization,
                     chats = chats,
+                    contacts = contacts,
+                    contactTotal = maxOf(it.contactTotal, contacts.size),
                     messages = messages,
                     busy = false,
+                    contactsLoading = false,
                     lastEventType = "state",
-                    lastEventPayload = payload,
+                    lastEventPayload = payloadWithoutContacts(payload),
                     error = null,
                 )
             }
@@ -776,11 +885,16 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
             _state.update {
                 it.copy(
                     busy = false,
+                    contactsLoading = false,
                     error = "Invalid Rust state payload: ${error.message}",
                 )
             }
         }
     }
+
+    private fun payloadWithoutContacts(payload: String): String = runCatching {
+        JSONObject(payload).apply { remove("contacts") }.toString()
+    }.getOrDefault("")
 
     private fun parseChats(array: JSONArray): List<ChatListEntry> = buildList {
         for (index in 0 until array.length()) {
@@ -914,6 +1028,8 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                                     message.optJSONArray("attachments") ?: JSONArray(),
                                 ),
                                 forwardedFrom = forwardLabel,
+                                serviceAction = parseServiceAction(message),
+                                location = parseLocation(message.optJSONObject("location")),
                                 poll = polls[chatId to message.optLong("id")],
                             ),
                         )
@@ -1029,6 +1145,41 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         "LoggingOut" -> AuthorizationUiStep.LoggingOut
         "Closed" -> AuthorizationUiStep.Closed
         else -> AuthorizationUiStep.Starting
+    }
+
+    private fun parseLocation(root: JSONObject?): ConversationLocationUi? {
+        if (root == null) return null
+        return when (root.optString("kind")) {
+            "location" -> parseGeoPoint(root.optJSONObject("point"))
+                ?.let { ConversationLocationUi.Point(it) }
+            "venue" -> {
+                val venue = root.optJSONObject("venue") ?: return null
+                val title = venue.optString("title").trim()
+                val address = venue.optString("address").trim()
+                if (title.isEmpty() || address.isEmpty()) return null
+                ConversationLocationUi.Venue(
+                    point = parseGeoPoint(venue.optJSONObject("point")),
+                    title = title,
+                    address = address,
+                    provider = venue.optString("provider"),
+                    venueId = venue.optString("venue_id"),
+                    venueType = venue.optString("venue_type").takeIf(String::isNotEmpty),
+                )
+            }
+            else -> null
+        }
+    }
+
+    private fun parseGeoPoint(root: JSONObject?): ConversationGeoPointUi? {
+        if (root == null || !root.has("latitude") || !root.has("longitude")) return null
+        val latitude = root.optDouble("latitude", Double.NaN)
+        val longitude = root.optDouble("longitude", Double.NaN)
+        if (!latitude.isFinite() || !longitude.isFinite()) return null
+        if (latitude !in -90.0..90.0 || longitude !in -180.0..180.0) return null
+        val radius = if (root.has("accuracy_radius_meters")) {
+            root.optInt("accuracy_radius_meters", -1).takeIf { it in 0..1_500 }
+        } else null
+        return ConversationGeoPointUi(latitude, longitude, radius)
     }
 
     private fun formatTimestamp(timestampUnix: Long): String {

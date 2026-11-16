@@ -36,11 +36,13 @@ fn incoming_message(id: i64) -> MessageSummary {
         text: format!("incoming-{id}"),
         timestamp_unix: id,
         outgoing: false,
+        location: None,
         attachments: Vec::new(),
         forwarded_from: None,
         edited: false,
         edit_timestamp_unix: None,
         service_message: false,
+        service: None,
         media_caption: None,
         reply_to: None,
     }

@@ -36,11 +36,13 @@ fn message() -> MessageSummary {
         text: "incoming".into(),
         timestamp_unix: 123,
         outgoing: false,
+        location: None,
         attachments: Vec::new(),
         forwarded_from: None,
         edited: false,
         edit_timestamp_unix: None,
         service_message: false,
+        service: None,
         media_caption: None,
         reply_to: None,
     }

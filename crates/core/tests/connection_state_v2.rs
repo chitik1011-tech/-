@@ -354,11 +354,13 @@ async fn runtime_drops_updates_from_the_previous_session_generation() {
         text: "old session".into(),
         timestamp_unix: 4,
         outgoing: false,
+        location: None,
         attachments: Vec::new(),
         forwarded_from: None,
         edited: false,
         edit_timestamp_unix: None,
         service_message: false,
+        service: None,
         media_caption: None,
         reply_to: None,
     };

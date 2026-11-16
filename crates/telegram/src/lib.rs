@@ -7,6 +7,7 @@ mod auth;
 mod backend;
 mod chats;
 mod config;
+mod contacts;
 mod downloads;
 mod error;
 mod ids;

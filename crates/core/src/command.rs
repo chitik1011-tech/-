@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    contacts::validate_contact_page,
     error::{CoreError, Result},
     peer::parse_peer_reference,
     search::SearchMessagesRequest,
@@ -18,6 +19,11 @@ pub enum CoreCommand {
     SubmitCode(String),
     SubmitPassword(String),
     LoadChats {
+        limit: usize,
+    },
+    /// Load one page from the authenticated account's Telegram contacts.
+    LoadContacts {
+        offset: usize,
         limit: usize,
     },
     LoadMessages {
@@ -44,6 +50,12 @@ pub enum CoreCommand {
     SendText {
         chat_id: i64,
         text: String,
+    },
+    /// Send a user-selected one-shot geographic location. This intentionally does
+    /// not participate in the text reliable-send/outbox subsystem.
+    SendLocation {
+        chat_id: i64,
+        location: crate::model::GeoPoint,
     },
     /// Reliable text send. Retrying the same client_id with the same payload is idempotent.
     SendTextReliable {
@@ -120,6 +132,7 @@ impl CoreCommand {
             Self::SubmitCode(_) => "submit_code",
             Self::SubmitPassword(_) => "submit_password",
             Self::LoadChats { .. } => "load_chats",
+            Self::LoadContacts { .. } => "load_contacts",
             Self::LoadMessages { .. } => "load_messages",
             Self::LoadMessagesPage { .. } => "load_messages_page",
             Self::MarkRead { .. } => "mark_read",
@@ -127,6 +140,7 @@ impl CoreCommand {
             Self::ForwardMessages(_) => "forward_messages",
             Self::DeleteMessages { .. } => "delete_messages",
             Self::SendText { .. } => "send_text",
+            Self::SendLocation { .. } => "send_location",
             Self::SendTextReliable { .. } => "send_text_reliable",
             Self::VotePoll { .. } => "vote_poll",
             Self::ArchiveChat { .. } => "archive_chat",
@@ -178,6 +192,7 @@ impl CoreCommand {
                 }
             }
             Self::LoadChats { limit } => validate_limit("chat load", *limit, MAX_CHAT_LOAD_LIMIT),
+            Self::LoadContacts { limit, .. } => validate_contact_page(*limit),
             Self::LoadMessages { chat_id, limit } => {
                 validate_chat_id(*chat_id)?;
                 validate_limit("message load", *limit, MAX_MESSAGE_LOAD_LIMIT)
@@ -234,6 +249,10 @@ impl CoreCommand {
             Self::SendText { chat_id, text } => {
                 validate_chat_id(*chat_id)?;
                 require_non_blank("message text", text)
+            }
+            Self::SendLocation { chat_id, location } => {
+                validate_chat_id(*chat_id)?;
+                location.validate()
             }
             Self::SendTextReliable {
                 client_id,

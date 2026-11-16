@@ -16,11 +16,13 @@ fn message(id: i64, timestamp_unix: i64) -> MessageSummary {
         text: format!("message-{id}"),
         timestamp_unix,
         outgoing: false,
+        location: None,
         attachments: Vec::new(),
         forwarded_from: None,
         edited: false,
         edit_timestamp_unix: None,
         service_message: false,
+        service: None,
         media_caption: None,
         reply_to: None,
     }

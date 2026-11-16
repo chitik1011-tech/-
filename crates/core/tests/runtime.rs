@@ -39,11 +39,13 @@ fn reducer_deduplicates_message_updates() {
         text: "draft".into(),
         timestamp_unix: 100,
         outgoing: true,
+        location: None,
         attachments: Vec::new(),
         forwarded_from: None,
         edited: false,
         edit_timestamp_unix: None,
         service_message: false,
+        service: None,
         media_caption: None,
         reply_to: None,
     };

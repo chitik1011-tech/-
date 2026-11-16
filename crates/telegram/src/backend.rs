@@ -28,11 +28,12 @@ use crate::{
     auth::AuthFlow,
     chats::{PeerRegistry, find_peer, load_chats, new_peer_registry},
     config::TelegramConfig,
+    contacts::load_contacts,
     downloads::{MediaTarget, event as media_event, spawn_download, state_from_snapshot},
     error::{TelegramBackendError, session_error},
     messages::{
         MessageDeduplicator, load_messages, load_messages_page, mark_read, message_to_summary,
-        search_messages_page, send_text, send_text_idempotent,
+        search_messages_page, send_location, send_text, send_text_idempotent,
     },
     polls::{PollRegistry, new_poll_registry, poll_by_id, polls_from_updates, remember_poll},
     updates::{TelegramUpdate, UpdateWorkerInput, run_update_worker},
@@ -671,6 +672,16 @@ impl GrammersBackend {
                 let chats = load_chats(&self.client, &self.peers, limit).await?;
                 vec![CoreEvent::ChatsLoaded(chats)]
             }
+            CoreCommand::LoadContacts { offset, limit } => {
+                self.require_ready().await?;
+                let (total, contacts) =
+                    load_contacts(&self.client, &self.peers, offset, limit).await?;
+                vec![CoreEvent::ContactsLoaded {
+                    offset,
+                    total,
+                    contacts,
+                }]
+            }
             CoreCommand::ResolvePeer { input } => {
                 self.require_ready().await?;
                 let reference = tg_mobile_core::parse_peer_reference(&input)?;
@@ -791,6 +802,18 @@ impl GrammersBackend {
                     .await
                     .ok_or(TelegramBackendError::UnknownChat(chat_id))?;
                 let message = send_text(&self.client, peer, text).await?;
+                if self.dedup.should_emit(&message).await {
+                    vec![CoreEvent::MessageAdded(message)]
+                } else {
+                    Vec::new()
+                }
+            }
+            CoreCommand::SendLocation { chat_id, location } => {
+                self.require_ready().await?;
+                let peer = find_peer(&self.peers, chat_id)
+                    .await
+                    .ok_or(TelegramBackendError::UnknownChat(chat_id))?;
+                let message = send_location(&self.client, peer, location).await?;
                 if self.dedup.should_emit(&message).await {
                     vec![CoreEvent::MessageAdded(message)]
                 } else {

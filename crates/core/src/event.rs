@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     connection::ConnectionState,
     connection_machine::{ConnectionToken, LinkEvent},
+    contacts::Contact,
     forwarding::ForwardMessagesResult,
     model::{
         AccountState, AttachmentDownloadState, AuthorizationState, ChatActivityKind, ChatSummary,
@@ -34,6 +35,14 @@ pub enum CoreEvent {
     /// Legacy untagged state event. Runtime reducers ignore it; use `ConnectionLifecycle`.
     ConnectionStateChanged(ConnectionState),
     ChatsLoaded(Vec<ChatSummary>),
+    /// Replaces the contact snapshot at offset zero and appends later pages.
+    ContactsLoaded {
+        offset: usize,
+        total: usize,
+        contacts: Vec<Contact>,
+    },
+    /// Telegram invalidated its local contact snapshot; the client should reload it.
+    ContactsRefreshRequested,
     MessagesLoaded {
         chat_id: i64,
         messages: Vec<MessageSummary>,
@@ -157,6 +166,8 @@ impl CoreEvent {
             Self::SessionUpdate { .. } => "session_update",
             Self::ConnectionStateChanged(_) => "connection_state_changed",
             Self::ChatsLoaded(_) => "chats_loaded",
+            Self::ContactsLoaded { .. } => "contacts_loaded",
+            Self::ContactsRefreshRequested => "contacts_refresh_requested",
             Self::MessagesLoaded { .. } => "messages_loaded",
             Self::MessagesPageLoading { .. } => "messages_page_loading",
             Self::MessagesPageLoaded { .. } => "messages_page_loaded",
@@ -195,6 +206,7 @@ impl CoreEvent {
             self,
             Self::PollVoteSubmitted { .. }
                 | Self::PollVoteFailed { .. }
+                | Self::ContactsRefreshRequested
                 | Self::MessagesForwarded(_)
                 | Self::ChatActivityChanged { .. }
                 | Self::ChatActivityEnded { .. }

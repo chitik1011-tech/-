@@ -8,7 +8,7 @@ use crate::{
     command::CoreCommand,
     error::{CoreError, Result},
     event::CoreEvent,
-    model::{AuthorizationState, ChatSummary, MessageSummary},
+    model::{AuthorizationState, ChatSummary, MessageLocation, MessageSummary},
     send::OutgoingSend,
 };
 
@@ -49,11 +49,13 @@ impl Default for MockTelegramBackend {
                         text: "Core online".into(),
                         timestamp_unix: unix_timestamp(),
                         outgoing: false,
+                        location: None,
                         attachments: Vec::new(),
                         forwarded_from: None,
                         edited: false,
                         edit_timestamp_unix: None,
                         service_message: false,
+                        service: None,
                         media_caption: None,
                         reply_to: None,
                     }),
@@ -114,6 +116,9 @@ impl MockTelegramBackend {
                 let chats = self.chats.iter().take(limit).cloned().collect();
                 Ok(vec![CoreEvent::ChatsLoaded(chats)])
             }
+            CoreCommand::LoadContacts { .. } => Err(CoreError::Backend(
+                "contacts are unavailable in the mock backend".into(),
+            )),
             CoreCommand::LoadMessages { chat_id, limit } => {
                 let mut messages = self
                     .chats
@@ -195,11 +200,13 @@ impl MockTelegramBackend {
                     text,
                     timestamp_unix: unix_timestamp(),
                     outgoing: true,
+                    location: None,
                     attachments: Vec::new(),
                     forwarded_from: None,
                     edited: false,
                     edit_timestamp_unix: None,
                     service_message: false,
+                    service: None,
                     media_caption: None,
                     reply_to: None,
                 };
@@ -209,6 +216,34 @@ impl MockTelegramBackend {
                     chat.last_message = Some(message.clone());
                 }
 
+                Ok(vec![CoreEvent::MessageAdded(message)])
+            }
+            CoreCommand::SendLocation { chat_id, location } => {
+                if self.authorization != AuthorizationState::Ready {
+                    return Err(CoreError::Backend("not authorized".into()));
+                }
+                location.validate()?;
+                let message = MessageSummary {
+                    id: self.next_message_id,
+                    chat_id,
+                    sender_id: 0,
+                    text: String::new(),
+                    timestamp_unix: unix_timestamp(),
+                    outgoing: true,
+                    location: Some(MessageLocation::Location { point: location }),
+                    attachments: Vec::new(),
+                    forwarded_from: None,
+                    edited: false,
+                    edit_timestamp_unix: None,
+                    service_message: false,
+                    service: None,
+                    media_caption: None,
+                    reply_to: None,
+                };
+                self.next_message_id += 1;
+                if let Some(chat) = self.chats.iter_mut().find(|chat| chat.id == chat_id) {
+                    chat.last_message = Some(message.clone());
+                }
                 Ok(vec![CoreEvent::MessageAdded(message)])
             }
             CoreCommand::UpdateDraft(_) | CoreCommand::ClearDraft { .. } => Err(
@@ -269,11 +304,13 @@ impl MockTelegramBackend {
                     text: text.clone(),
                     timestamp_unix: unix_timestamp(),
                     outgoing: true,
+                    location: None,
                     attachments: Vec::new(),
                     forwarded_from: None,
                     edited: false,
                     edit_timestamp_unix: None,
                     service_message: false,
+                    service: None,
                     media_caption: None,
                     reply_to: None,
                 };
