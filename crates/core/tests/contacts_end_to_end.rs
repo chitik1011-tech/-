@@ -78,7 +78,9 @@ async fn contact_snapshot_is_live_but_omitted_from_persistence() {
         total: 1,
         contacts: vec![contact(123, "Linus Torvalds")],
     });
-    assert!(tg_mobile_core::encode_state(&state).unwrap().contains("Linus Torvalds"));
+    assert!(tg_mobile_core::encode_state(&state)
+        .unwrap()
+        .contains("Linus Torvalds"));
     store.save(&state).await.unwrap();
     let persisted = std::fs::read_to_string(&path).unwrap();
     assert!(!persisted.contains("Linus Torvalds"));
