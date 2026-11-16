@@ -112,6 +112,12 @@ data class ConversationScreenState(
     val error: String? = null,
     val forwardingError: String? = null,
     val forwardSuccessCount: Long = 0,
+    val messageMutationPending: Boolean = false,
+    val messageMutationError: String? = null,
+    val messageMutationChatId: Long = 0L,
+    val messageMutationMessageId: Long = 0L,
+    val messageMutationSuccessCount: Long = 0L,
+    val messageMutationSuccessChatId: Long = 0L,
 )
 
 internal fun selectedForwardMessageIds(messages: List<ConversationMessageUi>, selectedIds: Set<Long>): List<Long> =
@@ -130,6 +136,8 @@ fun ConversationScreen(
     onSend: (chatId: String, text: String) -> Unit,
     onPollVote: (poll: ConversationPollUi, optionIds: List<List<Int>>) -> Unit,
     onForward: (chatId: Long, messageIds: List<Long>) -> Unit,
+    onEditMessage: (chatId: Long, messageId: Long, text: String) -> Unit,
+    onDeleteMessageForEveryone: (chatId: Long, messageId: Long) -> Unit,
     onRetry: () -> Unit,
     onDownloadMedia: (messageId: Long, attachmentIndex: Int, retry: Boolean) -> Unit,
     onCancelMedia: (messageId: Long, attachmentIndex: Int) -> Unit,
@@ -139,10 +147,23 @@ fun ConversationScreen(
     val listState = rememberLazyListState()
     var viewerKey by rememberSaveable { mutableStateOf<String?>(null) }
     var actionTarget by remember(state.chatId) { mutableStateOf<ConversationMessageUi?>(null) }
+    var editingMessage by remember(state.chatId) { mutableStateOf<ConversationMessageUi?>(null) }
+    var editDraft by remember(state.chatId) { mutableStateOf("") }
+    var deletionTarget by remember(state.chatId) { mutableStateOf<ConversationMessageUi?>(null) }
     var selectedMessageIds by remember(state.chatId) { mutableStateOf<Set<Long>>(emptySet()) }
     // Only a server-confirmed, fully successful forward ends selection mode.
     LaunchedEffect(state.forwardSuccessCount) {
         if (state.forwardSuccessCount > 0L) selectedMessageIds = emptySet()
+    }
+    LaunchedEffect(state.messageMutationSuccessCount) {
+        if (
+            state.messageMutationSuccessCount > 0L &&
+            state.messageMutationSuccessChatId == state.chatId.toLongOrNull()
+        ) {
+            editingMessage = null
+            deletionTarget = null
+            editDraft = ""
+        }
     }
     val contentMode = resolveAsyncContentMode(
         isLoading = state.loading,
@@ -203,15 +224,43 @@ fun ConversationScreen(
             )
         },
         bottomBar = {
-            if (selectedMessageIds.isEmpty()) {
+            if (selectedMessageIds.isNotEmpty()) {
+                TextButton(onClick = { selectedMessageIds = emptySet() }) { Text("Отменить выбор") }
+            } else if (editingMessage != null) {
+                val target = editingMessage
+                val matchingMutation = target != null &&
+                    state.messageMutationChatId == target.chatId.toLongOrNull() &&
+                    state.messageMutationMessageId == target.id.toLongOrNull()
+                Column {
+                    if (matchingMutation) {
+                        state.messageMutationError?.let { error ->
+                            Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 12.dp))
+                        }
+                    }
+                    ComposerBar(
+                        draft = editDraft,
+                        sending = matchingMutation && state.messageMutationPending,
+                        onDraftChange = { editDraft = it },
+                        onSend = {
+                            val chatId = target?.chatId?.toLongOrNull()
+                            val messageId = target?.id?.toLongOrNull()
+                            if (chatId != null && messageId != null) onEditMessage(chatId, messageId, editDraft.trim())
+                        },
+                        sendLabel = "Сохранить",
+                        placeholder = "Новый текст",
+                        onCancel = {
+                            editingMessage = null
+                            editDraft = ""
+                        },
+                    )
+                }
+            } else {
                 ComposerBar(
                     draft = state.draft,
                     sending = state.sending,
                     onDraftChange = onDraftChange,
                     onSend = submitMessage,
                 )
-            } else {
-                TextButton(onClick = { selectedMessageIds = emptySet() }) { Text("Отменить выбор") }
             }
         },
     ) { innerPadding ->
@@ -329,10 +378,56 @@ fun ConversationScreen(
 
     actionTarget?.let { message ->
         MessageActionDialog(
+            message = message,
             onDismiss = { actionTarget = null },
             onSelectForForward = {
                 message.id.toLongOrNull()?.let { selectedMessageIds = selectedMessageIds + it }
                 actionTarget = null
+            },
+            onEdit = {
+                editingMessage = message
+                editDraft = message.text
+                actionTarget = null
+            },
+            onDelete = {
+                deletionTarget = message
+                actionTarget = null
+            },
+        )
+    }
+
+    deletionTarget?.let { target ->
+        val targetChatId = target.chatId.toLongOrNull()
+        val targetMessageId = target.id.toLongOrNull()
+        val matchingMutation = targetChatId != null && targetMessageId != null &&
+            state.messageMutationChatId == targetChatId &&
+            state.messageMutationMessageId == targetMessageId
+        val pending = matchingMutation && state.messageMutationPending
+        AlertDialog(
+            onDismissRequest = { if (!pending) deletionTarget = null },
+            title = { Text("Удалить сообщение у всех?") },
+            text = {
+                Column {
+                    Text("Telegram удалит это сообщение для всех участников. Удаление только на этом устройстве не поддерживается.")
+                    if (matchingMutation) {
+                        state.messageMutationError?.let { error ->
+                            Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp))
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !pending && targetChatId != null && targetMessageId != null,
+                    onClick = {
+                        if (targetChatId != null && targetMessageId != null) {
+                            onDeleteMessageForEveryone(targetChatId, targetMessageId)
+                        }
+                    },
+                ) { Text(if (pending) "Удаляем…" else "Удалить у всех") }
+            },
+            dismissButton = {
+                TextButton(enabled = !pending, onClick = { deletionTarget = null }) { Text("Отмена") }
             },
         )
     }
@@ -451,21 +546,21 @@ private fun MessageBubble(
 
 @Composable
 private fun MessageActionDialog(
+    message: ConversationMessageUi,
     onDismiss: () -> Unit,
     onSelectForForward: () -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
 ) {
-    val editAvailability = messageMutationAvailability(MessageMutationAction.Edit)
-    val deleteAvailability = messageMutationAvailability(MessageMutationAction.Delete)
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Действия с сообщением") },
         text = {
             Column {
                 TextButton(onClick = onSelectForForward) { Text("Выбрать для пересылки") }
-                TextButton(onClick = {}, enabled = editAvailability.enabled) { Text("Изменить — недоступно") }
-                Text(editAvailability.explanation)
-                TextButton(onClick = {}, enabled = deleteAvailability.enabled) { Text("Удалить — недоступно") }
-                Text(deleteAvailability.explanation)
+                TextButton(onClick = onEdit, enabled = canEditMessageText(message)) { Text("Изменить") }
+                TextButton(onClick = onDelete) { Text("Удалить у всех") }
+                Text("Удаление только на этом устройстве не поддерживается.")
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Закрыть") } },
@@ -940,6 +1035,9 @@ private fun ComposerBar(
     sending: Boolean,
     onDraftChange: (String) -> Unit,
     onSend: () -> Unit,
+    sendLabel: String = "Отправить",
+    placeholder: String = "Сообщение",
+    onCancel: (() -> Unit)? = null,
 ) {
     val canSend = draft.isNotBlank() && !sending
 
@@ -963,7 +1061,7 @@ private fun ComposerBar(
                     value = draft,
                     onValueChange = onDraftChange,
                     modifier = Modifier.weight(1f),
-                    placeholder = { Text("Сообщение") },
+                    placeholder = { Text(placeholder) },
                     enabled = !sending,
                     maxLines = 5,
                     keyboardOptions = KeyboardOptions(
@@ -974,12 +1072,13 @@ private fun ComposerBar(
                         onSend = { if (canSend) onSend() },
                     ),
                 )
+                onCancel?.let { cancel -> TextButton(onClick = cancel, enabled = !sending) { Text("Отмена") } }
                 Button(
                     onClick = onSend,
                     enabled = canSend,
                     contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
                 ) {
-                    Text(if (sending) "…" else "Отправить")
+                    Text(if (sending) "…" else sendLabel)
                 }
             }
         }
