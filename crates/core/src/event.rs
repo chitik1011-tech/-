@@ -63,6 +63,30 @@ pub enum CoreEvent {
         before_message_id: Option<i64>,
         error: String,
     },
+    /// Authoritative snapshot of pinned messages returned by Telegram.
+    PinnedMessagesLoaded {
+        chat_id: i64,
+        message_ids: Vec<i64>,
+        /// State revision captured when this authoritative snapshot was requested.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        request_revision: Option<u64>,
+    },
+    /// Adds or removes pinned message IDs after a Telegram update or successful RPC.
+    PinnedMessagesChanged {
+        chat_id: i64,
+        message_ids: Vec<i64>,
+        pinned: bool,
+        /// Telegram per-peer update sequence, when supplied by MTProto.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pts: Option<i32>,
+    },
+    /// A pin or unpin request failed for one specific message.
+    PinnedMessageFailed {
+        chat_id: i64,
+        message_id: i64,
+        pinned: bool,
+        error: String,
+    },
     ChatRead {
         chat_id: i64,
         max_message_id: i64,
@@ -172,6 +196,9 @@ impl CoreEvent {
             Self::MessagesPageLoading { .. } => "messages_page_loading",
             Self::MessagesPageLoaded { .. } => "messages_page_loaded",
             Self::MessagesPageLoadFailed { .. } => "messages_page_load_failed",
+            Self::PinnedMessagesLoaded { .. } => "pinned_messages_loaded",
+            Self::PinnedMessagesChanged { .. } => "pinned_messages_changed",
+            Self::PinnedMessageFailed { .. } => "pinned_message_failed",
             Self::ChatRead { .. } => "chat_read",
             Self::ReadReceiptUpdated { .. } => "read_receipt_updated",
             Self::MessageSearchStarted(_) => "message_search_started",

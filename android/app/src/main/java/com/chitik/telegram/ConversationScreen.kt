@@ -110,12 +110,31 @@ data class ConversationScreenState(
     val loading: Boolean = false,
     val sending: Boolean = false,
     val error: String? = null,
+    val pinnedMessageIds: List<String> = emptyList(),
+    val pendingPinnedMessageIds: Set<String> = emptySet(),
+    val pinnedError: String? = null,
+    val jumpToMessageId: String? = null,
+    val historyPageLoadingBeforeMessageId: Long? = null,
+    val historyPageCompletedBeforeMessageId: Long? = null,
+    val historyPageError: String? = null,
     val forwardingError: String? = null,
     val forwardSuccessCount: Long = 0,
 )
 
 internal fun selectedForwardMessageIds(messages: List<ConversationMessageUi>, selectedIds: Set<Long>): List<Long> =
     messages.mapNotNull { it.id.toLongOrNull() }.filter { it in selectedIds }.distinct()
+
+internal fun shouldShowPinnedTargetFallback(
+    targetMessageId: String?,
+    loadedMessageIds: List<String>,
+    loadingBeforeMessageId: Long?,
+    completedBeforeMessageId: Long?,
+): Boolean {
+    val target = targetMessageId?.toLongOrNull()?.takeIf { it > 0 } ?: return false
+    if (targetMessageId?.let { it in loadedMessageIds } == true) return false
+    val requestedBefore = target + 1L
+    return loadingBeforeMessageId != requestedBefore && completedBeforeMessageId == requestedBefore
+}
 
 /**
  * Stateless conversation UI. Message history and poll results always come from the Rust-backed
@@ -131,6 +150,9 @@ fun ConversationScreen(
     onPollVote: (poll: ConversationPollUi, optionIds: List<List<Int>>) -> Unit,
     onForward: (chatId: Long, messageIds: List<Long>) -> Unit,
     onRetry: () -> Unit,
+    onTogglePin: (chatId: String, messageId: String, isPinned: Boolean) -> Unit = { _, _, _ -> },
+    onJumpToPinned: (messageId: String) -> Unit = {},
+    onJumpComplete: () -> Unit = {},
     onDownloadMedia: (messageId: Long, attachmentIndex: Int, retry: Boolean) -> Unit,
     onCancelMedia: (messageId: Long, attachmentIndex: Int) -> Unit,
     onOpenDocument: (MediaAttachmentUi) -> Unit,
@@ -138,6 +160,7 @@ fun ConversationScreen(
 ) {
     val listState = rememberLazyListState()
     var viewerKey by rememberSaveable { mutableStateOf<String?>(null) }
+    var missingPinnedTarget by remember(state.chatId) { mutableStateOf<String?>(null) }
     var selectedMessageIds by remember(state.chatId) { mutableStateOf<Set<Long>>(emptySet()) }
     // Only a server-confirmed, fully successful forward ends selection mode.
     LaunchedEffect(state.forwardSuccessCount) {
@@ -158,9 +181,32 @@ fun ConversationScreen(
         }
     }
 
-    LaunchedEffect(state.messages.size, latestMessageId, state.loading) {
-        if (state.messages.isNotEmpty()) {
+    LaunchedEffect(state.messages.size, latestMessageId, state.loading, state.jumpToMessageId) {
+        if (state.jumpToMessageId == null && state.messages.isNotEmpty()) {
             listState.animateScrollToItem(state.messages.lastIndex)
+        }
+    }
+    LaunchedEffect(
+        state.jumpToMessageId,
+        state.messages,
+        state.historyPageLoadingBeforeMessageId,
+        state.historyPageCompletedBeforeMessageId,
+        state.historyPageError,
+    ) {
+        val target = state.jumpToMessageId ?: return@LaunchedEffect
+        val index = state.messages.indexOfFirst { it.id == target }
+        if (index >= 0) {
+            listState.animateScrollToItem(index)
+            missingPinnedTarget = null
+            onJumpComplete()
+        } else if (shouldShowPinnedTargetFallback(
+                target,
+                state.messages.map { it.id },
+                state.historyPageLoadingBeforeMessageId,
+                state.historyPageCompletedBeforeMessageId,
+            )) {
+            missingPinnedTarget = target
+            onJumpComplete()
         }
     }
 
@@ -219,6 +265,61 @@ fun ConversationScreen(
                 .fillMaxSize()
                 .padding(innerPadding),
         ) {
+            if (state.pinnedMessageIds.isNotEmpty()) {
+                val pinnedId = state.pinnedMessageIds.last()
+                Surface(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.secondaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text(
+                            text = if (state.pinnedMessageIds.size > 1) {
+                            "Закреплено: #$pinnedId (+${state.pinnedMessageIds.size - 1})"
+                        } else {
+                            "Закреплено: #$pinnedId"
+                        },
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.labelLarge,
+                        )
+                        TextButton(onClick = { onJumpToPinned(pinnedId) }) { Text("Перейти") }
+                    }
+                }
+            }
+            state.pinnedError?.let { message ->
+                Text(
+                    text = "Ошибка закрепления: $message",
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            missingPinnedTarget?.let { target ->
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = state.historyPageError?.let { error ->
+                            "Не удалось загрузить сообщение #$target: $error"
+                        } ?: "Закреплённое сообщение #$target не найдено. Возможно, оно удалено.",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = {
+                        missingPinnedTarget = null
+                        onJumpToPinned(target)
+                    }) { Text("Повторить") }
+                }
+            }
             state.error?.takeIf { contentMode != AsyncContentMode.Loading }?.let { message ->
                 ErrorRetryState(
                     title = "Не удалось загрузить сообщения",
@@ -266,6 +367,11 @@ fun ConversationScreen(
                             MessageBubble(
                                 message = message,
                                 onPollVote = onPollVote,
+                                pinned = message.id in state.pinnedMessageIds,
+                                pending = message.id in state.pendingPinnedMessageIds,
+                                onTogglePin = {
+                                    onTogglePin(state.chatId, message.id, message.id in state.pinnedMessageIds)
+                                },
                                 onDownloadMedia = { attachmentIndex, retry ->
                                     message.id.toLongOrNull()?.let { messageId ->
                                         onDownloadMedia(messageId, attachmentIndex, retry)
@@ -343,6 +449,9 @@ fun ConversationScreen(
 private fun MessageBubble(
     message: ConversationMessageUi,
     onPollVote: (ConversationPollUi, List<List<Int>>) -> Unit,
+    pinned: Boolean,
+    pending: Boolean,
+    onTogglePin: () -> Unit,
     onDownloadMedia: (attachmentIndex: Int, retry: Boolean) -> Unit,
     onCancelMedia: (attachmentIndex: Int) -> Unit,
     onOpenViewer: (MediaAttachmentUi) -> Unit,
@@ -445,6 +554,19 @@ private fun MessageBubble(
                                 style = MaterialTheme.typography.labelSmall,
                                 color = if (message.isRead) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                             )
+                        }
+                    }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (pending) {
+                        CircularProgressIndicator(modifier = Modifier.width(16.dp), strokeWidth = 2.dp)
+                    } else {
+                        TextButton(onClick = onTogglePin) {
+                            Text(if (pinned) "Открепить" else "Закрепить")
                         }
                     }
                 }

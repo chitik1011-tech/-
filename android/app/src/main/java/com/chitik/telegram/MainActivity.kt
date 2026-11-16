@@ -79,6 +79,7 @@ private fun TelegramRustApp(
     var selectedChatId by rememberSaveable { mutableLongStateOf(0L) }
     var showContacts by rememberSaveable { mutableStateOf(false) }
     var draft by rememberSaveable { mutableStateOf("") }
+    var jumpToMessageId by rememberSaveable { mutableStateOf<String?>(null) }
     var showForwardTargets by remember { mutableStateOf(false) }
     var forwardingSourceChatId by remember { mutableLongStateOf(0L) }
     var forwardingMessageIds by remember { mutableStateOf<List<Long>>(emptyList()) }
@@ -134,6 +135,7 @@ private fun TelegramRustApp(
             onChatSelected = { chatId ->
                 selectedChatId = chatId
                 viewModel.loadMessages(chatId)
+                viewModel.loadPinnedMessages(chatId)
             },
         )
 
@@ -161,12 +163,25 @@ private fun TelegramRustApp(
                     loading = state.busy,
                     sending = false,
                     error = state.error,
+                    pinnedMessageIds = state.pinnedMessages[selectedChatId].orEmpty().map(Long::toString),
+                    pendingPinnedMessageIds = state.pendingPinnedMessageIds
+                        .filter { it.startsWith("$selectedChatId:") }
+                        .map { it.substringAfter(':') }
+                        .toSet(),
+                    pinnedError = state.pinnedFailureKey
+                        ?.takeIf { it.startsWith("$selectedChatId:") }
+                        ?.let { key -> "Сообщение #${key.substringAfter(':')}: ${state.pinnedError.orEmpty()}" },
+                    jumpToMessageId = jumpToMessageId,
+                    historyPageLoadingBeforeMessageId = state.loadingHistoryBefore[selectedChatId],
+                    historyPageCompletedBeforeMessageId = state.completedHistoryBefore[selectedChatId],
+                    historyPageError = state.historyPageErrors[selectedChatId],
                     forwardingError = state.forwardError,
                     forwardSuccessCount = state.forwardSuccessCount,
                 ),
                 onBack = {
                     selectedChatId = 0L
                     draft = ""
+                    jumpToMessageId = null
                 },
                 onDraftChange = { draft = it },
                 onSend = { chatId, text ->
@@ -182,6 +197,21 @@ private fun TelegramRustApp(
                     showForwardTargets = messageIds.isNotEmpty()
                 },
                 onRetry = { viewModel.loadMessages(selectedChatId) },
+                onTogglePin = { chatId, messageId, isPinned ->
+                    val parsedChat = chatId.toLongOrNull()
+                    val parsedMessage = messageId.toLongOrNull()
+                    if (parsedChat != null && parsedMessage != null) {
+                        viewModel.toggleMessagePin(parsedChat, parsedMessage, isPinned)
+                    }
+                },
+                onJumpToPinned = { messageId ->
+                    jumpToMessageId = messageId
+                    val isLoaded = messages.any { it.id == messageId }
+                    if (!isLoaded) {
+                        messageId.toLongOrNull()?.let { viewModel.loadMessagesBefore(selectedChatId, it + 1L) }
+                    }
+                },
+                onJumpComplete = { jumpToMessageId = null },
                 onDownloadMedia = { messageId, attachmentIndex, retry ->
                     viewModel.downloadMedia(
                         chatId = selectedChatId,

@@ -103,6 +103,7 @@ where
                     op_id,
                     generation,
                     sync_required,
+                    pinned_revision,
                     command,
                 } => {
                     // Reapply the operation's generation immediately before its RPC. This
@@ -120,6 +121,7 @@ where
                             op_id,
                             generation,
                             sync_required,
+                            pinned_revision,
                             command,
                             result,
                         })
@@ -186,6 +188,7 @@ where
                         ],
                         Err(error) => operation_error_events(&command, error),
                     };
+                    attach_pinned_snapshot_revision(&mut events, result.pinned_revision);
                     complete_operation_events(&command, &mut events);
                     let initial_sync = result.sync_required
                         && reduced_state.connection_machine.phase() == LinkPhase::Synchronizing
@@ -504,11 +507,23 @@ where
                         && reduced_state.connection_machine.phase() == LinkPhase::Synchronizing
                         && reduced_state.account.authorization
                             == crate::model::AuthorizationState::Ready;
+                    let pinned_revision = match &command {
+                        CoreCommand::LoadPinnedMessages { chat_id } => Some((
+                            *chat_id,
+                            reduced_state
+                                .pinned_message_revision
+                                .get(chat_id)
+                                .copied()
+                                .unwrap_or_default(),
+                        )),
+                        _ => None,
+                    };
                     if worker_tx
                         .try_send(WorkerRequest::Execute {
                             op_id,
                             generation,
                             sync_required,
+                            pinned_revision,
                             command: command.clone(),
                         })
                         .is_err()
@@ -596,6 +611,7 @@ where
                                 op_id,
                                 generation: sync_token,
                                 sync_required: true,
+                                pinned_revision: None,
                                 command: CoreCommand::LoadChats { limit: 100 },
                             })
                             .is_err()
@@ -699,6 +715,7 @@ enum WorkerRequest {
         op_id: u64,
         generation: crate::connection_machine::ConnectionToken,
         sync_required: bool,
+        pinned_revision: Option<(i64, u64)>,
         command: CoreCommand,
     },
 }
@@ -707,6 +724,7 @@ struct BackendResult {
     op_id: u64,
     generation: crate::connection_machine::ConnectionToken,
     sync_required: bool,
+    pinned_revision: Option<(i64, u64)>,
     command: CoreCommand,
     result: Result<Vec<CoreEvent>>,
 }
@@ -739,6 +757,22 @@ fn operation_error_events(command: &CoreCommand, error: CoreError) -> Vec<CoreEv
             text.clone(),
             error,
         ))],
+        CoreCommand::PinMessage { chat_id, message_id } => {
+            vec![CoreEvent::PinnedMessageFailed {
+                chat_id: *chat_id,
+                message_id: *message_id,
+                pinned: true,
+                error: error.to_string(),
+            }]
+        }
+        CoreCommand::UnpinMessage { chat_id, message_id } => {
+            vec![CoreEvent::PinnedMessageFailed {
+                chat_id: *chat_id,
+                message_id: *message_id,
+                pinned: false,
+                error: error.to_string(),
+            }]
+        }
         CoreCommand::VotePoll { poll_id, .. } => vec![CoreEvent::PollVoteFailed {
             poll_id: *poll_id,
             error: error.to_string(),
@@ -762,7 +796,58 @@ fn operation_error_events(command: &CoreCommand, error: CoreError) -> Vec<CoreEv
     }
 }
 
+fn attach_pinned_snapshot_revision(events: &mut [CoreEvent], revision: Option<(i64, u64)>) {
+    let Some((requested_chat_id, requested_revision)) = revision else {
+        return;
+    };
+    for event in events {
+        if let CoreEvent::PinnedMessagesLoaded {
+            chat_id,
+            request_revision,
+            ..
+        } = event
+        {
+            if *chat_id == requested_chat_id {
+                *request_revision = Some(requested_revision);
+            }
+        }
+    }
+}
+
 fn complete_operation_events(command: &CoreCommand, events: &mut Vec<CoreEvent>) {
+    if let CoreCommand::PinMessage { chat_id, message_id }
+    | CoreCommand::UnpinMessage { chat_id, message_id } = command
+    {
+        let pinned = matches!(command, CoreCommand::PinMessage { .. });
+        let confirmed = events.iter().any(|event| {
+            matches!(
+                event,
+                CoreEvent::PinnedMessagesChanged {
+                    chat_id: event_chat,
+                    message_ids,
+                    pinned: event_pinned,
+                    ..
+                } if event_chat == chat_id
+                    && message_ids.contains(message_id)
+                    && event_pinned == &pinned
+            ) || matches!(
+                event,
+                CoreEvent::PinnedMessageFailed {
+                    chat_id: event_chat,
+                    message_id: event_message,
+                    ..
+                } if event_chat == chat_id && event_message == message_id
+            )
+        });
+        if !confirmed {
+            events.push(CoreEvent::PinnedMessageFailed {
+                chat_id: *chat_id,
+                message_id: *message_id,
+                pinned,
+                error: "backend returned without confirming the pin change".into(),
+            });
+        }
+    }
     if let CoreCommand::ForwardMessages(request) = command {
         *events = crate::forwarding::normalize_forward_events(request, std::mem::take(events));
     }
@@ -1092,5 +1177,66 @@ async fn persist_state<S: StateStore>(
         state.last_error = Some(message.clone());
         let _ = state_tx.send(state.clone());
         let _ = event_tx.send(CoreEvent::Error(message));
+    }
+}
+
+#[cfg(test)]
+mod pin_failure_tests {
+    use super::{complete_operation_events, operation_error_events};
+    use crate::{command::CoreCommand, error::CoreError, event::CoreEvent};
+
+    #[test]
+    fn pin_and_unpin_errors_are_bound_to_the_requested_message() {
+        for (command, expected_pinned) in [
+            (
+                CoreCommand::PinMessage {
+                    chat_id: -20,
+                    message_id: 7,
+                },
+                true,
+            ),
+            (
+                CoreCommand::UnpinMessage {
+                    chat_id: -20,
+                    message_id: 7,
+                },
+                false,
+            ),
+        ] {
+            let events = operation_error_events(
+                &command,
+                CoreError::SendRejected("permission denied".into()),
+            );
+            assert_eq!(
+                events,
+                vec![CoreEvent::PinnedMessageFailed {
+                    chat_id: -20,
+                    message_id: 7,
+                    pinned: expected_pinned,
+                    error: "Telegram rejected the outgoing message: permission denied".into(),
+                }]
+            );
+        }
+    }
+
+    #[test]
+    fn empty_pin_backend_result_becomes_a_targeted_failure() {
+        let mut events = Vec::new();
+        complete_operation_events(
+            &CoreCommand::UnpinMessage {
+                chat_id: -20,
+                message_id: 7,
+            },
+            &mut events,
+        );
+        assert_eq!(
+            events,
+            vec![CoreEvent::PinnedMessageFailed {
+                chat_id: -20,
+                message_id: 7,
+                pinned: false,
+                error: "backend returned without confirming the pin change".into(),
+            }]
+        );
     }
 }

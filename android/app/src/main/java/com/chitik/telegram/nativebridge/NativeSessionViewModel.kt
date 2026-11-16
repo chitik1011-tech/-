@@ -41,8 +41,15 @@ data class NativeUiState(
     val messages: Map<Long, List<ConversationMessageUi>> = emptyMap(),
     val votingPollIds: Set<Long> = emptySet(),
     val pollVoteErrors: Map<Long, String> = emptyMap(),
+    val pinnedMessages: Map<Long, List<Long>> = emptyMap(),
+    val pendingPinnedMessageIds: Set<String> = emptySet(),
+    val pinnedError: String? = null,
+    val pinnedFailureKey: String? = null,
     val forwardError: String? = null,
     val forwardSuccessCount: Long = 0,
+    val loadingHistoryBefore: Map<Long, Long> = emptyMap(),
+    val completedHistoryBefore: Map<Long, Long> = emptyMap(),
+    val historyPageErrors: Map<Long, String> = emptyMap(),
     val busy: Boolean = false,
     val lastEventType: String = "none",
     val lastEventPayload: String = "",
@@ -52,10 +59,18 @@ data class NativeUiState(
         get() = libraryLoaded && nativeHandle != 0L && error == null
 }
 
+internal fun shouldResolvePinnedAction(pts: Long?, chatId: Long, messageIds: List<Long>): Boolean =
+    pts == null && messageIds.isNotEmpty()
+
+internal fun shouldClearPinnedFailure(failureKey: String?, chatId: Long, messageIds: List<Long>, pts: Long?): Boolean =
+    shouldResolvePinnedAction(pts, chatId, messageIds) &&
+        failureKey != null && messageIds.any { "$chatId:$it" == failureKey }
+
 private data class ParsedNativeState(
     val authorization: AuthorizationUiStep,
     val chats: List<ChatListEntry>,
     val messages: Map<Long, List<ConversationMessageUi>>,
+    val pinnedMessages: Map<Long, List<Long>>,
     val contacts: List<ContactListEntry>,
 )
 
@@ -360,6 +375,82 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 )
                 .toString(),
         )
+    }
+
+    fun loadPinnedMessages(chatId: Long) {
+        sendCommand(
+            JSONObject()
+                .put("type", "load_pinned_messages")
+                .put("payload", JSONObject().put("chat_id", chatId))
+                .toString(),
+        )
+    }
+
+    fun loadMessagesBefore(chatId: Long, beforeMessageId: Long) {
+        if (beforeMessageId <= 0L) return
+        _state.update { current ->
+            current.copy(
+                loadingHistoryBefore = current.loadingHistoryBefore + (chatId to beforeMessageId),
+                completedHistoryBefore = current.completedHistoryBefore - chatId,
+                historyPageErrors = current.historyPageErrors - chatId,
+            )
+        }
+        val accepted = sendCommand(
+            JSONObject()
+                .put("type", "load_messages_page")
+                .put(
+                    "payload",
+                    JSONObject()
+                        .put("chat_id", chatId)
+                        .put("before_message_id", beforeMessageId)
+                        .put("limit", 50),
+                )
+                .toString(),
+        )
+        if (!accepted) {
+            _state.update { current ->
+                current.copy(
+                    loadingHistoryBefore = current.loadingHistoryBefore - chatId,
+                    completedHistoryBefore = current.completedHistoryBefore + (chatId to beforeMessageId),
+                    historyPageErrors = current.historyPageErrors + (chatId to "Could not load the pinned message history page"),
+                )
+            }
+        }
+    }
+
+    fun toggleMessagePin(chatId: Long, messageId: Long, isPinned: Boolean) {
+        if (chatId == 0L || messageId <= 0L) return
+        val key = "$chatId:$messageId"
+        _state.update {
+            it.copy(
+                pendingPinnedMessageIds = it.pendingPinnedMessageIds + key,
+                pinnedError = null,
+                pinnedFailureKey = null,
+            )
+        }
+        val result = runCatching {
+            lifecycle.dispatchCommand { currentHandle ->
+                NativeBridge.sendCommand(
+                    currentHandle,
+                    JSONObject()
+                        .put("type", if (isPinned) "unpin_message" else "pin_message")
+                        .put("payload", JSONObject().put("chat_id", chatId).put("message_id", messageId))
+                        .toString(),
+                )
+            }
+        }.getOrElse { error ->
+            _state.update {
+                it.copy(
+                    pendingPinnedMessageIds = it.pendingPinnedMessageIds - key,
+                    pinnedError = error.message ?: error::class.java.simpleName,
+                )
+            }
+            return
+        }
+        if (result !in setOf(LifecycleDispatchResult.Accepted, LifecycleDispatchResult.Duplicate)) {
+            _state.update { it.copy(pendingPinnedMessageIds = it.pendingPinnedMessageIds - key) }
+        }
+        reportDispatchResult(result, "Rust rejected the pin command")
     }
 
     fun loadContacts(offset: Int = 0, limit: Int = 100) {
@@ -699,6 +790,68 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                     )
                 }
             }
+            "messages_page_loaded", "messages_page_load_failed" -> {
+                val body = runCatching { JSONObject(payload).optJSONObject("payload") }.getOrNull()
+                val chatId = body?.optLong("chat_id") ?: 0L
+                val beforeId = body?.takeIf { !it.isNull("before_message_id") }?.optLong("before_message_id")
+                val error = if (type == "messages_page_load_failed") body?.optString("error")?.takeIf { !it.isNullOrBlank() } else null
+                _state.update { current ->
+                    val matchesPending = beforeId != null && current.loadingHistoryBefore[chatId] == beforeId
+                    current.copy(
+                        loadingHistoryBefore = if (matchesPending) current.loadingHistoryBefore - chatId else current.loadingHistoryBefore,
+                        completedHistoryBefore = if (matchesPending) current.completedHistoryBefore + (chatId to beforeId!!) else current.completedHistoryBefore,
+                        historyPageErrors = if (matchesPending && error != null) current.historyPageErrors + (chatId to error) else if (matchesPending) current.historyPageErrors - chatId else current.historyPageErrors,
+                        lastEventType = type,
+                        lastEventPayload = payload,
+                    )
+                }
+            }
+            "pinned_messages_loaded" -> {
+                _state.update {
+                    it.copy(
+                        lastEventType = type,
+                        lastEventPayload = payload,
+                    )
+                }
+            }
+            "pinned_messages_changed" -> {
+                val changed = runCatching {
+                    val event = JSONObject(payload).optJSONObject("payload") ?: return@runCatching null
+                    val chatId = event.optLong("chat_id")
+                    val ids = event.optJSONArray("message_ids") ?: JSONArray()
+                    val pts = event.takeIf { !it.isNull("pts") }?.optLong("pts")?.toInt()
+                    Triple(chatId, (0 until ids.length()).map { ids.optLong(it) }, pts)
+                }.getOrNull()
+                _state.update { current ->
+                    current.copy(
+                        lastEventType = type,
+                        lastEventPayload = payload,
+                        pendingPinnedMessageIds = changed?.takeIf { (chatId, ids, pts) ->
+                            shouldResolvePinnedAction(pts, chatId, ids)
+                        }?.let { (chatId, ids, _) ->
+                            current.pendingPinnedMessageIds - ids.map { "$chatId:$it" }.toSet()
+                        } ?: current.pendingPinnedMessageIds,
+                        pinnedError = if (changed?.let { (chatId, ids, pts) -> shouldClearPinnedFailure(current.pinnedFailureKey, chatId, ids, pts) } == true) null else current.pinnedError,
+                        pinnedFailureKey = if (changed?.let { (chatId, ids, pts) -> shouldClearPinnedFailure(current.pinnedFailureKey, chatId, ids, pts) } == true) null else current.pinnedFailureKey,
+                    )
+                }
+            }
+            "pinned_message_failed" -> {
+                val event = runCatching { JSONObject(payload).optJSONObject("payload") }.getOrNull()
+                val chatId = event?.optLong("chat_id") ?: 0L
+                val messageId = event?.optLong("message_id") ?: 0L
+                val error = event?.optString("error")?.takeIf { !it.isNullOrBlank() } ?: "Pin action failed"
+                val key = "$chatId:$messageId"
+                _state.update {
+                    it.copy(
+                        pendingPinnedMessageIds = it.pendingPinnedMessageIds - key,
+                        pinnedError = error,
+                        pinnedFailureKey = key,
+                        lastEventType = type,
+                        lastEventPayload = payload,
+                    )
+                }
+            }
             "error" -> {
                 val message = runCatching {
                     val root = JSONObject(payload)
@@ -760,16 +913,18 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
             val polls = parsePolls(root.optJSONObject("polls"))
             val readOutboxMaxIds = parseReadOutboxMaxIds(root.optJSONObject("read_receipts"))
             val messages = parseMessages(root.optJSONObject("messages"), polls, readOutboxMaxIds)
+            val pinnedMessages = parsePinnedMessages(root.optJSONObject("pinned_messages"))
             val contacts = parseContactListState(root.optJSONObject("contacts"))
-            ParsedNativeState(authorization, chats, messages, contacts)
-        }.onSuccess { (authorization, chats, messages, contacts) ->
+            ParsedNativeState(authorization, chats, messages, pinnedMessages, contacts)
+        }.onSuccess { parsed ->
             _state.update {
                 it.copy(
-                    authorization = authorization,
-                    chats = chats,
-                    contacts = contacts,
-                    contactTotal = maxOf(it.contactTotal, contacts.size),
-                    messages = messages,
+                    authorization = parsed.authorization,
+                    chats = parsed.chats,
+                    contacts = parsed.contacts,
+                    contactTotal = maxOf(it.contactTotal, parsed.contacts.size),
+                    messages = parsed.messages,
+                    pinnedMessages = parsed.pinnedMessages,
                     busy = false,
                     contactsLoading = false,
                     lastEventType = "state",
@@ -1018,6 +1173,18 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         val error = body.optString("error")
         if (pollId != 0L && error.isNotBlank()) pollId to error else null
     }.getOrNull()
+
+    private fun parsePinnedMessages(root: JSONObject?): Map<Long, List<Long>> {
+        if (root == null) return emptyMap()
+        return buildMap {
+            val keys = root.keys()
+            while (keys.hasNext()) {
+                val chatId = keys.next().toLongOrNull() ?: continue
+                val ids = root.optJSONArray(chatId.toString()) ?: continue
+                put(chatId, (0 until ids.length()).map { ids.optLong(it) }.filter { it > 0L })
+            }
+        }
+    }
 
     private fun parseReadTarget(payload: String): Pair<Long, Long>? = runCatching {
         val root = JSONObject(payload)

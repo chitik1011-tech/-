@@ -57,6 +57,15 @@ pub struct CoreState {
     /// their original position so high-traffic polls cannot evict newer polls.
     #[serde(default)]
     pub poll_order: VecDeque<i64>,
+    /// Message IDs pinned in each chat, persisted so a reconnect does not erase the UI state.
+    #[serde(default)]
+    pub pinned_messages: BTreeMap<i64, Vec<i64>>,
+    /// Last Telegram update sequence applied for each chat's pinned messages.
+    #[serde(default)]
+    pub pinned_message_pts: BTreeMap<i64, i32>,
+    /// Per-chat revision used to reject snapshots raced by a newer update.
+    #[serde(default)]
+    pub pinned_message_revision: BTreeMap<i64, u64>,
     /// Per-chat drafts survive navigation and restart.
     #[serde(default)]
     pub drafts: BTreeMap<i64, Draft>,
@@ -81,6 +90,9 @@ impl Default for CoreState {
             send_ledger: BTreeMap::new(),
             polls: BTreeMap::new(),
             poll_order: VecDeque::new(),
+            pinned_messages: BTreeMap::new(),
+            pinned_message_pts: BTreeMap::new(),
+            pinned_message_revision: BTreeMap::new(),
             drafts: BTreeMap::new(),
             last_error: None,
             folders: Vec::new(),
@@ -148,6 +160,19 @@ impl CoreState {
                 ));
             }
             draft.validate()?;
+        }
+        for (chat_id, message_ids) in &self.pinned_messages {
+            if *chat_id == 0 || message_ids.iter().any(|id| *id <= 0) {
+                return Err(CoreError::InvalidInput(
+                    "pinned message state contains an invalid identifier".into(),
+                ));
+            }
+            let unique = message_ids.iter().copied().collect::<BTreeSet<_>>();
+            if unique.len() != message_ids.len() {
+                return Err(CoreError::InvalidInput(
+                    "pinned message state contains duplicate message ids".into(),
+                ));
+            }
         }
         Ok(())
     }
@@ -327,6 +352,72 @@ impl CoreState {
                 history.error = Some(error.clone());
                 self.last_error = Some(error.clone());
             }
+            CoreEvent::PinnedMessagesLoaded {
+                chat_id,
+                message_ids,
+                request_revision,
+            } => {
+                let current_revision = self
+                    .pinned_message_revision
+                    .get(chat_id)
+                    .copied()
+                    .unwrap_or_default();
+                if *request_revision != Some(current_revision) {
+                    return;
+                }
+                let mut ids = message_ids
+                    .iter()
+                    .copied()
+                    .filter(|id| *id > 0)
+                    .collect::<BTreeSet<_>>();
+                self.pinned_messages
+                    .insert(*chat_id, std::mem::take(&mut ids).into_iter().collect());
+                self.pinned_message_revision
+                    .insert(*chat_id, current_revision.saturating_add(1));
+                self.last_error = None;
+            }
+            CoreEvent::PinnedMessagesChanged {
+                chat_id,
+                message_ids,
+                pinned,
+                pts,
+            } => {
+                let is_newer = pts.is_none_or(|incoming| {
+                    self.pinned_message_pts
+                        .get(chat_id)
+                        .is_none_or(|current| incoming > *current)
+                });
+                if *chat_id != 0 && is_newer {
+                    if let Some(pts) = pts {
+                        self.pinned_message_pts.insert(*chat_id, *pts);
+                    }
+                    let ids = self.pinned_messages.entry(*chat_id).or_default();
+                    for message_id in message_ids.iter().copied().filter(|id| *id > 0) {
+                        if *pinned {
+                            if !ids.contains(&message_id) {
+                                ids.push(message_id);
+                            }
+                        } else {
+                            ids.retain(|id| *id != message_id);
+                        }
+                    }
+                    ids.sort_unstable();
+                    if ids.is_empty() {
+                        self.pinned_messages.remove(chat_id);
+                    }
+                    let revision = self
+                        .pinned_message_revision
+                        .get(chat_id)
+                        .copied()
+                        .unwrap_or_default();
+                    self.pinned_message_revision
+                        .insert(*chat_id, revision.saturating_add(1));
+                    self.last_error = None;
+                }
+            }
+            CoreEvent::PinnedMessageFailed { error, .. } => {
+                self.last_error = Some(error.clone());
+            }
             CoreEvent::ChatRead {
                 chat_id,
                 max_message_id,
@@ -503,6 +594,46 @@ impl CoreState {
                     self.poll_order
                         .retain(|poll_id| self.polls.contains_key(poll_id));
                     updated |= self.poll_order.len() != order_before;
+
+                    if let Some(chat_id) = chat_id {
+                        if let Some(pinned) = self.pinned_messages.get_mut(chat_id) {
+                            let old_len = pinned.len();
+                            pinned.retain(|id| !deleted.contains(id));
+                            if old_len != pinned.len() {
+                                updated = true;
+                                let revision = self
+                                    .pinned_message_revision
+                                    .get(chat_id)
+                                    .copied()
+                                    .unwrap_or_default();
+                                self.pinned_message_revision
+                                    .insert(*chat_id, revision.saturating_add(1));
+                            }
+                            if pinned.is_empty() {
+                                self.pinned_messages.remove(chat_id);
+                            }
+                        }
+                    } else {
+                        let mut changed_chat_ids = Vec::new();
+                        for (pinned_chat_id, pinned) in &mut self.pinned_messages {
+                            let old_len = pinned.len();
+                            pinned.retain(|id| !deleted.contains(id));
+                            if old_len != pinned.len() {
+                                updated = true;
+                                changed_chat_ids.push(*pinned_chat_id);
+                            }
+                        }
+                        for pinned_chat_id in changed_chat_ids {
+                            let revision = self
+                                .pinned_message_revision
+                                .get(&pinned_chat_id)
+                                .copied()
+                                .unwrap_or_default();
+                            self.pinned_message_revision
+                                .insert(pinned_chat_id, revision.saturating_add(1));
+                        }
+                        self.pinned_messages.retain(|_, ids| !ids.is_empty());
+                    }
 
                     if updated {
                         self.last_error = None;

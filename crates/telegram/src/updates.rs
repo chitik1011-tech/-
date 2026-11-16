@@ -35,6 +35,12 @@ pub enum TelegramUpdate {
         message_ids: Vec<i64>,
     },
     PollUpdated(PollSummary),
+    PinnedMessagesChanged {
+        chat_id: i64,
+        message_ids: Vec<i64>,
+        pinned: bool,
+        pts: i32,
+    },
     ContactsRefreshRequested,
     ChatChanged {
         chat_id: i64,
@@ -75,6 +81,17 @@ impl TelegramUpdate {
                 message_ids: message_ids.clone(),
             }),
             Self::PollUpdated(poll) => Some(CoreEvent::PollUpdated(poll.clone())),
+            Self::PinnedMessagesChanged {
+                chat_id,
+                message_ids,
+                pinned,
+                pts,
+            } => Some(CoreEvent::PinnedMessagesChanged {
+                chat_id: *chat_id,
+                message_ids: message_ids.clone(),
+                pinned: *pinned,
+                pts: Some(*pts),
+            }),
             Self::ContactsRefreshRequested => Some(CoreEvent::ContactsRefreshRequested),
             Self::ReadReceiptUpdated {
                 chat_id,
@@ -641,11 +658,17 @@ async fn map_update(
             }])
         }
         Update::Raw(raw) => match &raw.raw {
-            tl::enums::Update::MessagePoll(update) => Ok(poll_from_update(update, polls)
-                .await?
-                .map(TelegramUpdate::PollUpdated)
-                .into_iter()
-                .collect()),
+            tl::enums::Update::MessagePoll(update) => {
+                let mut events = poll_from_update(update, polls)
+                    .await?
+                    .map(TelegramUpdate::PollUpdated)
+                    .into_iter()
+                    .collect::<Vec<_>>();
+                if let Some(pinned) = map_raw_pinned_update(&raw.raw) {
+                    events.push(pinned);
+                }
+                Ok(events)
+            }
             tl::enums::Update::ContactsReset => Ok(vec![TelegramUpdate::ContactsRefreshRequested]),
             tl::enums::Update::ReadHistoryInbox(update) => {
                 Ok(vec![TelegramUpdate::ReadReceiptUpdated {
@@ -675,9 +698,45 @@ async fn map_update(
                     max_message_id: i64::from(update.max_id),
                 }])
             }
-            _ => Ok(vec![TelegramUpdate::Unhandled]),
+            _ => Ok(map_raw_pinned_update(&raw.raw)
+                .map(|event| vec![event])
+                .unwrap_or_else(|| vec![TelegramUpdate::Unhandled])),
         },
         _ => Ok(Vec::new()),
+    }
+}
+
+fn map_raw_pinned_update(update: &grammers_client::tl::enums::Update) -> Option<TelegramUpdate> {
+    use grammers_client::tl;
+    let (chat_id, message_ids, pinned, pts) = match update {
+        tl::enums::Update::PinnedMessages(update) => (
+            peer_to_core_id(&update.peer),
+            update.messages.iter().copied().map(i64::from).collect(),
+            update.pinned,
+            update.pts,
+        ),
+        tl::enums::Update::PinnedChannelMessages(update) => (
+            crate::ids::channel_id_to_core(update.channel_id),
+            update.messages.iter().copied().map(i64::from).collect(),
+            update.pinned,
+            update.pts,
+        ),
+        _ => return None,
+    };
+    Some(TelegramUpdate::PinnedMessagesChanged {
+        chat_id,
+        message_ids,
+        pinned,
+        pts,
+    })
+}
+
+fn peer_to_core_id(peer: &grammers_client::tl::enums::Peer) -> i64 {
+    use grammers_client::tl;
+    match peer {
+        tl::enums::Peer::User(peer) => peer.user_id,
+        tl::enums::Peer::Chat(peer) => -peer.chat_id,
+        tl::enums::Peer::Channel(peer) => crate::ids::channel_id_to_core(peer.channel_id),
     }
 }
 
@@ -688,7 +747,7 @@ mod tests {
     use grammers_client::{InvocationError, sender::RpcError};
     use tokio::sync::watch;
 
-    use super::{ConnectionState, TelegramUpdate};
+    use super::{ConnectionState, TelegramUpdate, map_raw_pinned_update};
     use super::{
         NextOutcome, RetryBackoff, UPDATE_RETRY_INITIAL_DELAY, UPDATE_RETRY_MAX_DELAY,
         UpdateSource, is_transient_update_error, next_with_recovery, wait_for_current_attempt,
@@ -697,6 +756,39 @@ mod tests {
         ConnectionMachine, CoreEvent, LinkEvent, MessageSummary, ReadDirection,
         backend_update_channel,
     };
+
+    #[test]
+    fn pinned_mtproto_updates_preserve_peer_message_ids_and_pts() {
+        use grammers_client::tl;
+
+        let update = tl::enums::Update::PinnedMessages(tl::types::UpdatePinnedMessages {
+            pinned: false,
+            peer: tl::enums::Peer::Chat(tl::types::PeerChat { chat_id: 42 }),
+            messages: vec![3, 8],
+            pts: 91,
+            pts_count: 2,
+        });
+
+        let mapped = map_raw_pinned_update(&update).unwrap();
+        assert_eq!(
+            mapped,
+            TelegramUpdate::PinnedMessagesChanged {
+                chat_id: -42,
+                message_ids: vec![3, 8],
+                pinned: false,
+                pts: 91,
+            }
+        );
+        assert_eq!(
+            mapped.to_core_event(),
+            Some(CoreEvent::PinnedMessagesChanged {
+                chat_id: -42,
+                message_ids: vec![3, 8],
+                pinned: false,
+                pts: Some(91),
+            })
+        );
+    }
 
     struct FakeUpdateSource {
         results: VecDeque<Result<u8, InvocationError>>,

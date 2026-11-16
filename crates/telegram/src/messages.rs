@@ -334,6 +334,29 @@ pub(crate) async fn load_messages(
     Ok(LoadedMessages { messages, polls })
 }
 
+pub(crate) async fn load_pinned_message_ids(
+    client: &Client,
+    peer: PeerRef,
+) -> tg_mobile_core::Result<Vec<i64>> {
+    // Telegram's pinned filter avoids guessing from whichever recent messages
+    // happen to be cached locally. Keep the request bounded for mobile clients.
+    let mut iterator = client
+        .search_messages(peer)
+        .filter(tl::enums::MessagesFilter::InputMessagesFilterPinned)
+        .limit(100);
+    let mut ids = Vec::new();
+    while let Some(message) = iterator
+        .next()
+        .await
+        .map_err(|error| api_error("load pinned messages", error))?
+    {
+        ids.push(i64::from(message.id()));
+    }
+    ids.sort_unstable();
+    ids.dedup();
+    Ok(ids)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct MessagePage {
     pub messages: Vec<MessageSummary>,

@@ -16,6 +16,7 @@ pub struct MockTelegramBackend {
     authorization: AuthorizationState,
     chats: Vec<ChatSummary>,
     next_message_id: i64,
+    pinned_messages: BTreeMap<i64, Vec<i64>>,
     reliable_sends: BTreeMap<i64, (i64, String, i64)>,
 }
 
@@ -61,6 +62,7 @@ impl Default for MockTelegramBackend {
                 },
             ],
             next_message_id: 2,
+            pinned_messages: BTreeMap::new(),
             reliable_sends: BTreeMap::new(),
         }
     }
@@ -152,6 +154,62 @@ impl MockTelegramBackend {
                     messages,
                     next_before_message_id: None,
                     has_more: false,
+                }])
+            }
+            CoreCommand::LoadPinnedMessages { chat_id } => {
+                Ok(vec![CoreEvent::PinnedMessagesLoaded {
+                    chat_id,
+                    message_ids: self
+                        .pinned_messages
+                        .get(&chat_id)
+                        .cloned()
+                        .unwrap_or_default(),
+                    request_revision: None,
+                }])
+            }
+            CoreCommand::PinMessage {
+                chat_id,
+                message_id,
+            } => {
+                let exists = self.chats.iter().any(|chat| {
+                    chat.id == chat_id
+                        && chat
+                            .last_message
+                            .as_ref()
+                            .is_some_and(|message| message.id == message_id)
+                });
+                if !exists {
+                    return Err(CoreError::Backend(
+                        "message not found in mock backend".into(),
+                    ));
+                }
+                let ids = self.pinned_messages.entry(chat_id).or_default();
+                if !ids.contains(&message_id) {
+                    ids.push(message_id);
+                    ids.sort_unstable();
+                }
+                Ok(vec![CoreEvent::PinnedMessagesChanged {
+                    chat_id,
+                    message_ids: vec![message_id],
+                    pinned: true,
+                    pts: None,
+                }])
+            }
+            CoreCommand::UnpinMessage {
+                chat_id,
+                message_id,
+            } => {
+                if let Some(ids) = self.pinned_messages.get_mut(&chat_id) {
+                    ids.retain(|id| *id != message_id);
+                    if ids.is_empty() {
+                        self.pinned_messages.remove(&chat_id);
+                    }
+                }
+                Ok(vec![CoreEvent::PinnedMessagesChanged {
+                    chat_id,
+                    message_ids: vec![message_id],
+                    pinned: false,
+                    pts: None,
                 }])
             }
             CoreCommand::MarkRead {
