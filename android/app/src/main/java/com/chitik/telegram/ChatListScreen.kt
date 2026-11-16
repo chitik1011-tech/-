@@ -34,9 +34,12 @@ import androidx.compose.ui.unit.dp
  * The parent should construct these values from CoreState/ChatsLoaded; this
  * component deliberately has no built-in sample or placeholder chats.
  */
+enum class ChatKindUi { Private, Group, Supergroup, Channel, Unknown }
+
 data class ChatListEntry(
     val id: Long,
     val title: String,
+    val kind: ChatKindUi = ChatKindUi.Unknown,
     val unreadCount: Long,
     val lastMessage: ChatListPreview?,
     val capabilities: ChatCapabilitiesUi = ChatCapabilitiesUi(),
