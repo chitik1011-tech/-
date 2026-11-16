@@ -9,9 +9,10 @@ use grammers_client::{
     tl,
 };
 use tg_mobile_core::{
-    AttachmentDownloadState, AttachmentKind, AttachmentThumbnail, CoreError, ForwardedFrom, OutgoingMediaKind,
+    AttachmentDownloadState, AttachmentKind, AttachmentThumbnail, CoreError, ForwardedFrom,
     GeoPoint, MediaAttachment, MessageLocation, MessageReaction, MessageReactionType,
-    MessageSummary, PollSummary, ReplyMetadata, ServiceAction, ServiceMessage, Venue,
+    MessageSummary, OutgoingMediaKind, PollSummary, ReplyMetadata, ServiceAction, ServiceMessage,
+    Venue,
 };
 use tokio::sync::Mutex;
 
@@ -672,9 +673,7 @@ pub(crate) async fn send_media_idempotent(
     let media = match kind {
         OutgoingMediaKind::Photo => InputMedia::new().photo(uploaded),
         OutgoingMediaKind::Video => InputVideo::new(uploaded).mime_type(mime_type).into(),
-        OutgoingMediaKind::Document => InputMedia::new()
-            .document(uploaded)
-            .mime_type(mime_type),
+        OutgoingMediaKind::Document => InputMedia::new().document(uploaded).mime_type(mime_type),
     }
     .caption(caption.clone());
 
@@ -683,7 +682,9 @@ pub(crate) async fn send_media_idempotent(
         .await
         .map_err(classify_send_error)?
         .and_then(|media| media.to_raw_input_media())
-        .ok_or_else(|| CoreError::TransientSend("Telegram could not prepare the uploaded media".into()))?;
+        .ok_or_else(|| {
+            CoreError::TransientSend("Telegram could not prepare the uploaded media".into())
+        })?;
 
     let updates = client
         .invoke(&tl::functions::messages::SendMedia {
