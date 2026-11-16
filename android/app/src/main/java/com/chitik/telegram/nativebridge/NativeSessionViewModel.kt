@@ -7,6 +7,8 @@ import com.chitik.telegram.AuthorizationUiStep
 import com.chitik.telegram.ChatListEntry
 import com.chitik.telegram.ChatListPreview
 import com.chitik.telegram.ConversationMessageUi
+import com.chitik.telegram.ConversationLocationUi
+import com.chitik.telegram.ConversationGeoPointUi
 import com.chitik.telegram.ContactListEntry
 import com.chitik.telegram.parseContactListState
 import com.chitik.telegram.parseContactPage
@@ -402,11 +404,9 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         longitude: Double,
         accuracyRadiusMeters: Int?,
     ) {
-        if (!latitude.isFinite() || !longitude.isFinite()) {
-            setErrorIfOpen("Invalid location coordinates")
-            return
-        }
-        if (latitude !in -90.0..90.0 || longitude !in -180.0..180.0) {
+        if (!latitude.isFinite() || !longitude.isFinite() ||
+            latitude !in -90.0..90.0 || longitude !in -180.0..180.0
+        ) {
             setErrorIfOpen("Invalid location coordinates")
             return
         }
@@ -434,110 +434,6 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
     fun reportLocationError(message: String) {
         setErrorIfOpen(message)
     }
-
-
-    fun forwardMessages(sourceChatId: Long, messageIds: List<Long>, destinationChatId: Long) {
-        if (sourceChatId == 0L || destinationChatId == 0L || messageIds.isEmpty()) return
-        val ids = JSONArray().apply { messageIds.forEach { id -> put(id) } }
-        _state.update { it.copy(busy = true, error = null, forwardError = null) }
-        val accepted = sendCommand(
-            JSONObject()
-                .put("type", "forward_messages")
-                .put("payload", JSONObject()
-                    .put("request_id", java.util.UUID.randomUUID().toString())
-                    .put("source_chat_id", sourceChatId)
-                    .put("message_ids", ids)
-                    .put("destination_chat_id", destinationChatId))
-                .toString(),
-        )
-        if (!accepted) _state.update { it.copy(busy = false, error = "Не удалось отправить запрос пересылки") }
-    }
-
-    fun votePoll(poll: ConversationPollUi, optionIds: List<List<Int>>) {
-        if (poll.closed) {
-            _state.update {
-                it.copy(pollVoteErrors = it.pollVoteErrors + (poll.id to "Опрос закрыт"))
-            }
-            return
-        }
-
-        val optionsJson = JSONArray()
-        optionIds.forEach { optionId ->
-            val optionJson = JSONArray()
-            optionId.forEach { byte -> optionJson.put(byte) }
-            optionsJson.put(optionJson)
-        }
-
-        _state.update {
-            it.copy(
-                votingPollIds = it.votingPollIds + poll.id,
-                pollVoteErrors = it.pollVoteErrors - poll.id,
-            )
-        }
-
-        val accepted = sendCommand(
-            JSONObject()
-                .put("type", "vote_poll")
-                .put(
-                    "payload",
-                    JSONObject()
-                        .put("poll_id", poll.id)
-                        .put("chat_id", poll.chatId)
-                        .put("message_id", poll.messageId)
-                        .put("option_ids", optionsJson),
-                )
-                .toString(),
-        )
-        if (!accepted) {
-            _state.update {
-                it.copy(
-                    votingPollIds = it.votingPollIds - poll.id,
-                    pollVoteErrors = it.pollVoteErrors +
-                        (poll.id to "Не удалось отправить голос"),
-                )
-            }
-        }
-    }
-
-    fun downloadMedia(
-        chatId: Long,
-        messageId: Long,
-        attachmentIndex: Int,
-        retry: Boolean = false,
-    ) {
-        sendCommand(
-            JSONObject()
-                .put("type", if (retry) "retry_media_download" else "download_media")
-                .put(
-                    "payload",
-                    JSONObject()
-                        .put("chat_id", chatId)
-                        .put("message_id", messageId)
-                        .put("attachment_index", attachmentIndex),
-                )
-                .toString(),
-        )
-    }
-
-    fun cancelMediaDownload(
-        chatId: Long,
-        messageId: Long,
-        attachmentIndex: Int,
-    ) {
-        sendCommand(
-            JSONObject()
-                .put("type", "cancel_media_download")
-                .put(
-                    "payload",
-                    JSONObject()
-                        .put("chat_id", chatId)
-                        .put("message_id", messageId)
-                        .put("attachment_index", attachmentIndex),
-                )
-                .toString(),
-        )
-    }
-
 
     fun forwardMessages(sourceChatId: Long, messageIds: List<Long>, destinationChatId: Long) {
         if (sourceChatId == 0L || destinationChatId == 0L || messageIds.isEmpty()) return
@@ -1162,48 +1058,6 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         val error = body.optString("error")
         if (pollId != 0L && error.isNotBlank()) pollId to error else null
     }.getOrNull()
-    private fun parseLocation(root: JSONObject?): ConversationLocationUi? {
-        if (root == null) return null
-        return when (root.optString("kind")) {
-            "location" -> parseGeoPoint(root.optJSONObject("point"))
-                ?.let { ConversationLocationUi.Point(it) }
-
-            "venue" -> {
-                val venue = root.optJSONObject("venue") ?: return null
-                val title = venue.optString("title").trim()
-                val address = venue.optString("address").trim()
-                if (title.isEmpty() || address.isEmpty()) return null
-                ConversationLocationUi.Venue(
-                    point = parseGeoPoint(venue.optJSONObject("point")),
-                    title = title,
-                    address = address,
-                    provider = venue.optString("provider"),
-                    venueId = venue.optString("venue_id"),
-                    venueType = venue.optString("venue_type").takeIf(String::isNotEmpty),
-                )
-            }
-
-            else -> null
-        }
-    }
-
-    private fun parseGeoPoint(root: JSONObject?): ConversationGeoPointUi? {
-        if (root == null || !root.has("latitude") || !root.has("longitude")) return null
-        val latitude = root.optDouble("latitude", Double.NaN)
-        val longitude = root.optDouble("longitude", Double.NaN)
-        if (!latitude.isFinite() || !longitude.isFinite()) return null
-        if (latitude !in -90.0..90.0 || longitude !in -180.0..180.0) return null
-        val accuracy = if (root.has("accuracy_radius_meters")) {
-            root.optInt("accuracy_radius_meters").takeIf { it >= 0 }
-        } else {
-            null
-        }
-        return ConversationGeoPointUi(
-            latitude = latitude,
-            longitude = longitude,
-            accuracyRadiusMeters = accuracy,
-        )
-    }
 
     private fun parseReadTarget(payload: String): Pair<Long, Long>? = runCatching {
         val root = JSONObject(payload)
@@ -1226,6 +1080,41 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         "LoggingOut" -> AuthorizationUiStep.LoggingOut
         "Closed" -> AuthorizationUiStep.Closed
         else -> AuthorizationUiStep.Starting
+    }
+
+    private fun parseLocation(root: JSONObject?): ConversationLocationUi? {
+        if (root == null) return null
+        return when (root.optString("kind")) {
+            "location" -> parseGeoPoint(root.optJSONObject("point"))
+                ?.let { ConversationLocationUi.Point(it) }
+            "venue" -> {
+                val venue = root.optJSONObject("venue") ?: return null
+                val title = venue.optString("title").trim()
+                val address = venue.optString("address").trim()
+                if (title.isEmpty() || address.isEmpty()) return null
+                ConversationLocationUi.Venue(
+                    point = parseGeoPoint(venue.optJSONObject("point")),
+                    title = title,
+                    address = address,
+                    provider = venue.optString("provider"),
+                    venueId = venue.optString("venue_id"),
+                    venueType = venue.optString("venue_type").takeIf(String::isNotEmpty),
+                )
+            }
+            else -> null
+        }
+    }
+
+    private fun parseGeoPoint(root: JSONObject?): ConversationGeoPointUi? {
+        if (root == null || !root.has("latitude") || !root.has("longitude")) return null
+        val latitude = root.optDouble("latitude", Double.NaN)
+        val longitude = root.optDouble("longitude", Double.NaN)
+        if (!latitude.isFinite() || !longitude.isFinite()) return null
+        if (latitude !in -90.0..90.0 || longitude !in -180.0..180.0) return null
+        val radius = if (root.has("accuracy_radius_meters")) {
+            root.optInt("accuracy_radius_meters", -1).takeIf { it in 0..1_500 }
+        } else null
+        return ConversationGeoPointUi(latitude, longitude, radius)
     }
 
     private fun formatTimestamp(timestampUnix: Long): String {
