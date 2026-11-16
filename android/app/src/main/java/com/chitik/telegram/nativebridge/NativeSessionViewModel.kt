@@ -228,6 +228,10 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
     private val voicePlayback = VoicePlaybackCoordinator(application, viewModelScope)
     val voicePlaybackState = voicePlayback.state
 
+    fun stopVoicePlayback() {
+        voicePlayback.reset()
+    }
+
     fun toggleVoicePlayback(mediaId: String, attachment: MediaAttachmentUi) {
         val path = (attachment.downloadState as? com.chitik.telegram.MediaDownloadUiState.Downloaded)
             ?.localPath ?: return
