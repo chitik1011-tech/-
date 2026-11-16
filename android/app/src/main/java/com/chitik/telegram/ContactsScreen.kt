@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.clickable
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -44,18 +46,18 @@ fun ContactsScreen(
     modifier: Modifier = Modifier,
 ) {
     Column(
-        modifier = modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp),
+        modifier = modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             TextButton(onClick = onBack) { Text("Chats") }
-            Text("Contacts", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+            Text("Contacts", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
             OutlinedButton(onClick = onRefresh, enabled = !isLoading) {
                 if (isLoading) CircularProgressIndicator()
                 else Text("Refresh")
             }
         }
-        Text("${contacts.size} of $total", style = MaterialTheme.typography.bodySmall)
+        Text("${contacts.size} of $total contacts", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
         if (error != null) Text(error, color = MaterialTheme.colorScheme.error)
         if (contacts.isEmpty() && isLoading) {
             CircularProgressIndicator(modifier = Modifier.padding(24.dp))
@@ -64,23 +66,26 @@ fun ContactsScreen(
         }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             items(contacts, key = ContactListEntry::userId) { contact ->
-                Card(
-                    onClick = { onContactSelected(contact) },
-                    modifier = Modifier.fillMaxWidth(),
+                Row(
+                    modifier = Modifier.fillMaxWidth().clickable { onContactSelected(contact) }
+                        .padding(horizontal = TelegramUiTokens.horizontalInset, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        AvatarPlaceholder(contact.displayName, size = 44.dp)
-                        Spacer(Modifier.width(12.dp))
-                        Column {
-                            Text(contact.displayName, style = MaterialTheme.typography.titleMedium)
-                            contact.username?.let { Text("@$it", style = MaterialTheme.typography.bodySmall) }
-                            if (contact.isBot) Text("Bot", style = MaterialTheme.typography.labelSmall)
+                    AvatarPlaceholder(contact.displayName, size = TelegramUiTokens.contactAvatar)
+                    Spacer(Modifier.width(TelegramUiTokens.rowGap))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(contact.displayName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        val subtitle = if (contact.isBot) "bot" else contact.username?.let { "@$it" }
+                        subtitle?.let {
+                            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }
+                HorizontalDivider(
+                    modifier = Modifier.padding(start = TelegramUiTokens.dividerInset),
+                    color = MaterialTheme.colorScheme.outlineVariant,
+                    thickness = 0.5.dp,
+                )
             }
             if (contacts.size < total) {
                 item(key = "load_more_contacts") {
