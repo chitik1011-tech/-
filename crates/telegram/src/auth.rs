@@ -204,7 +204,7 @@ impl AuthFlow {
 fn normalize_phone_number(input: &str) -> tg_mobile_core::Result<String> {
     let stripped: String = input
         .chars()
-        .filter(|c| !matches!(c, ' ' | '-' | '(' | ')'))
+        .filter(|c| !matches!(*c, ' ' | '-' | '(' | ')'))
         .collect();
     let digits = stripped.strip_prefix('+').unwrap_or(&stripped);
     if !(8..=15).contains(&digits.len())
