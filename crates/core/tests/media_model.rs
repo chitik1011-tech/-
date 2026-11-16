@@ -13,6 +13,7 @@ fn media(kind: AttachmentKind) -> MediaAttachment {
         width: Some(120),
         height: Some(80),
         duration_ms: Some(1_250),
+        voice_waveform: (kind == AttachmentKind::Voice).then_some(vec![1, 2, 3]),
         filename: Some("media.webp".into()),
         thumbnail: Some(AttachmentThumbnail {
             file_reference: "thumbnail-reference".into(),
@@ -254,4 +255,35 @@ fn invalid_deserialized_thumbnail_dimensions_do_not_bypass_validation() {
         serde_json::to_value(media(AttachmentKind::Photo)).expect("test media serializes");
     serialized["thumbnail"]["width"] = json!(-1);
     assert!(serde_json::from_value::<MediaAttachment>(serialized).is_err());
+}
+
+#[test]
+fn voice_waveform_is_optional_and_preserves_legacy_wire_shape() {
+    let mut voice = media(AttachmentKind::Voice);
+    voice.mime_type = Some("audio/ogg".into());
+    voice.duration_ms = Some(4_200);
+    assert_eq!(voice.voice_waveform, Some(vec![1, 2, 3]));
+
+    let serialized = serde_json::to_value(&voice).expect("voice serializes");
+    assert_eq!(serialized["voice_waveform"], json!([1, 2, 3]));
+    assert_eq!(serialized["duration_ms"], json!(4_200));
+    assert_eq!(serialized["mime_type"], json!("audio/ogg"));
+
+    let reloaded: MediaAttachment =
+        serde_json::from_value(serialized.clone()).expect("voice metadata deserializes");
+    assert_eq!(reloaded, voice);
+
+    let mut legacy = serialized;
+    legacy
+        .as_object_mut()
+        .expect("object")
+        .remove("voice_waveform");
+    let old: MediaAttachment =
+        serde_json::from_value(legacy).expect("old stored media needs no waveform");
+    assert_eq!(old.voice_waveform, None);
+    assert_eq!(old.kind, AttachmentKind::Voice);
+
+    voice.voice_waveform = None;
+    let without_waveform = serde_json::to_value(voice).expect("serialization");
+    assert!(without_waveform.get("voice_waveform").is_none());
 }
