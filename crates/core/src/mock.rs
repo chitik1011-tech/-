@@ -119,7 +119,8 @@ impl MockTelegramBackend {
                 let chats: Vec<_> = self.chats.iter().take(limit).cloned().collect();
                 let mut events = vec![CoreEvent::ChatsLoaded(chats.clone())];
                 events.extend(
-                    chats.into_iter()
+                    chats
+                        .into_iter()
                         .map(|chat| CoreEvent::ChatCapabilitiesUpdated(mock_capabilities(chat.id))),
                 );
                 Ok(events)
