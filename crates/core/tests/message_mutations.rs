@@ -119,6 +119,8 @@ fn successful_delete_is_persisted_without_a_ghost_after_state_restore() {
         service: None,
         media_caption: None,
         reply_to: None,
+        reactions: Vec::new(),
+        reaction_revision: None,
     }));
     state.reduce(&CoreEvent::MessagesDeleted {
         chat_id: Some(-100123),
