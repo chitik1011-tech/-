@@ -175,6 +175,40 @@ impl MockTelegramBackend {
             CoreCommand::ForwardMessages(_) => Err(CoreError::Backend(
                 "message forwarding is not implemented by the mock backend".into(),
             )),
+            CoreCommand::ReplyMessage { chat_id, reply_to_message_id, text } => {
+                if self.authorization != AuthorizationState::Ready {
+                    return Err(CoreError::Backend("not authorized".into()));
+                }
+                let text = text.trim().to_owned();
+                if text.is_empty() {
+                    return Err(CoreError::InvalidInput("message text is empty".into()));
+                }
+                let message = MessageSummary {
+                    id: self.next_message_id,
+                    chat_id,
+                    sender_id: 0,
+                    text,
+                    timestamp_unix: unix_timestamp(),
+                    outgoing: true,
+                    attachments: Vec::new(),
+                    forwarded_from: None,
+                    edited: false,
+                    edit_timestamp_unix: None,
+                    service_message: false,
+                    media_caption: None,
+                    reply_to: Some(crate::model::ReplyMetadata {
+                        message_id: reply_to_message_id,
+                        chat_id: Some(chat_id),
+                        sender_id: None,
+                        sender_display_name: None,
+                    }),
+                };
+                self.next_message_id += 1;
+                if let Some(chat) = self.chats.iter_mut().find(|chat| chat.id == chat_id) {
+                    chat.last_message = Some(message.clone());
+                }
+                Ok(vec![CoreEvent::MessageAdded(message)])
+            }
             CoreCommand::SendText { chat_id, text } => {
                 if self.authorization != AuthorizationState::Ready {
                     return Err(CoreError::Backend("not authorized".into()));

@@ -32,6 +32,7 @@ use crate::{
     error::{TelegramBackendError, session_error},
     messages::{
         MessageDeduplicator, load_messages, load_messages_page, mark_read, message_to_summary,
+        send_reply,
         search_messages_page, send_text, send_text_idempotent,
     },
     polls::{PollRegistry, new_poll_registry, poll_by_id, polls_from_updates, remember_poll},
@@ -759,6 +760,18 @@ impl GrammersBackend {
                         has_more: page.has_more,
                     },
                 )]
+            }
+            CoreCommand::ReplyMessage { chat_id, reply_to_message_id, text } => {
+                self.require_ready().await?;
+                let peer = find_peer(&self.peers, chat_id)
+                    .await
+                    .ok_or(TelegramBackendError::UnknownChat(chat_id))?;
+                let message = send_reply(&self.client, peer, text, reply_to_message_id).await?;
+                if self.dedup.should_emit(&message).await {
+                    vec![CoreEvent::MessageAdded(message)]
+                } else {
+                    Vec::new()
+                }
             }
             CoreCommand::SendText { chat_id, text } => {
                 self.require_ready().await?;

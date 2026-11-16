@@ -99,6 +99,9 @@ data class ConversationMessageUi(
     val pollVoting: Boolean = false,
     val pollError: String? = null,
     val forwardedFrom: String? = null,
+    val senderId: Long = 0L,
+    val replyToMessageId: String? = null,
+    val replyToSummary: String? = null,
 )
 
 data class ConversationScreenState(
@@ -111,6 +114,9 @@ data class ConversationScreenState(
     val error: String? = null,
     val forwardingError: String? = null,
     val forwardSuccessCount: Long = 0,
+    val replyingToMessageId: String? = null,
+    val replyingToPreview: String? = null,
+    val jumpToMessageId: String? = null,
 )
 
 internal fun selectedForwardMessageIds(messages: List<ConversationMessageUi>, selectedIds: Set<Long>): List<Long> =
@@ -129,6 +135,10 @@ fun ConversationScreen(
     onSend: (chatId: String, text: String) -> Unit,
     onPollVote: (poll: ConversationPollUi, optionIds: List<List<Int>>) -> Unit,
     onForward: (chatId: Long, messageIds: List<Long>) -> Unit,
+    onReplyMessage: (ConversationMessageUi) -> Unit = {},
+    onOpenReplyTarget: (String) -> Unit = {},
+    onCancelReply: () -> Unit = {},
+    onJumpComplete: () -> Unit = {},
     onRetry: () -> Unit,
     onDownloadMedia: (messageId: Long, attachmentIndex: Int, retry: Boolean) -> Unit,
     onCancelMedia: (messageId: Long, attachmentIndex: Int) -> Unit,
@@ -154,6 +164,15 @@ fun ConversationScreen(
             if (text.isNotEmpty() && !state.sending) {
                 onSend(state.chatId, text)
             }
+        }
+    }
+
+    LaunchedEffect(state.jumpToMessageId, state.messages) {
+        val target = state.jumpToMessageId ?: return@LaunchedEffect
+        val index = state.messages.indexOfFirst { it.id == target }
+        if (index >= 0) {
+            listState.animateScrollToItem(index)
+            onJumpComplete()
         }
     }
 
@@ -207,6 +226,8 @@ fun ConversationScreen(
                     sending = state.sending,
                     onDraftChange = onDraftChange,
                     onSend = submitMessage,
+                    replyingToPreview = state.replyingToPreview,
+                    onCancelReply = onCancelReply,
                 )
             } else {
                 TextButton(onClick = { selectedMessageIds = emptySet() }) { Text("Отменить выбор") }
@@ -279,6 +300,8 @@ fun ConversationScreen(
                                     viewerKey = "${message.id}:${attachment.index}"
                                 },
                                 onOpenDocument = onOpenDocument,
+                                onReplyMessage = { onReplyMessage(message) },
+                                onOpenReplyTarget = onOpenReplyTarget,
                                 selected = message.id.toLongOrNull()?.let { it in selectedMessageIds } == true,
                                 onClick = {
                                     message.id.toLongOrNull()?.let { id ->
@@ -346,6 +369,8 @@ private fun MessageBubble(
     onCancelMedia: (attachmentIndex: Int) -> Unit,
     onOpenViewer: (MediaAttachmentUi) -> Unit,
     onOpenDocument: (MediaAttachmentUi) -> Unit,
+    onReplyMessage: () -> Unit,
+    onOpenReplyTarget: (String) -> Unit,
     selected: Boolean,
     onClick: () -> Unit,
     onLongPress: () -> Unit,
@@ -376,6 +401,13 @@ private fun MessageBubble(
             },
         ) {
             Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                message.replyToMessageId?.let { targetId ->
+                    TextButton(onClick = { onOpenReplyTarget(targetId) }, contentPadding = PaddingValues(0.dp)) {
+                        Text(message.replyToSummary ?: "Сообщение $targetId недоступно",
+                            maxLines = 2, overflow = TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.labelMedium)
+                    }
+                }
                 message.attachments.forEach { attachment ->
                     MediaAttachmentCard(
                         attachment = attachment,
@@ -409,6 +441,9 @@ private fun MessageBubble(
                         error = message.pollError,
                         onVote = { optionIds -> onPollVote(poll, optionIds) },
                     )
+                }
+                TextButton(onClick = onReplyMessage, contentPadding = PaddingValues(0.dp)) {
+                    Text("Ответить", style = MaterialTheme.typography.labelSmall)
                 }
                 if (message.timestamp.isNotBlank()) {
                     Spacer(Modifier.height(5.dp))
@@ -904,6 +939,8 @@ private fun ComposerBar(
     sending: Boolean,
     onDraftChange: (String) -> Unit,
     onSend: () -> Unit,
+    replyingToPreview: String?,
+    onCancelReply: () -> Unit,
 ) {
     val canSend = draft.isNotBlank() && !sending
 
@@ -916,6 +953,16 @@ private fun ComposerBar(
     ) {
         Column {
             HorizontalDivider()
+            replyingToPreview?.let { preview ->
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(preview, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.labelMedium)
+                    TextButton(onClick = onCancelReply) { Text("Отмена") }
+                }
+            }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()

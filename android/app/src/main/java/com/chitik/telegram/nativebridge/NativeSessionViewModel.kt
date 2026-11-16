@@ -333,6 +333,19 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         reportDispatchResult(result, "Rust rejected the chat request")
     }
 
+    fun loadMessagesBefore(chatId: Long, beforeMessageId: Long) {
+        if (chatId == 0L || beforeMessageId <= 0L) return
+        sendCommand(
+            JSONObject()
+                .put("type", "load_messages_page")
+                .put("payload", JSONObject()
+                    .put("chat_id", chatId)
+                    .put("before_message_id", beforeMessageId)
+                    .put("limit", 100))
+                .toString(),
+        )
+    }
+
     fun loadMessages(chatId: Long, limit: Int = 100) {
         _state.update { it.copy(busy = true, error = null) }
         sendCommand(
@@ -344,6 +357,19 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                         .put("chat_id", chatId)
                         .put("limit", limit),
                 )
+                .toString(),
+        )
+    }
+
+    fun replyMessage(chatId: Long, replyToMessageId: Long, text: String) {
+        if (chatId == 0L || replyToMessageId <= 0L || text.isBlank()) return
+        sendCommand(
+            JSONObject()
+                .put("type", "reply_message")
+                .put("payload", JSONObject()
+                    .put("chat_id", chatId)
+                    .put("reply_to_message_id", replyToMessageId)
+                    .put("text", text))
                 .toString(),
         )
     }
@@ -849,6 +875,11 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                                     message.optJSONArray("attachments") ?: JSONArray(),
                                 ),
                                 forwardedFrom = forwardLabel,
+                                senderId = message.optLong("sender_id"),
+                                replyToMessageId = message.optJSONObject("reply_to")
+                                    ?.optLong("message_id")
+                                    ?.takeIf { it > 0L }
+                                    ?.toString(),
                                 poll = polls[chatId to message.optLong("id")],
                             ),
                         )
