@@ -45,6 +45,12 @@ pub enum CoreCommand {
         chat_id: i64,
         text: String,
     },
+    /// Send a user-selected one-shot geographic location. This intentionally does
+    /// not participate in the text reliable-send/outbox subsystem.
+    SendLocation {
+        chat_id: i64,
+        location: crate::model::GeoPoint,
+    },
     /// Reliable text send. Retrying the same client_id with the same payload is idempotent.
     SendTextReliable {
         client_id: i64,
@@ -127,6 +133,7 @@ impl CoreCommand {
             Self::SearchMessages(_) => "search_messages",
             Self::ForwardMessages(_) => "forward_messages",
             Self::SendText { .. } => "send_text",
+            Self::SendLocation { .. } => "send_location",
             Self::SendTextReliable { .. } => "send_text_reliable",
             Self::VotePoll { .. } => "vote_poll",
             Self::ArchiveChat { .. } => "archive_chat",
@@ -215,6 +222,10 @@ impl CoreCommand {
             Self::SendText { chat_id, text } => {
                 validate_chat_id(*chat_id)?;
                 require_non_blank("message text", text)
+            }
+            Self::SendLocation { chat_id, location } => {
+                validate_chat_id(*chat_id)?;
+                location.validate()
             }
             Self::SendTextReliable {
                 client_id,

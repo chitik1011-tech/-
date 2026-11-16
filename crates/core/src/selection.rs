@@ -222,6 +222,7 @@ mod tests {
             text: text.to_owned(),
             timestamp_unix: id,
             outgoing,
+            location: None,
             attachments: Vec::new(),
             forwarded_from: None,
             edited: false,

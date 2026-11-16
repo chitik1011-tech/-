@@ -11,6 +11,7 @@ fn message(service: Option<ServiceMessage>) -> MessageSummary {
         text: String::new(),
         timestamp_unix: 123,
         outgoing: false,
+        location: None,
         attachments: Vec::new(),
         forwarded_from: None,
         edited: false,

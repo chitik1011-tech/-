@@ -88,6 +88,7 @@ fn incoming_message_for_unknown_chat_does_not_invent_chat_metadata() {
         text: "hello".into(),
         timestamp_unix: 1,
         outgoing: false,
+        location: None,
         attachments: Vec::new(),
         forwarded_from: None,
         edited: false,

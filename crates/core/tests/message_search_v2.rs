@@ -26,6 +26,7 @@ fn message(id: i64, timestamp_unix: i64, text: &str) -> MessageSummary {
         text: text.into(),
         timestamp_unix,
         outgoing: false,
+        location: None,
         attachments: Vec::new(),
         forwarded_from: None,
         edited: false,

@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use crate::service_message::ServiceMessage;
-use serde::{Deserialize, Serialize};
+use serde::{de, Deserialize, Deserializer, Serialize};
 use std::collections::BTreeSet;
 
 /// Telegram activities surfaced transiently while a user is composing or uploading.
@@ -68,6 +68,9 @@ pub struct MessageSummary {
     pub text: String,
     pub timestamp_unix: i64,
     pub outgoing: bool,
+    /// Optional Telegram location or venue attached to this message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub location: Option<MessageLocation>,
     /// Media attached to this message. Missing fields in older persisted messages
     /// are treated as an empty list.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -94,6 +97,232 @@ pub struct MessageSummary {
     /// Target metadata when this message replies to another message.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_to: Option<ReplyMetadata>,
+}
+
+/// A validated WGS84 point. Construction and deserialization reject non-finite
+/// values and coordinates outside Telegram's latitude/longitude ranges.
+#[derive(Debug, Clone, Serialize)]
+pub struct GeoPoint {
+    latitude: f64,
+    longitude: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    accuracy_radius_meters: Option<i32>,
+}
+
+impl GeoPoint {
+    pub fn new(
+        latitude: f64,
+        longitude: f64,
+        accuracy_radius_meters: Option<i32>,
+    ) -> crate::error::Result<Self> {
+        let point = Self {
+            latitude,
+            longitude,
+            accuracy_radius_meters,
+        };
+        point.validate()?;
+        Ok(point)
+    }
+
+    pub fn validate(&self) -> crate::error::Result<()> {
+        use crate::error::CoreError;
+
+        if !self.latitude.is_finite() {
+            return Err(CoreError::InvalidInput("latitude must be finite".into()));
+        }
+        if !self.longitude.is_finite() {
+            return Err(CoreError::InvalidInput("longitude must be finite".into()));
+        }
+        if !(-90.0..=90.0).contains(&self.latitude) {
+            return Err(CoreError::InvalidInput(
+                "latitude must be in -90..=90".into(),
+            ));
+        }
+        if !(-180.0..=180.0).contains(&self.longitude) {
+            return Err(CoreError::InvalidInput(
+                "longitude must be in -180..=180".into(),
+            ));
+        }
+        if self
+            .accuracy_radius_meters
+            .is_some_and(|radius| !(0..=1_500).contains(&radius))
+        {
+            return Err(CoreError::InvalidInput(
+                "accuracy radius must be in 0..=1500 meters".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    pub const fn latitude(&self) -> f64 {
+        self.latitude
+    }
+
+    pub const fn longitude(&self) -> f64 {
+        self.longitude
+    }
+
+    pub const fn accuracy_radius_meters(&self) -> Option<i32> {
+        self.accuracy_radius_meters
+    }
+}
+
+impl PartialEq for GeoPoint {
+    fn eq(&self, other: &Self) -> bool {
+        self.latitude == other.latitude
+            && self.longitude == other.longitude
+            && self.accuracy_radius_meters == other.accuracy_radius_meters
+    }
+}
+
+impl Eq for GeoPoint {}
+
+impl<'de> Deserialize<'de> for GeoPoint {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Wire {
+            latitude: f64,
+            longitude: f64,
+            #[serde(default)]
+            accuracy_radius_meters: Option<i32>,
+        }
+
+        let wire = Wire::deserialize(deserializer)?;
+        Self::new(wire.latitude, wire.longitude, wire.accuracy_radius_meters)
+            .map_err(de::Error::custom)
+    }
+}
+
+/// Backend-neutral Telegram venue metadata. Telegram may omit the geo point;
+/// title and address are required for a useful venue card.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Venue {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    point: Option<GeoPoint>,
+    title: String,
+    address: String,
+    provider: String,
+    venue_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    venue_type: Option<String>,
+}
+
+impl Venue {
+    pub fn new(
+        point: Option<GeoPoint>,
+        title: String,
+        address: String,
+        provider: String,
+        venue_id: String,
+        venue_type: Option<String>,
+    ) -> crate::error::Result<Self> {
+        let venue = Self {
+            point,
+            title,
+            address,
+            provider,
+            venue_id,
+            venue_type: venue_type.filter(|value| !value.is_empty()),
+        };
+        venue.validate()?;
+        Ok(venue)
+    }
+
+    pub fn validate(&self) -> crate::error::Result<()> {
+        use crate::error::CoreError;
+
+        if self.title.trim().is_empty() {
+            return Err(CoreError::InvalidInput("venue title is empty".into()));
+        }
+        if self.address.trim().is_empty() {
+            return Err(CoreError::InvalidInput("venue address is empty".into()));
+        }
+        if let Some(point) = &self.point {
+            point.validate()?;
+        }
+        Ok(())
+    }
+
+    pub const fn point(&self) -> Option<&GeoPoint> {
+        self.point.as_ref()
+    }
+
+    pub fn title(&self) -> &str {
+        &self.title
+    }
+
+    pub fn address(&self) -> &str {
+        &self.address
+    }
+
+    pub fn provider(&self) -> &str {
+        &self.provider
+    }
+
+    pub fn venue_id(&self) -> &str {
+        &self.venue_id
+    }
+
+    pub fn venue_type(&self) -> Option<&str> {
+        self.venue_type.as_deref()
+    }
+}
+
+impl<'de> Deserialize<'de> for Venue {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Wire {
+            #[serde(default)]
+            point: Option<GeoPoint>,
+            title: String,
+            address: String,
+            provider: String,
+            venue_id: String,
+            #[serde(default)]
+            venue_type: Option<String>,
+        }
+
+        let wire = Wire::deserialize(deserializer)?;
+        Self::new(
+            wire.point,
+            wire.title,
+            wire.address,
+            wire.provider,
+            wire.venue_id,
+            wire.venue_type,
+        )
+        .map_err(de::Error::custom)
+    }
+}
+
+/// Location media carried by a Telegram message.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum MessageLocation {
+    Location { point: GeoPoint },
+    Venue { venue: Venue },
+}
+
+impl MessageLocation {
+    pub fn validate(&self) -> crate::error::Result<()> {
+        match self {
+            Self::Location { point } => point.validate(),
+            Self::Venue { venue } => venue.validate(),
+        }
+    }
+
+    pub fn point(&self) -> Option<&GeoPoint> {
+        match self {
+            Self::Location { point } => Some(point),
+            Self::Venue { venue } => venue.point(),
+        }
+    }
 }
 
 fn is_false(value: &bool) -> bool {

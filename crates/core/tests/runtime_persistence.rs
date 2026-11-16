@@ -65,6 +65,7 @@ fn message(id: i64) -> MessageSummary {
         text: format!("burst-{id}"),
         timestamp_unix: id,
         outgoing: false,
+        location: None,
         attachments: Vec::new(),
         forwarded_from: None,
         edited: false,
