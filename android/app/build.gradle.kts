@@ -9,6 +9,17 @@ val repoRoot = rootProject.projectDir.parentFile
 val rustBuildScript = rootProject.file("build-rust.sh")
 val rustLibrary = layout.projectDirectory.file("src/main/jniLibs/arm64-v8a/libtg_android_bridge.so")
 
+val telegramApiId = providers.environmentVariable("TG_API_ID").orNull
+    ?.trim()
+    ?.toIntOrNull()
+    ?.takeIf { it > 0 }
+    ?: 0
+val telegramApiHash = providers.environmentVariable("TG_API_HASH").orNull
+    ?.trim()
+    ?.lowercase()
+    ?.takeIf { it.matches(Regex("^[0-9a-f]{32}$")) }
+    .orEmpty()
+
 val buildRustArm64 by tasks.registering(Exec::class) {
     group = "build"
     description = "Builds the Rust JNI bridge for arm64-v8a using cargo-ndk."
@@ -44,6 +55,9 @@ android {
         versionCode = 1
         versionName = "0.1.0"
 
+        buildConfigField("int", "TELEGRAM_API_ID", telegramApiId.toString())
+        buildConfigField("String", "TELEGRAM_API_HASH", "\"$telegramApiHash\"")
+
         ndk {
             abiFilters += "arm64-v8a"
         }
@@ -51,6 +65,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     compileOptions {
