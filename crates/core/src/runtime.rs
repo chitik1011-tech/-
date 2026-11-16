@@ -249,7 +249,7 @@ where
                     }
                     persistence_dirty = true;
                 }
-                RuntimeInput::Command(Some(command)) => {
+                RuntimeInput::Command(Some(mut command)) => {
                     if let CoreCommand::VotePoll {
                         poll_id,
                         chat_id,
@@ -330,11 +330,47 @@ where
                         });
                         let pending = reduced_state.outbox.values().cloned().collect::<Vec<_>>();
                         for send in pending {
-                            if matches!(send.state, OutgoingSendState::Sending) {
-                                apply_event(CoreEvent::MessageSendStateChanged(OutgoingSend::awaiting_confirmation(
-                                    send.client_id, send.chat_id, send.text,
-                                    "shutdown interrupted the backend request; delivery is unknown",
-                                )), &mut reduced_state, &state_tx, &event_tx_task, &mut activity_tracker);
+                            match (&send.state, send.media.clone()) {
+                                (OutgoingSendState::Sending, Some(media)) => {
+                                    apply_event(
+                                        CoreEvent::MessageSendStateChanged(OutgoingSend::awaiting_confirmation_media(
+                                            send.client_id,
+                                            send.chat_id,
+                                            media,
+                                            send.text,
+                                            "shutdown interrupted the backend request; delivery is unknown",
+                                            send.transfer_generation,
+                                        )),
+                                        &mut reduced_state,
+                                        &state_tx,
+                                        &event_tx_task,
+                                        &mut activity_tracker,
+                                    );
+                                }
+                                (OutgoingSendState::Sending, None) => {
+                                    apply_event(CoreEvent::MessageSendStateChanged(OutgoingSend::awaiting_confirmation(
+                                        send.client_id, send.chat_id, send.text,
+                                        "shutdown interrupted the backend request; delivery is unknown",
+                                    )), &mut reduced_state, &state_tx, &event_tx_task, &mut activity_tracker);
+                                }
+                                (OutgoingSendState::Uploading { .. }, Some(media)) => {
+                                    apply_event(
+                                        CoreEvent::MessageSendStateChanged(OutgoingSend::failed_media(
+                                            send.client_id,
+                                            send.chat_id,
+                                            media,
+                                            send.text,
+                                            "shutdown interrupted the media upload",
+                                            true,
+                                            send.transfer_generation,
+                                        )),
+                                        &mut reduced_state,
+                                        &state_tx,
+                                        &event_tx_task,
+                                        &mut activity_tracker,
+                                    );
+                                }
+                                _ => {}
                             }
                         }
                         for history in reduced_state.message_history.values_mut() {
@@ -411,6 +447,17 @@ where
                         _ => None,
                     };
                     let mut skip_backend = false;
+                    if let CoreCommand::SendMediaReliable {
+                        client_id,
+                        transfer_generation,
+                        ..
+                    } = &mut command
+                    {
+                        *transfer_generation = reduced_state
+                            .send_ledger
+                            .get(client_id)
+                            .map_or(1, |send| send.transfer_generation.saturating_add(1));
+                    }
 
                     // Keep the permission boundary in Rust: Compose can make a
                     // control unavailable for usability, but it cannot authorize
@@ -452,6 +499,8 @@ where
                                 existing.state,
                                 OutgoingSendState::Sent { .. }
                                     | OutgoingSendState::Rejected { .. }
+                                    | OutgoingSendState::Sending
+                                    | OutgoingSendState::AwaitingConfirmation { .. }
                                     | OutgoingSendState::Failed {
                                         retryable: false,
                                         ..
@@ -478,6 +527,82 @@ where
                                     *client_id,
                                     *chat_id,
                                     text.clone(),
+                                )),
+                                &mut reduced_state,
+                                &state_tx,
+                                &event_tx_task,
+                                &mut activity_tracker,
+                            );
+                            persistence_dirty = true;
+                            if persist_send_intent(
+                                &store,
+                                &mut reduced_state,
+                                &state_tx,
+                                &event_tx_task,
+                            )
+                            .await
+                            {
+                                persistence_dirty = false;
+                            } else {
+                                skip_backend = true;
+                            }
+                        }
+                    }
+
+                    if let CoreCommand::SendMediaReliable {
+                        client_id,
+                        chat_id,
+                        media,
+                        caption,
+                        transfer_generation,
+                    } = &command
+                    {
+                        if let Some(existing) = reduced_state.send_ledger.get(client_id) {
+                            if !existing.same_media_request(*chat_id, media, caption) {
+                                apply_event(
+                                    CoreEvent::Error(format!(
+                                        "client message id {client_id} was reused for a different outgoing message"
+                                    )),
+                                    &mut reduced_state,
+                                    &state_tx,
+                                    &event_tx_task,
+                                    &mut activity_tracker,
+                                );
+                                skip_backend = true;
+                            } else if matches!(
+                                &existing.state,
+                                OutgoingSendState::Sent { .. }
+                                    | OutgoingSendState::Rejected { .. }
+                                    | OutgoingSendState::Sending
+                                    | OutgoingSendState::Uploading { .. }
+                                    | OutgoingSendState::AwaitingConfirmation { .. }
+                                    | OutgoingSendState::Failed {
+                                        retryable: false,
+                                        ..
+                                    }
+                            ) {
+                                apply_event(
+                                    CoreEvent::MessageSendStateChanged(existing.clone()),
+                                    &mut reduced_state,
+                                    &state_tx,
+                                    &event_tx_task,
+                                    &mut activity_tracker,
+                                );
+                                skip_backend = true;
+                            }
+                        }
+
+                        if !skip_backend {
+                            // The durable payload, including the private copied path,
+                            // is saved before any upload bytes leave the device.
+                            apply_event(
+                                CoreEvent::MessageSendStateChanged(OutgoingSend::uploading_media(
+                                    *client_id,
+                                    *chat_id,
+                                    media.clone(),
+                                    caption.clone(),
+                                    0,
+                                    *transfer_generation,
                                 )),
                                 &mut reduced_state,
                                 &state_tx,
@@ -785,6 +910,20 @@ fn operation_error_events(command: &CoreCommand, error: CoreError) -> Vec<CoreEv
             text.clone(),
             error,
         ))],
+        CoreCommand::SendMediaReliable {
+            client_id,
+            chat_id,
+            media,
+            caption,
+            transfer_generation,
+        } => vec![CoreEvent::MessageSendStateChanged(send_media_error_state(
+            *client_id,
+            *chat_id,
+            media.clone(),
+            caption.clone(),
+            error,
+            *transfer_generation,
+        ))],
         CoreCommand::PinMessage {
             chat_id,
             message_id,
@@ -891,6 +1030,18 @@ fn command_capability_error(command: &CoreCommand, state: &CoreState) -> Option<
     match command {
         CoreCommand::SendText { chat_id, .. } | CoreCommand::SendTextReliable { chat_id, .. } => {
             require_send(*chat_id)
+        }
+        CoreCommand::SendMediaReliable { chat_id, .. } => {
+            if let Some(reason) = require_send(*chat_id) {
+                return Some(reason);
+            }
+            if state.chat_capabilities.get(chat_id).map_or(true, |cap| {
+                cap.can_send_media != CapabilityValue::Known(true)
+            }) {
+                Some("Telegram does not confirm media sending is allowed in this chat".into())
+            } else {
+                None
+            }
         }
         CoreCommand::SendLocation { chat_id, .. } => {
             if let Some(reason) = require_send(*chat_id) {
@@ -1311,18 +1462,45 @@ async fn restore_state<S: StateStore>(
             let recovering: Vec<_> = state
                 .outbox
                 .values()
-                .filter(|send| matches!(send.state, OutgoingSendState::Sending))
+                .filter(|send| matches!(
+                    send.state,
+                    OutgoingSendState::Sending | OutgoingSendState::Uploading { .. }
+                ))
                 .map(|send| send.client_id)
                 .collect();
             let mut recovered_any = false;
             for client_id in recovering {
                 if let Some(send) = state.outbox.get(&client_id).cloned() {
-                    let recovered = OutgoingSend::awaiting_confirmation(
-                        send.client_id,
-                        send.chat_id,
-                        send.text,
-                        "process restarted while the send outcome was unknown",
-                    );
+                    let recovered = match (send.state, send.media.clone()) {
+                        (OutgoingSendState::Uploading { .. }, Some(media)) => {
+                            OutgoingSend::failed_media(
+                                send.client_id,
+                                send.chat_id,
+                                media,
+                                send.text,
+                                "process restarted during media upload",
+                                true,
+                                send.transfer_generation,
+                            )
+                        }
+                        (OutgoingSendState::Sending, Some(media)) => {
+                            OutgoingSend::awaiting_confirmation_media(
+                                send.client_id,
+                                send.chat_id,
+                                media,
+                                send.text,
+                                "process restarted while the send outcome was unknown",
+                                send.transfer_generation,
+                            )
+                        }
+                        (OutgoingSendState::Sending, None) => OutgoingSend::awaiting_confirmation(
+                            send.client_id,
+                            send.chat_id,
+                            send.text,
+                            "process restarted while the send outcome was unknown",
+                        ),
+                        _ => continue,
+                    };
                     state.outbox.insert(client_id, recovered.clone());
                     state.send_ledger.insert(client_id, recovered);
                     recovered_any = true;
@@ -1345,6 +1523,39 @@ async fn restore_state<S: StateStore>(
             let _ = event_tx.send(CoreEvent::Error(message));
             state
         }
+    }
+}
+
+fn send_media_error_state(
+    client_id: i64,
+    chat_id: i64,
+    media: crate::send::OutgoingMediaAttachment,
+    caption: String,
+    error: CoreError,
+    transfer_generation: u64,
+) -> OutgoingSend {
+    match error {
+        CoreError::SendOutcomeUnknown(reason) => OutgoingSend::awaiting_confirmation_media(
+            client_id, chat_id, media, caption, reason, transfer_generation,
+        ),
+        CoreError::FloodWait { seconds } => OutgoingSend::failed_media(
+            client_id,
+            chat_id,
+            media,
+            caption,
+            format!("Telegram rate limit: wait {seconds} seconds"),
+            true,
+            transfer_generation,
+        ),
+        CoreError::TransientTransport(reason) | CoreError::TransientSend(reason) => {
+            OutgoingSend::failed_media(client_id, chat_id, media, caption, reason, true, transfer_generation)
+        }
+        CoreError::SendRejected(reason) => OutgoingSend::failed_media(
+            client_id, chat_id, media, caption, reason, false, transfer_generation,
+        ),
+        other => OutgoingSend::failed_media(
+            client_id, chat_id, media, caption, other.to_string(), false, transfer_generation,
+        ),
     }
 }
 
