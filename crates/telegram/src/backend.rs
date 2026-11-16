@@ -33,8 +33,9 @@ use crate::{
     downloads::{MediaTarget, event as media_event, spawn_download, state_from_snapshot},
     error::{TelegramBackendError, session_error},
     messages::{
-        MessageDeduplicator, load_messages, load_messages_page, mark_read, message_to_summary,
-        search_messages_page, send_location, send_reply, send_text, send_text_idempotent,
+        MessageDeduplicator, load_messages, load_messages_page, load_pinned_message_ids, mark_read,
+        message_to_summary, search_messages_page, send_location, send_reply, send_text,
+        send_text_idempotent,
     },
     polls::{PollRegistry, new_poll_registry, poll_by_id, polls_from_updates, remember_poll},
     updates::{TelegramUpdate, UpdateWorkerInput, run_update_worker},
@@ -766,6 +767,47 @@ impl GrammersBackend {
                 }];
                 events.extend(page.polls.into_iter().map(CoreEvent::PollUpdated));
                 events
+            }
+            CoreCommand::LoadPinnedMessages { chat_id } => {
+                self.require_ready().await?;
+                let peer = find_peer(&self.peers, chat_id)
+                    .await
+                    .ok_or(TelegramBackendError::UnknownChat(chat_id))?;
+                let message_ids = load_pinned_message_ids(&self.client, peer).await?;
+                vec![CoreEvent::PinnedMessagesLoaded {
+                    chat_id,
+                    message_ids,
+                    request_revision: None,
+                }]
+            }
+            CoreCommand::PinMessage {
+                chat_id,
+                message_id,
+            }
+            | CoreCommand::UnpinMessage {
+                chat_id,
+                message_id,
+            } => {
+                self.require_ready().await?;
+                let pinned = matches!(command, CoreCommand::PinMessage { .. });
+                let peer = find_peer(&self.peers, chat_id)
+                    .await
+                    .ok_or(TelegramBackendError::UnknownChat(chat_id))?;
+                let message_id = i32::try_from(message_id).map_err(|_| {
+                    CoreError::InvalidInput("message id exceeds Telegram range".into())
+                })?;
+                let result = if pinned {
+                    self.client.pin_message(peer, message_id).await
+                } else {
+                    self.client.unpin_message(peer, message_id).await
+                };
+                result.map_err(|error| crate::error::api_error("update pinned message", error))?;
+                vec![CoreEvent::PinnedMessagesChanged {
+                    chat_id,
+                    message_ids: vec![i64::from(message_id)],
+                    pinned,
+                    pts: None,
+                }]
             }
             CoreCommand::MarkRead {
                 chat_id,

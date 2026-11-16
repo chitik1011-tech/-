@@ -41,6 +41,20 @@ pub enum CoreCommand {
         before_message_id: Option<i64>,
         limit: usize,
     },
+    /// Load the authoritative set of pinned message IDs for a chat.
+    LoadPinnedMessages {
+        chat_id: i64,
+    },
+    /// Pin a message in a chat.
+    PinMessage {
+        chat_id: i64,
+        message_id: i64,
+    },
+    /// Unpin a message from a chat.
+    UnpinMessage {
+        chat_id: i64,
+        message_id: i64,
+    },
     MarkRead {
         chat_id: i64,
         max_message_id: i64,
@@ -174,6 +188,9 @@ impl CoreCommand {
             Self::LoadContacts { .. } => "load_contacts",
             Self::LoadMessages { .. } => "load_messages",
             Self::LoadMessagesPage { .. } => "load_messages_page",
+            Self::LoadPinnedMessages { .. } => "load_pinned_messages",
+            Self::PinMessage { .. } => "pin_message",
+            Self::UnpinMessage { .. } => "unpin_message",
             Self::MarkRead { .. } => "mark_read",
             Self::SearchMessages(_) => "search_messages",
             Self::ForwardMessages(_) => "forward_messages",
@@ -259,6 +276,23 @@ impl CoreCommand {
                 if before_message_id.is_some_and(|message_id| message_id <= 0) {
                     return Err(CoreError::InvalidInput(
                         "message page cursor must be positive".into(),
+                    ));
+                }
+                Ok(())
+            }
+            Self::LoadPinnedMessages { chat_id } => validate_chat_id(*chat_id),
+            Self::PinMessage {
+                chat_id,
+                message_id,
+            }
+            | Self::UnpinMessage {
+                chat_id,
+                message_id,
+            } => {
+                validate_chat_id(*chat_id)?;
+                if *message_id <= 0 {
+                    return Err(CoreError::InvalidInput(
+                        "message id must be positive".into(),
                     ));
                 }
                 Ok(())

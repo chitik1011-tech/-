@@ -194,6 +194,7 @@ private fun TelegramRustApp(
                 replyToPreview = null
                 jumpToMessageId = null
                 viewModel.loadMessages(contact.userId)
+                viewModel.loadPinnedMessages(contact.userId)
             },
         )
 
@@ -213,6 +214,7 @@ private fun TelegramRustApp(
                 replyToPreview = null
                 jumpToMessageId = null
                 viewModel.loadMessages(chatId)
+                viewModel.loadPinnedMessages(chatId)
             },
         )
 
@@ -267,6 +269,17 @@ private fun TelegramRustApp(
                     messageMutationSuccessChatId = state.messageMutationSuccessChatId,
                     messageMutationSuccessMessageId = state.messageMutationSuccessMessageId,
                     capabilities = state.chatCapabilities[selectedChatId] ?: ChatCapabilitiesUi(),
+                    pinnedMessageIds = state.pinnedMessages[selectedChatId].orEmpty().map(Long::toString),
+                    pendingPinnedMessageIds = state.pendingPinnedMessageIds
+                        .filter { it.startsWith("$selectedChatId:") }
+                        .map { it.substringAfter(':') }
+                        .toSet(),
+                    pinnedError = state.pinnedFailureKey
+                        ?.takeIf { it.startsWith("$selectedChatId:") }
+                        ?.let { key -> "Сообщение #${key.substringAfter(':')}: ${state.pinnedError.orEmpty()}" },
+                    historyPageLoadingBeforeMessageId = state.loadingHistoryBefore[selectedChatId],
+                    historyPageCompletedBeforeMessageId = state.completedHistoryBefore[selectedChatId],
+                    historyPageError = state.historyPageErrors[selectedChatId],
                     replyingToMessageId = replyToMessageId?.toString(),
                     replyingToPreview = replyToPreview,
                     jumpToMessageId = jumpToMessageId,
@@ -351,6 +364,21 @@ private fun TelegramRustApp(
                     }
                 },
                 onRetry = { viewModel.loadMessages(selectedChatId) },
+                onTogglePin = { chatId, messageId, isPinned ->
+                    val parsedChat = chatId.toLongOrNull()
+                    val parsedMessage = messageId.toLongOrNull()
+                    if (parsedChat != null && parsedMessage != null) {
+                        viewModel.toggleMessagePin(parsedChat, parsedMessage, isPinned)
+                    }
+                },
+                onJumpToPinned = { messageId ->
+                    jumpToMessageId = messageId
+                    if (messages.none { it.id == messageId }) {
+                        messageId.toLongOrNull()?.takeIf { it > 0 && it < Long.MAX_VALUE }?.let {
+                            viewModel.loadMessagesBefore(selectedChatId, it + 1L)
+                        }
+                    }
+                },
                 onOpenProfile = {
                     profilePeerId = selectedChatId
                     viewModel.loadProfile(selectedChatId)

@@ -165,6 +165,12 @@ data class ConversationScreenState(
     val deletingMessages: Boolean = false,
     val deleteError: String? = null,
     val capabilities: ChatCapabilitiesUi = ChatCapabilitiesUi(),
+    val pinnedMessageIds: List<String> = emptyList(),
+    val pendingPinnedMessageIds: Set<String> = emptySet(),
+    val pinnedError: String? = null,
+    val historyPageLoadingBeforeMessageId: Long? = null,
+    val historyPageCompletedBeforeMessageId: Long? = null,
+    val historyPageError: String? = null,
     val messageMutationPending: Boolean = false,
     val messageMutationError: String? = null,
     val messageMutationChatId: Long = 0L,
@@ -182,6 +188,18 @@ internal fun selectedForwardMessageIds(messages: List<ConversationMessageUi>, se
 
 internal fun replyTargetIndex(messages: List<ConversationMessageUi>, messageId: String): Int =
     messages.indexOfFirst { it.id == messageId }
+
+internal fun shouldShowPinnedTargetFallback(
+    targetMessageId: String?,
+    loadedMessageIds: List<String>,
+    loadingBeforeMessageId: Long?,
+    completedBeforeMessageId: Long?,
+): Boolean {
+    val target = targetMessageId?.toLongOrNull()?.takeIf { it > 0 && it < Long.MAX_VALUE } ?: return false
+    if (targetMessageId in loadedMessageIds) return false
+    val requestedBefore = target + 1L
+    return loadingBeforeMessageId != requestedBefore && completedBeforeMessageId == requestedBefore
+}
 
 internal fun selectedMessageText(messages: List<ConversationMessageUi>, selectedIds: Set<Long>): String =
     messages.filter { message -> message.id.toLongOrNull()?.let { it in selectedIds } == true }
@@ -229,6 +247,8 @@ fun ConversationScreen(
     onEditMessage: (chatId: Long, messageId: Long, text: String) -> Unit,
     onDeleteMessageForEveryone: (chatId: Long, messageId: Long) -> Unit,
     onDeleteMessageForMe: (chatId: Long, messageId: Long) -> Unit,
+    onTogglePin: (chatId: String, messageId: String, isPinned: Boolean) -> Unit = { _, _, _ -> },
+    onJumpToPinned: (messageId: String) -> Unit = {},
     onReplyMessage: (ConversationMessageUi) -> Unit = {},
     onOpenReplyTarget: (String) -> Unit = {},
     onCancelReply: () -> Unit = {},
@@ -242,6 +262,7 @@ fun ConversationScreen(
 ) {
     val listState = rememberLazyListState()
     var viewerKey by rememberSaveable { mutableStateOf<String?>(null) }
+    var missingPinnedTarget by remember(state.chatId, state.selectionGeneration) { mutableStateOf<String?>(null) }
     var actionTarget by remember(state.chatId, state.selectionGeneration) { mutableStateOf<ConversationMessageUi?>(null) }
     var editingMessage by remember(state.chatId, state.selectionGeneration) { mutableStateOf<ConversationMessageUi?>(null) }
     var editDraft by remember(state.chatId, state.selectionGeneration) { mutableStateOf("") }
@@ -292,11 +313,26 @@ fun ConversationScreen(
         }
     }
 
-    LaunchedEffect(state.jumpToMessageId, state.messages) {
+    LaunchedEffect(
+        state.jumpToMessageId,
+        state.messages,
+        state.historyPageLoadingBeforeMessageId,
+        state.historyPageCompletedBeforeMessageId,
+        state.historyPageError,
+    ) {
         val target = state.jumpToMessageId ?: return@LaunchedEffect
         val index = replyTargetIndex(state.messages, target)
         if (index >= 0) {
             listState.animateScrollToItem(index)
+            missingPinnedTarget = null
+            onJumpComplete()
+        } else if (shouldShowPinnedTargetFallback(
+                target,
+                state.messages.map { it.id },
+                state.historyPageLoadingBeforeMessageId,
+                state.historyPageCompletedBeforeMessageId,
+            )) {
+            missingPinnedTarget = target
             onJumpComplete()
         }
     }
@@ -473,6 +509,61 @@ fun ConversationScreen(
                 .fillMaxSize()
                 .padding(innerPadding),
         ) {
+            if (state.pinnedMessageIds.isNotEmpty()) {
+                val pinnedId = state.pinnedMessageIds.last()
+                Surface(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.secondaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text(
+                            text = if (state.pinnedMessageIds.size > 1) {
+                                "Закреплено: #$pinnedId (+${state.pinnedMessageIds.size - 1})"
+                            } else {
+                                "Закреплено: #$pinnedId"
+                            },
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.labelLarge,
+                        )
+                        TextButton(onClick = { onJumpToPinned(pinnedId) }) { Text("Перейти") }
+                    }
+                }
+            }
+            state.pinnedError?.let { message ->
+                Text(
+                    text = "Ошибка закрепления: $message",
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            missingPinnedTarget?.let { target ->
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = state.historyPageError?.let { error ->
+                            "Не удалось загрузить сообщение #$target: $error"
+                        } ?: "Закреплённое сообщение #$target не найдено. Возможно, оно удалено.",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = {
+                        missingPinnedTarget = null
+                        onJumpToPinned(target)
+                    }) { Text("Повторить") }
+                }
+            }
             state.error?.takeIf { contentMode != AsyncContentMode.Loading && state.deleteError == null }?.let { message ->
                 ErrorRetryState(
                     title = "Не удалось загрузить сообщения",
@@ -531,6 +622,12 @@ fun ConversationScreen(
                             MessageBubble(
                                 message = message,
                                 onPollVote = onPollVote,
+                                pinned = message.id in state.pinnedMessageIds,
+                                pending = message.id in state.pendingPinnedMessageIds,
+                                canTogglePin = state.capabilities.canPinMessages == true,
+                                onTogglePin = {
+                                    onTogglePin(state.chatId, message.id, message.id in state.pinnedMessageIds)
+                                },
                                 onOpenLocation = onOpenLocation,
                                 onDownloadMedia = { attachmentIndex, retry ->
                                     message.id.toLongOrNull()?.let { messageId ->
@@ -717,6 +814,10 @@ fun ConversationScreen(
 private fun MessageBubble(
     message: ConversationMessageUi,
     onPollVote: (ConversationPollUi, List<List<Int>>) -> Unit,
+    pinned: Boolean,
+    pending: Boolean,
+    canTogglePin: Boolean,
+    onTogglePin: () -> Unit,
     onOpenLocation: (ConversationLocationUi) -> Unit,
     onDownloadMedia: (attachmentIndex: Int, retry: Boolean) -> Unit,
     onCancelMedia: (attachmentIndex: Int) -> Unit,
@@ -821,6 +922,13 @@ private fun MessageBubble(
                 ReactionRow(message.reactions, reactionPending, reactionError, onReaction)
                 TextButton(onClick = onReplyMessage, contentPadding = PaddingValues(0.dp)) {
                     Text("Ответить", style = MaterialTheme.typography.labelSmall)
+                }
+                if (pending) {
+                    CircularProgressIndicator(modifier = Modifier.width(16.dp), strokeWidth = 2.dp)
+                } else if (canTogglePin) {
+                    TextButton(onClick = onTogglePin, contentPadding = PaddingValues(0.dp)) {
+                        Text(if (pinned) "Открепить" else "Закрепить", style = MaterialTheme.typography.labelSmall)
+                    }
                 }
                 if (message.timestamp.isNotBlank()) {
                     Spacer(Modifier.height(5.dp))
