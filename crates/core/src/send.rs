@@ -24,6 +24,12 @@ pub struct OutgoingMediaAttachment {
     pub file_name: String,
     pub mime_type: String,
     pub size_bytes: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub video_duration_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub video_width: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub video_height: Option<u32>,
 }
 
 impl OutgoingMediaAttachment {
@@ -50,6 +56,22 @@ impl OutgoingMediaAttachment {
             return Err(format!(
                 "media size must be between 1 byte and {MAX_OUTGOING_MEDIA_BYTES} bytes"
             ));
+        }
+        if self.kind != OutgoingMediaKind::Video
+            && (self.video_duration_ms.is_some()
+                || self.video_width.is_some()
+                || self.video_height.is_some())
+        {
+            return Err("video metadata can only be set for video media".into());
+        }
+        if self.video_duration_ms.is_some_and(|duration| duration > 48 * 60 * 60 * 1000) {
+            return Err("video duration exceeds the 48 hour upload limit".into());
+        }
+        match (self.video_width, self.video_height) {
+            (None, None) => {}
+            (Some(width), Some(height))
+                if width > 0 && height > 0 && width <= 32768 && height <= 32768 => {}
+            _ => return Err("video dimensions must be provided together and be in 1..=32768".into()),
         }
         Ok(())
     }
@@ -370,6 +392,9 @@ mod tests {
             file_name: "photo.jpg".into(),
             mime_type: "image/jpeg".into(),
             size_bytes: 512,
+            video_duration_ms: None,
+            video_width: None,
+            video_height: None,
         }
     }
 
