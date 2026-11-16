@@ -19,7 +19,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /** Single player for a session. Never allocate a player from Compose recomposition. */
-internal class VoicePlaybackCoordinator(
+class VoicePlaybackCoordinator(
     context: Context,
     private val scope: CoroutineScope,
 ) {
