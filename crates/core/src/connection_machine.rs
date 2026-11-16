@@ -25,7 +25,9 @@ pub struct SessionGeneration(u64);
 pub struct ConnectionEpoch(u64);
 
 /// Token that every asynchronous callback for a connection attempt must present.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
+)]
 pub struct ConnectionToken {
     generation: SessionGeneration,
     epoch: ConnectionEpoch,

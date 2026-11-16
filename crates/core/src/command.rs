@@ -9,6 +9,7 @@ use crate::{
 
 pub const MAX_CHAT_LOAD_LIMIT: usize = 500;
 pub const MAX_MESSAGE_LOAD_LIMIT: usize = 200;
+pub const MAX_REACTION_BYTES: usize = 128;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
@@ -63,6 +64,17 @@ pub enum CoreCommand {
         chat_id: i64,
         message_id: i64,
         option_ids: Vec<Vec<u8>>,
+    },
+    /// Add or change the current user's reaction on a Telegram message.
+    AddReaction {
+        chat_id: i64,
+        message_id: i64,
+        reaction: crate::model::MessageReactionType,
+    },
+    /// Remove the current user's reaction from a Telegram message.
+    RemoveReaction {
+        chat_id: i64,
+        message_id: i64,
     },
     ArchiveChat {
         chat_id: i64,
@@ -136,6 +148,8 @@ impl CoreCommand {
             Self::SendLocation { .. } => "send_location",
             Self::SendTextReliable { .. } => "send_text_reliable",
             Self::VotePoll { .. } => "vote_poll",
+            Self::AddReaction { .. } => "add_reaction",
+            Self::RemoveReaction { .. } => "remove_reaction",
             Self::ArchiveChat { .. } => "archive_chat",
             Self::UnarchiveChat { .. } => "unarchive_chat",
             Self::MuteChat { .. } => "mute_chat",
@@ -280,6 +294,18 @@ impl CoreCommand {
                 }
                 Ok(())
             }
+            Self::AddReaction {
+                chat_id,
+                message_id,
+                reaction,
+            } => {
+                validate_reaction_target(*chat_id, *message_id)?;
+                reaction.validate()
+            }
+            Self::RemoveReaction {
+                chat_id,
+                message_id,
+            } => validate_reaction_target(*chat_id, *message_id),
             Self::ArchiveChat { chat_id }
             | Self::UnarchiveChat { chat_id }
             | Self::MuteChat { chat_id }
@@ -332,6 +358,16 @@ fn validate_media_target(chat_id: i64, message_id: i64, attachment_index: usize)
     if attachment_index > 31 {
         return Err(CoreError::InvalidInput(
             "attachment index must be in 0..=31".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_reaction_target(chat_id: i64, message_id: i64) -> Result<()> {
+    validate_chat_id(chat_id)?;
+    if message_id <= 0 {
+        return Err(CoreError::InvalidInput(
+            "message id must be positive".into(),
         ));
     }
     Ok(())

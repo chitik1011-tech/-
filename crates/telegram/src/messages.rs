@@ -10,8 +10,8 @@ use grammers_client::{
 };
 use tg_mobile_core::{
     AttachmentDownloadState, AttachmentKind, AttachmentThumbnail, CoreError, ForwardedFrom,
-    GeoPoint, MediaAttachment, MessageLocation, MessageSummary, PollSummary, ReplyMetadata,
-    ServiceAction, ServiceMessage, Venue,
+    GeoPoint, MediaAttachment, MessageLocation, MessageReaction, MessageReactionType, MessageSummary,
+    PollSummary, ReplyMetadata, ServiceAction, ServiceMessage, Venue,
 };
 use tokio::sync::Mutex;
 
@@ -79,6 +79,7 @@ pub(crate) fn message_to_summary(message: &Message) -> MessageSummary {
             sender_id: None,
             sender_display_name: None,
         });
+    summary.reactions = message_reactions(&message.raw);
 
     summary
 }
@@ -327,6 +328,8 @@ fn message_summary_from_fields(fields: MessageFields<'_>) -> MessageSummary {
         service: None,
         media_caption: None,
         reply_to: None,
+        reactions: Vec::new(),
+        reaction_revision: None,
     }
 }
 
@@ -334,6 +337,42 @@ fn message_summary_from_fields(fields: MessageFields<'_>) -> MessageSummary {
 pub(crate) struct LoadedMessages {
     pub messages: Vec<MessageSummary>,
     pub polls: Vec<PollSummary>,
+}
+
+pub(crate) fn message_reactions(message: &tl::enums::Message) -> Vec<MessageReaction> {
+    let snapshot = match message {
+        tl::enums::Message::Message(message) => message.reactions.as_ref(),
+        _ => None,
+    };
+    snapshot.map(map_reactions).unwrap_or_default()
+}
+
+pub(crate) fn map_reactions(snapshot: &tl::enums::MessageReactions) -> Vec<MessageReaction> {
+    let tl::enums::MessageReactions::Reactions(snapshot) = snapshot;
+    let mut seen = std::collections::BTreeSet::new();
+    snapshot
+        .results
+        .iter()
+        .filter_map(|result| {
+            let tl::enums::ReactionCount::Count(result) = result;
+            let reaction = match &result.reaction {
+                tl::enums::Reaction::Emoji(value) => {
+                    MessageReactionType::Emoji(value.emoticon.clone())
+                }
+                tl::enums::Reaction::CustomEmoji(value) => {
+                    MessageReactionType::CustomEmoji(value.document_id)
+                }
+                _ => return None,
+            };
+            let reaction = MessageReaction {
+                reaction,
+                count: u32::try_from(result.count).ok()?,
+                chosen_by_me: result.chosen_order.is_some(),
+            };
+            reaction.reaction.validate().ok()?;
+            seen.insert(reaction.reaction.clone()).then_some(reaction)
+        })
+        .collect()
 }
 
 pub(crate) async fn load_messages(
@@ -814,7 +853,50 @@ mod tests {
         media::{Geo, Media, Venue as TelegramVenue},
         tl,
     };
-    use tg_mobile_core::{MessageLocation, ServiceAction};
+    use tg_mobile_core::{MessageLocation, MessageReaction, MessageReactionType, ServiceAction};
+
+    #[test]
+    fn maps_reaction_counts_chosen_state_and_custom_emoji_ids() {
+        let raw = tl::enums::MessageReactions::Reactions(tl::types::MessageReactions {
+            min: false,
+            can_see_list: true,
+            reactions_as_tags: false,
+            results: vec![
+                tl::enums::ReactionCount::Count(tl::types::ReactionCount {
+                    chosen_order: Some(0),
+                    reaction: tl::enums::Reaction::Emoji(tl::types::ReactionEmoji {
+                        emoticon: "👍".into(),
+                    }),
+                    count: 4,
+                }),
+                tl::enums::ReactionCount::Count(tl::types::ReactionCount {
+                    chosen_order: None,
+                    reaction: tl::enums::Reaction::CustomEmoji(tl::types::ReactionCustomEmoji {
+                        document_id: 9876,
+                    }),
+                    count: 2,
+                }),
+            ],
+            recent_reactions: None,
+            top_reactors: None,
+        });
+
+        assert_eq!(
+            super::map_reactions(&raw),
+            vec![
+                MessageReaction {
+                    reaction: MessageReactionType::Emoji("👍".into()),
+                    count: 4,
+                    chosen_by_me: true,
+                },
+                MessageReaction {
+                    reaction: MessageReactionType::CustomEmoji(9876),
+                    count: 2,
+                    chosen_by_me: false,
+                },
+            ]
+        );
+    }
 
     fn telegram_geo() -> tl::types::GeoPoint {
         tl::types::GeoPoint {

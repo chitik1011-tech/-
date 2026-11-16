@@ -48,6 +48,9 @@ fn reducer_deduplicates_message_updates() {
         service: None,
         media_caption: None,
         reply_to: None,
+
+        reactions: Vec::new(),
+        reaction_revision: None,
     };
 
     state.reduce(&CoreEvent::MessageAdded(original.clone()));

@@ -97,6 +97,9 @@ fn incoming_message_for_unknown_chat_does_not_invent_chat_metadata() {
         service: None,
         media_caption: None,
         reply_to: None,
+
+        reactions: Vec::new(),
+        reaction_revision: None,
     }));
 
     assert!(state.chat(404).is_none());

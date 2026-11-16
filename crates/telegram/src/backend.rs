@@ -7,6 +7,7 @@ use std::{
 use grammers_client::{
     Client,
     media::Media,
+    message::InputReactions,
     sender::{SenderPool, SenderPoolHandle},
     session::{storages::SqliteSession, updates::UpdatesLike},
     tl,
@@ -742,6 +743,55 @@ impl GrammersBackend {
                 vec![CoreEvent::ChatRead {
                     chat_id,
                     max_message_id,
+                }]
+            }
+            CoreCommand::AddReaction {
+                chat_id,
+                message_id,
+                reaction,
+            } => {
+                self.require_ready().await?;
+                let peer = find_peer(&self.peers, chat_id)
+                    .await
+                    .ok_or(TelegramBackendError::UnknownChat(chat_id))?;
+                let message_id = i32::try_from(message_id).map_err(|_| {
+                    CoreError::InvalidInput("message id exceeds Telegram range".into())
+                })?;
+                let input = match reaction {
+                    tg_mobile_core::MessageReactionType::Emoji(value) => {
+                        InputReactions::emoticon(value)
+                    }
+                    tg_mobile_core::MessageReactionType::CustomEmoji(document_id) => {
+                        InputReactions::custom_emoji(document_id)
+                    }
+                };
+                self.client
+                    .send_reactions(peer, message_id, input)
+                    .await
+                    .map_err(|error| crate::error::api_error("set message reaction", error))?;
+                vec![CoreEvent::ReactionOperationSucceeded {
+                    chat_id,
+                    message_id: i64::from(message_id),
+                }]
+            }
+            CoreCommand::RemoveReaction {
+                chat_id,
+                message_id,
+            } => {
+                self.require_ready().await?;
+                let peer = find_peer(&self.peers, chat_id)
+                    .await
+                    .ok_or(TelegramBackendError::UnknownChat(chat_id))?;
+                let message_id = i32::try_from(message_id).map_err(|_| {
+                    CoreError::InvalidInput("message id exceeds Telegram range".into())
+                })?;
+                self.client
+                    .send_reactions(peer, message_id, InputReactions::remove())
+                    .await
+                    .map_err(|error| crate::error::api_error("remove message reaction", error))?;
+                vec![CoreEvent::ReactionOperationSucceeded {
+                    chat_id,
+                    message_id: i64::from(message_id),
                 }]
             }
             CoreCommand::SearchMessages(request) => {

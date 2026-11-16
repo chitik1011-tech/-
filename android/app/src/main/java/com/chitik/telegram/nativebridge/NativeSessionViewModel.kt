@@ -7,6 +7,8 @@ import com.chitik.telegram.AuthorizationUiStep
 import com.chitik.telegram.ChatListEntry
 import com.chitik.telegram.ChatListPreview
 import com.chitik.telegram.ConversationMessageUi
+import com.chitik.telegram.ConversationReactionUi
+import com.chitik.telegram.ReactionRevisionUi
 import com.chitik.telegram.ConversationLocationUi
 import com.chitik.telegram.ConversationGeoPointUi
 import com.chitik.telegram.ContactListEntry
@@ -41,6 +43,9 @@ data class NativeUiState(
     val contactTotal: Int = 0,
     val contactsLoading: Boolean = false,
     val messages: Map<Long, List<ConversationMessageUi>> = emptyMap(),
+    val pendingReactionKeys: Set<String> = emptySet(),
+    val reactionConnectionToken: Pair<Long, Long>? = null,
+    val reactionErrors: Map<String, String> = emptyMap(),
     val votingPollIds: Set<Long> = emptySet(),
     val pollVoteErrors: Map<Long, String> = emptyMap(),
     val forwardError: String? = null,
@@ -52,6 +57,90 @@ data class NativeUiState(
 ) {
     val coreReady: Boolean
         get() = libraryLoaded && nativeHandle != 0L && error == null
+}
+
+internal fun NativeUiState.applyReactionUpdate(
+    chatId: Long,
+    messageId: Long,
+    reactions: List<ConversationReactionUi>,
+    revision: ReactionRevisionUi,
+): NativeUiState {
+    val chatMessages = messages[chatId] ?: return this
+    val index = chatMessages.indexOfFirst { it.id == messageId.toString() }
+    if (index < 0) return this
+    val current = chatMessages[index]
+    if (current.reactionRevision?.let { revision <= it } == true) return this
+
+    val updatedMessages = chatMessages.toMutableList()
+    updatedMessages[index] = current.copy(reactions = reactions, reactionRevision = revision)
+    val key = "$chatId:$messageId"
+    return copy(
+        messages = messages + (chatId to updatedMessages),
+        pendingReactionKeys = pendingReactionKeys - key,
+        reactionErrors = reactionErrors - key,
+    )
+}
+
+internal fun NativeUiState.applyConnectionLifecycle(payload: String): NativeUiState {
+    val body = runCatching { JSONObject(payload).optJSONObject("payload") }.getOrNull()
+        ?: return this
+    val token = body.optJSONObject("token")?.let { tokenJson ->
+        val generation = tokenJson.optLong("generation", -1L)
+        val epoch = tokenJson.optLong("epoch", -1L)
+        if (generation < 0L || epoch < 0L) null else generation to epoch
+    }
+    val event = body.optJSONObject("event")
+    val eventType = event?.optString("type")?.takeIf(String::isNotBlank)
+        ?: event?.keys()?.asSequence()?.firstOrNull()
+    val disconnected = eventType in setOf(
+        "transport_lost",
+        "connect_failed",
+        "retry",
+        "logout",
+        "shutdown",
+    )
+    val generationChanged = token != null && reactionConnectionToken != null &&
+        token != reactionConnectionToken
+    val updated = copy(reactionConnectionToken = token ?: reactionConnectionToken)
+    return if (disconnected || generationChanged) {
+        updated.clearPendingReactionsAfterConnectionChange()
+    } else {
+        updated
+    }
+}
+
+internal fun NativeUiState.clearPendingReactionsAfterConnectionChange(): NativeUiState {
+    if (pendingReactionKeys.isEmpty()) return this
+    val message = "Результат реакции не подтверждён после смены соединения"
+    return copy(
+        pendingReactionKeys = emptySet(),
+        reactionErrors = reactionErrors + pendingReactionKeys.associateWith { message },
+    )
+}
+
+internal fun NativeUiState.removeDeletedMessages(
+    chatId: Long?,
+    messageIds: Set<Long>,
+): NativeUiState {
+    if (messageIds.isEmpty()) return this
+    fun isDeleted(chatKey: String): Boolean {
+        val parts = chatKey.split(':', limit = 2)
+        if (parts.size != 2) return false
+        val keyChat = parts[0].toLongOrNull() ?: return false
+        val keyMessage = parts[1].toLongOrNull() ?: return false
+        return keyMessage in messageIds && (chatId == null || chatId == keyChat)
+    }
+
+    val updatedMessages = messages.mapValues { (id, chatMessages) ->
+        if (chatId != null && id != chatId) chatMessages
+        else chatMessages.filterNot { it.id.toLongOrNull()?.let(messageIds::contains) == true }
+    }.filterValues { it.isNotEmpty() }
+    val deletedReactionKeys = (pendingReactionKeys + reactionErrors.keys).filter(::isDeleted).toSet()
+    return copy(
+        messages = updatedMessages,
+        pendingReactionKeys = pendingReactionKeys - deletedReactionKeys,
+        reactionErrors = reactionErrors - deletedReactionKeys,
+    )
 }
 
 private data class ParsedNativeState(
@@ -452,6 +541,48 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         if (!accepted) _state.update { it.copy(busy = false, error = "Не удалось отправить запрос пересылки") }
     }
 
+    fun setMessageReaction(chatId: String, messageId: String, reaction: ConversationReactionUi?) {
+        val chat = chatId.toLongOrNull() ?: return
+        val message = messageId.toLongOrNull() ?: return
+        if (chat == 0L || message <= 0L) return
+        val reactionValue = if (reaction?.type == "custom_emoji") reaction.value.toLongOrNull() else null
+        if (reaction?.type == "custom_emoji" && (reactionValue == null || reactionValue <= 0L)) return
+        val key = "$chat:$message"
+        if (key in _state.value.pendingReactionKeys) return
+        _state.update {
+            it.copy(
+                pendingReactionKeys = it.pendingReactionKeys + key,
+                reactionErrors = it.reactionErrors - key,
+            )
+        }
+
+        val command = if (reaction == null) {
+            JSONObject()
+                .put("type", "remove_reaction")
+                .put("payload", JSONObject().put("chat_id", chat).put("message_id", message))
+        } else {
+            val reactionType = if (reaction.type == "custom_emoji") "custom_emoji" else "emoji"
+            val value: Any = reactionValue ?: reaction.value
+            JSONObject()
+                .put("type", "add_reaction")
+                .put(
+                    "payload",
+                    JSONObject()
+                        .put("chat_id", chat)
+                        .put("message_id", message)
+                        .put("reaction", JSONObject().put("type", reactionType).put("value", value)),
+                )
+        }
+        if (!sendCommand(command.toString())) {
+            _state.update {
+                it.copy(
+                    pendingReactionKeys = it.pendingReactionKeys - key,
+                    reactionErrors = it.reactionErrors + (key to "Не удалось отправить реакцию"),
+                )
+            }
+        }
+    }
+
     fun votePoll(poll: ConversationPollUi, optionIds: List<List<Int>>) {
         if (poll.closed) {
             _state.update {
@@ -606,6 +737,27 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
 
     private fun handleNativeEvent(type: String, payload: String) {
         when (type) {
+            "connection_lifecycle" -> {
+                _state.update { current ->
+                    current.applyConnectionLifecycle(payload).copy(
+                        lastEventType = type,
+                        lastEventPayload = payload,
+                    )
+                }
+            }
+            "messages_deleted" -> {
+                val deleted = parseDeletedMessages(payload)
+                _state.update { current ->
+                    if (deleted == null) {
+                        current.copy(lastEventType = type, lastEventPayload = payload)
+                    } else {
+                        current.removeDeletedMessages(deleted.first, deleted.second).copy(
+                            lastEventType = type,
+                            lastEventPayload = payload,
+                        )
+                    }
+                }
+            }
             "state" -> applyStatePayload(payload)
             "authorization_changed" -> applyAuthorizationEvent(payload)
             "chats_loaded" -> {
@@ -728,6 +880,36 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                     )
                 }
             }
+            "message_reactions_updated" -> {
+                val update = parseReactionUpdate(payload)
+                _state.update { current ->
+                    if (update == null) {
+                        current.copy(lastEventType = type, lastEventPayload = payload)
+                    } else {
+                        val (chatId, messageId, reactions, revision) = update
+                        current.applyReactionUpdate(chatId, messageId, reactions, revision).copy(
+                            lastEventType = type,
+                            lastEventPayload = payload,
+                        )
+                    }
+                }
+            }
+            "reaction_operation_succeeded" -> completeReactionOperation(type, payload)
+            "reaction_operation_failed" -> {
+                val failure = parseReactionFailure(payload)
+                _state.update {
+                    if (failure == null) {
+                        it.copy(lastEventType = type, lastEventPayload = payload)
+                    } else {
+                        it.copy(
+                            pendingReactionKeys = it.pendingReactionKeys - failure.first,
+                            reactionErrors = it.reactionErrors + failure,
+                            lastEventType = type,
+                            lastEventPayload = payload,
+                        )
+                    }
+                }
+            }
             "message_added",
             "chat_read",
             -> {
@@ -773,8 +955,8 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
             parseAuthorization(root.optString("payload"))
         }.getOrDefault(AuthorizationUiStep.Closed)
 
-        _state.update {
-            it.copy(
+        _state.update { current ->
+            current.clearPendingReactionsAfterConnectionChange().copy(
                 authorization = authorization,
                 busy = false,
                 contactsLoading = false,
@@ -966,6 +1148,8 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                                 serviceAction = parseServiceAction(message),
                                 location = parseLocation(message.optJSONObject("location")),
                                 poll = polls[chatId to message.optLong("id")],
+                                reactions = parseReactions(message.optJSONArray("reactions")),
+                                reactionRevision = parseReactionRevision(message.optJSONObject("reaction_revision")),
                             ),
                         )
                     }
@@ -1058,6 +1242,101 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         val error = body.optString("error")
         if (pollId != 0L && error.isNotBlank()) pollId to error else null
     }.getOrNull()
+
+    private fun completeReactionOperation(type: String, payload: String) {
+        val key = parseReactionTargetKey(payload)
+        _state.update {
+            it.copy(
+                pendingReactionKeys = if (key == null) it.pendingReactionKeys else it.pendingReactionKeys - key,
+                reactionErrors = if (key == null) it.reactionErrors else it.reactionErrors - key,
+                lastEventType = type,
+                lastEventPayload = payload,
+            )
+        }
+    }
+
+    private fun parseDeletedMessages(payload: String): Pair<Long?, Set<Long>>? = runCatching {
+        val body = JSONObject(payload).optJSONObject("payload") ?: return@runCatching null
+        val chatId = if (body.has("chat_id") && !body.isNull("chat_id")) {
+            body.optLong("chat_id").takeIf { it != 0L } ?: return@runCatching null
+        } else {
+            null
+        }
+        val ids = body.optJSONArray("message_ids") ?: return@runCatching null
+        val messageIds = buildSet {
+            for (index in 0 until ids.length()) {
+                val id = ids.optLong(index)
+                if (id > 0L) add(id)
+            }
+        }
+        if (messageIds.isEmpty()) null else chatId to messageIds
+    }.getOrNull()
+
+    private fun parseReactionFailure(payload: String): Pair<String, String>? = runCatching {
+        val body = JSONObject(payload).optJSONObject("payload") ?: return@runCatching null
+        val key = reactionTargetKey(body) ?: return@runCatching null
+        val message = body.optString("error").ifBlank { "Не удалось отправить реакцию" }
+        key to message
+    }.getOrNull()
+
+    private fun parseReactionTargetKey(payload: String): String? = runCatching {
+        val body = JSONObject(payload).optJSONObject("payload") ?: return@runCatching null
+        reactionTargetKey(body)
+    }.getOrNull()
+
+    private fun reactionTargetKey(body: JSONObject): String? {
+        val chatId = body.optLong("chat_id")
+        val messageId = body.optLong("message_id")
+        return if (chatId != 0L && messageId > 0L) "$chatId:$messageId" else null
+    }
+
+    private fun parseReactionUpdate(payload: String): ReactionUpdate? = runCatching {
+        val body = JSONObject(payload).optJSONObject("payload") ?: return@runCatching null
+        val chatId = body.optLong("chat_id")
+        val messageId = body.optLong("message_id")
+        val reactions = body.optJSONArray("reactions") ?: return@runCatching null
+        val revision = parseReactionRevision(body.optJSONObject("revision")) ?: return@runCatching null
+        if (chatId == 0L || messageId <= 0L) return@runCatching null
+        ReactionUpdate(chatId, messageId, parseReactions(reactions), revision)
+    }.getOrNull()
+
+    private fun parseReactionRevision(value: JSONObject?): ReactionRevisionUi? {
+        val token = value?.optJSONObject("token") ?: return null
+        val generation = token.optLong("generation", -1L)
+        val epoch = token.optLong("epoch", -1L)
+        val sequence = value.optLong("sequence", -1L)
+        if (generation < 0L || epoch < 0L || sequence < 0L) return null
+        return ReactionRevisionUi(generation, epoch, sequence)
+    }
+
+    private data class ReactionUpdate(
+        val chatId: Long,
+        val messageId: Long,
+        val reactions: List<ConversationReactionUi>,
+        val revision: ReactionRevisionUi,
+    )
+
+    private fun parseReactions(array: JSONArray?): List<ConversationReactionUi> {
+        if (array == null) return emptyList()
+        return buildList {
+            for (index in 0 until array.length()) {
+                val item = array.optJSONObject(index) ?: continue
+                val reaction = item.optJSONObject("reaction") ?: continue
+                val type = reaction.optString("type")
+                if (type != "emoji" && type != "custom_emoji") continue
+                val value = reaction.opt("value")?.toString().orEmpty()
+                if (value.isBlank()) continue
+                add(
+                    ConversationReactionUi(
+                        type = type,
+                        value = value,
+                        count = item.optInt("count").coerceAtLeast(0),
+                        chosenByMe = item.optBoolean("chosen_by_me"),
+                    ),
+                )
+            }
+        }
+    }
 
     private fun parseReadTarget(payload: String): Pair<Long, Long>? = runCatching {
         val root = JSONObject(payload)

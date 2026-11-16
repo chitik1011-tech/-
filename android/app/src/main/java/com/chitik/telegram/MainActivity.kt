@@ -218,6 +218,8 @@ private fun TelegramRustApp(
                     loading = state.busy,
                     sending = false,
                     error = state.error,
+                    pendingReactionKeys = state.pendingReactionKeys,
+                    reactionErrors = state.reactionErrors,
                     forwardingError = state.forwardError,
                     forwardSuccessCount = state.forwardSuccessCount,
                 ),
@@ -233,6 +235,7 @@ private fun TelegramRustApp(
                     }
                 },
                 onPollVote = viewModel::votePoll,
+                onReaction = viewModel::setMessageReaction,
                 onSendLocation = { chatId ->
                     val numericChatId = chatId.toLongOrNull() ?: return@ConversationScreen
                     val granted =

@@ -97,6 +97,58 @@ pub struct MessageSummary {
     /// Target metadata when this message replies to another message.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_to: Option<ReplyMetadata>,
+    /// Telegram reaction counts for this message. Older persisted messages have none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reactions: Vec<MessageReaction>,
+    /// Last accepted reaction snapshot ordering token. Telegram updates are delivered
+    /// in protocol order; this also rejects callbacks from older connection epochs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reaction_revision: Option<ReactionRevision>,
+}
+
+/// The protocol-supported reaction identity. Custom emoji remain identified by
+/// their Telegram document ID and are never silently converted to ordinary emoji.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(tag = "type", content = "value", rename_all = "snake_case")]
+pub enum MessageReactionType {
+    Emoji(String),
+    CustomEmoji(i64),
+}
+
+impl MessageReactionType {
+    pub fn validate(&self) -> crate::error::Result<()> {
+        use crate::error::CoreError;
+
+        match self {
+            Self::Emoji(value)
+                if !value.trim().is_empty()
+                    && value.len() <= crate::command::MAX_REACTION_BYTES =>
+            {
+                Ok(())
+            }
+            Self::Emoji(_) => Err(CoreError::InvalidInput(
+                "reaction emoji must be non-empty and within the byte limit".into(),
+            )),
+            Self::CustomEmoji(id) if *id > 0 => Ok(()),
+            Self::CustomEmoji(_) => Err(CoreError::InvalidInput(
+                "custom emoji document id must be positive".into(),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MessageReaction {
+    pub reaction: MessageReactionType,
+    pub count: u32,
+    pub chosen_by_me: bool,
+}
+
+/// Orders snapshots within a Telegram session and connection epoch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct ReactionRevision {
+    pub token: crate::connection_machine::ConnectionToken,
+    pub sequence: u64,
 }
 
 /// A validated WGS84 point. Construction and deserialization reject non-finite
