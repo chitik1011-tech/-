@@ -10,8 +10,8 @@ use grammers_client::{
 };
 use tg_mobile_core::{
     AttachmentDownloadState, AttachmentKind, AttachmentThumbnail, CoreError, ForwardedFrom,
-    GeoPoint, MediaAttachment, MessageLocation, MessageReaction, MessageReactionType, MessageSummary,
-    PollSummary, ReplyMetadata, ServiceAction, ServiceMessage, Venue,
+    GeoPoint, MediaAttachment, MessageLocation, MessageReaction, MessageReactionType,
+    MessageSummary, PollSummary, ReplyMetadata, ServiceAction, ServiceMessage, Venue,
 };
 use tokio::sync::Mutex;
 
