@@ -149,7 +149,7 @@ pub(crate) async fn hydrate_profile(
                     {
                         if let tl::enums::UserFull::Full(full_user) = full.full_user {
                             if let Some(about) = full_user.about.as_deref() {
-                                set_profile_about(&mut profile, about);
+                                set_profile_about(profile, about);
                             }
                         }
                     }
@@ -161,7 +161,7 @@ pub(crate) async fn hydrate_profile(
                 let request = tl::functions::messages::GetFullChat { chat_id: raw.id };
                 if let Ok(tl::enums::messages::ChatFull::Full(full)) = client.invoke(&request).await
                 {
-                    set_profile_about(&mut profile, &full.full_chat.about());
+                    set_profile_about(profile, &full.full_chat.about());
                 }
             }
         }
@@ -175,9 +175,9 @@ pub(crate) async fn hydrate_profile(
                 };
                 if let Ok(tl::enums::messages::ChatFull::Full(full)) = client.invoke(&request).await
                 {
-                    set_profile_about(&mut profile, &full.full_chat.about());
+                    set_profile_about(profile, &full.full_chat.about());
                     if let tl::enums::ChatFull::ChannelFull(channel_full) = &full.full_chat {
-                        set_member_count(&mut profile, channel_full.participants_count);
+                        set_member_count(profile, channel_full.participants_count);
                     }
                 }
             }
