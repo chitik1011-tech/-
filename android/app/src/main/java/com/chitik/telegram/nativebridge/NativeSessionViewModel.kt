@@ -12,6 +12,7 @@ import com.chitik.telegram.ConversationPollUi
 import com.chitik.telegram.MediaAttachmentUi
 import com.chitik.telegram.mediaDownloadStateFromWire
 import com.chitik.telegram.mediaKindFromWire
+import com.chitik.telegram.parseServiceAction
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter

@@ -14,9 +14,9 @@ pub mod peer;
 pub mod poll;
 pub mod runtime;
 pub mod search;
-pub mod service_message;
 pub mod selection;
 pub mod send;
+pub mod service_message;
 pub mod state;
 pub mod storage;
 pub mod transfer;
@@ -45,7 +45,6 @@ pub use model::{
     MediaAttachment, MessageHistoryState, MessageSummary, ReadDirection, ReadReceipt,
     ReplyMetadata,
 };
-pub use service_message::{ServiceAction, ServiceIcon, ServiceMessage, ServicePresentation, ServiceTone};
 pub use peer::{
     parse_peer_reference, MessageLink, MessageLinkMetadata, MessageLinkResolution, MessagePeer,
     PeerParseError, PeerReference, PeerResolution, MAX_PEER_REFERENCE_LENGTH,
@@ -58,6 +57,9 @@ pub use search::{
 };
 pub use selection::{MessageSelection, SelectionAction, SelectionCapabilities, SelectionError};
 pub use send::{ClientMessageId, OutgoingSend, OutgoingSendState};
+pub use service_message::{
+    ServiceAction, ServiceIcon, ServiceMessage, ServicePresentation, ServiceTone,
+};
 pub use state::{CoreState, FolderAction, MAX_CACHED_MESSAGES_PER_CHAT, MAX_CACHED_POLLS};
 pub use storage::{JsonFileStateStore, MemoryStateStore, NoopStateStore, StateStore};
 pub use transfer::{

@@ -9,7 +9,10 @@ use serde::{Deserialize, Serialize};
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServiceAction {
     /// A user joined without being explicitly added to the chat.
-    UserJoined { user_id: Option<i64>, inviter_id: Option<i64> },
+    UserJoined {
+        user_id: Option<i64>,
+        inviter_id: Option<i64>,
+    },
     /// The actor left the group.
     UserLeft { user_id: i64 },
     /// A different participant was removed by the actor.
@@ -85,7 +88,10 @@ impl ServicePresentation {
             ServiceAction::HistoryCleared => ServiceIcon::Clear,
             ServiceAction::Unknown => ServiceIcon::Info,
         };
-        Self { icon, tone: ServiceTone::Neutral }
+        Self {
+            icon,
+            tone: ServiceTone::Neutral,
+        }
     }
 }
 
@@ -98,14 +104,20 @@ pub struct ServiceMessage {
 }
 
 impl Default for ServiceAction {
-    fn default() -> Self { Self::Unknown }
+    fn default() -> Self {
+        Self::Unknown
+    }
 }
 
 impl ServiceMessage {
     /// Create metadata and derive canonical presentation hints for its action.
     pub fn new(action: ServiceAction, actor_id: Option<i64>) -> Self {
         let presentation = ServicePresentation::for_action(&action);
-        Self { action, actor_id, presentation }
+        Self {
+            action,
+            actor_id,
+            presentation,
+        }
     }
 
     /// Convert a legacy service marker to an unknown typed action without inventing details.
@@ -121,18 +133,35 @@ mod tests {
     #[test]
     fn all_actions_round_trip_as_structured_metadata_without_text() {
         let actions = [
-            ServiceAction::UserJoined { user_id: 1, inviter_id: Some(2) },
+            ServiceAction::UserJoined {
+                user_id: Some(1),
+                inviter_id: Some(2),
+            },
             ServiceAction::UserLeft { user_id: 1 },
             ServiceAction::UserRemoved { user_id: 1 },
-            ServiceAction::UserAdded { user_ids: vec![1, 2] },
-            ServiceAction::TitleChanged { title: "Group".into() },
+            ServiceAction::UserAdded {
+                user_ids: vec![1, 2],
+            },
+            ServiceAction::TitleChanged {
+                title: "Group".into(),
+            },
             ServiceAction::PhotoChanged { photo_id: Some(42) },
             ServiceAction::PhotoRemoved,
-            ServiceAction::MessagePinned,
-            ServiceAction::GroupCreated { title: "Group".into(), user_ids: vec![1] },
-            ServiceAction::ChannelCreated { title: "Channel".into() },
-            ServiceAction::GroupMigratedToSupergroup { supergroup_id: -1001 },
-            ServiceAction::ChannelMigratedFromGroup { group_id: 1, title: "Group".into() },
+            ServiceAction::MessagePinned { message_id: None },
+            ServiceAction::GroupCreated {
+                title: "Group".into(),
+                user_ids: vec![1],
+            },
+            ServiceAction::ChannelCreated {
+                title: "Channel".into(),
+            },
+            ServiceAction::GroupMigratedToSupergroup {
+                supergroup_id: -1001,
+            },
+            ServiceAction::ChannelMigratedFromGroup {
+                group_id: 1,
+                title: "Group".into(),
+            },
             ServiceAction::HistoryCleared,
             ServiceAction::Unknown,
         ];
@@ -140,15 +169,27 @@ mod tests {
             let message = ServiceMessage::new(action, Some(7));
             let json = serde_json::to_string(&message).unwrap();
             assert!(!json.contains("text"));
-            assert_eq!(serde_json::from_str::<ServiceMessage>(&json).unwrap(), message);
+            assert_eq!(
+                serde_json::from_str::<ServiceMessage>(&json).unwrap(),
+                message
+            );
         }
     }
 
     #[test]
     fn missing_and_malformed_action_payloads_are_safe() {
-        assert_eq!(serde_json::from_str::<ServiceMessage>("{}").unwrap().action, ServiceAction::Unknown);
-        assert!(serde_json::from_str::<ServiceMessage>(r#"{"action":{"type":"user_added","user_ids":"bad"}}"#).is_err());
-        assert_eq!(ServiceMessage::from_legacy_marker(true).unwrap().action, ServiceAction::Unknown);
+        assert_eq!(
+            serde_json::from_str::<ServiceMessage>("{}").unwrap().action,
+            ServiceAction::Unknown
+        );
+        assert!(serde_json::from_str::<ServiceMessage>(
+            r#"{"action":{"type":"user_added","user_ids":"bad"}}"#
+        )
+        .is_err());
+        assert_eq!(
+            ServiceMessage::from_legacy_marker(true).unwrap().action,
+            ServiceAction::Unknown
+        );
         assert!(ServiceMessage::from_legacy_marker(false).is_none());
     }
 }

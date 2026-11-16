@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
+use crate::service_message::ServiceMessage;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
-use crate::service_message::ServiceMessage;
 
 /// Telegram activities surfaced transiently while a user is composing or uploading.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

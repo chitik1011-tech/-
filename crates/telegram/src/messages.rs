@@ -60,15 +60,13 @@ pub(crate) fn message_to_summary(message: &Message) -> MessageSummary {
     summary.edited = edit_timestamp_unix.is_some();
     summary.edit_timestamp_unix = edit_timestamp_unix;
     summary.service_message = message.action().is_some();
-    summary.service = message
-        .action()
-        .map(|action| {
-            service_action_to_message(
-                action,
-                summary.sender_id,
-                message.reply_to_message_id().map(i64::from),
-            )
-        });
+    summary.service = message.action().map(|action| {
+        service_action_to_message(
+            action,
+            summary.sender_id,
+            message.reply_to_message_id().map(i64::from),
+        )
+    });
     summary.media_caption =
         (message.media().is_some() && !text.is_empty()).then(|| text.to_owned());
     summary.reply_to = message
@@ -113,9 +111,9 @@ fn service_action_to_message(
         Action::ChatAddUser(value) => ServiceAction::UserAdded {
             user_ids: value.users.clone(),
         },
-        Action::ChatDeleteUser(value) if value.user_id == actor_id => {
-            ServiceAction::UserLeft { user_id: value.user_id }
-        }
+        Action::ChatDeleteUser(value) if value.user_id == actor_id => ServiceAction::UserLeft {
+            user_id: value.user_id,
+        },
         Action::ChatDeleteUser(value) => ServiceAction::UserRemoved {
             user_id: value.user_id,
         },
@@ -791,13 +789,19 @@ mod tests {
         use grammers_client::tl;
 
         let joined = service_action_to_message(
-            &tl::enums::MessageAction::ChatJoinedByLink(
-                tl::types::MessageActionChatJoinedByLink { inviter_id: 31 },
-            ),
+            &tl::enums::MessageAction::ChatJoinedByLink(tl::types::MessageActionChatJoinedByLink {
+                inviter_id: 31,
+            }),
             41,
             None,
         );
-        assert_eq!(joined.action, ServiceAction::UserJoined { user_id: Some(41), inviter_id: Some(31) });
+        assert_eq!(
+            joined.action,
+            ServiceAction::UserJoined {
+                user_id: Some(41),
+                inviter_id: Some(31)
+            }
+        );
         assert_eq!(joined.actor_id, Some(41));
 
         let added = service_action_to_message(
@@ -807,7 +811,12 @@ mod tests {
             31,
             None,
         );
-        assert_eq!(added.action, ServiceAction::UserAdded { user_ids: vec![41, 42] });
+        assert_eq!(
+            added.action,
+            ServiceAction::UserAdded {
+                user_ids: vec![41, 42]
+            }
+        );
         let joined_by_add = service_action_to_message(
             &tl::enums::MessageAction::ChatAddUser(tl::types::MessageActionChatAddUser {
                 users: vec![41],
@@ -815,7 +824,13 @@ mod tests {
             41,
             None,
         );
-        assert_eq!(joined_by_add.action, ServiceAction::UserJoined { user_id: Some(41), inviter_id: None });
+        assert_eq!(
+            joined_by_add.action,
+            ServiceAction::UserJoined {
+                user_id: Some(41),
+                inviter_id: None
+            }
+        );
 
         let left = service_action_to_message(
             &tl::enums::MessageAction::ChatDeleteUser(tl::types::MessageActionChatDeleteUser {
@@ -835,7 +850,12 @@ mod tests {
         assert_eq!(removed.action, ServiceAction::UserRemoved { user_id: 31 });
 
         let pinned = service_action_to_message(&tl::enums::MessageAction::PinMessage, 41, Some(73));
-        assert_eq!(pinned.action, ServiceAction::MessagePinned { message_id: Some(73) });
+        assert_eq!(
+            pinned.action,
+            ServiceAction::MessagePinned {
+                message_id: Some(73)
+            }
+        );
         let cleared = service_action_to_message(&tl::enums::MessageAction::HistoryClear, 41, None);
         assert_eq!(cleared.action, ServiceAction::HistoryCleared);
 
@@ -846,7 +866,12 @@ mod tests {
             41,
             None,
         );
-        assert_eq!(migrated.action, ServiceAction::GroupMigratedToSupergroup { supergroup_id: -100 });
+        assert_eq!(
+            migrated.action,
+            ServiceAction::GroupMigratedToSupergroup {
+                supergroup_id: -100
+            }
+        );
         let created = service_action_to_message(
             &tl::enums::MessageAction::ChatCreate(tl::types::MessageActionChatCreate {
                 title: "Team".into(),
@@ -855,7 +880,13 @@ mod tests {
             41,
             None,
         );
-        assert_eq!(created.action, ServiceAction::GroupCreated { title: "Team".into(), user_ids: vec![41, 42] });
+        assert_eq!(
+            created.action,
+            ServiceAction::GroupCreated {
+                title: "Team".into(),
+                user_ids: vec![41, 42]
+            }
+        );
 
         let title = service_action_to_message(
             &tl::enums::MessageAction::ChatEditTitle(tl::types::MessageActionChatEditTitle {
@@ -864,7 +895,12 @@ mod tests {
             41,
             None,
         );
-        assert_eq!(title.action, ServiceAction::TitleChanged { title: "Renamed".into() });
+        assert_eq!(
+            title.action,
+            ServiceAction::TitleChanged {
+                title: "Renamed".into()
+            }
+        );
 
         let photo = service_action_to_message(
             &tl::enums::MessageAction::ChatEditPhoto(tl::types::MessageActionChatEditPhoto {
@@ -873,8 +909,12 @@ mod tests {
             41,
             None,
         );
-        assert_eq!(photo.action, ServiceAction::PhotoChanged { photo_id: Some(99) });
-        let removed_photo = service_action_to_message(&tl::enums::MessageAction::ChatDeletePhoto, 41, None);
+        assert_eq!(
+            photo.action,
+            ServiceAction::PhotoChanged { photo_id: Some(99) }
+        );
+        let removed_photo =
+            service_action_to_message(&tl::enums::MessageAction::ChatDeletePhoto, 41, None);
         assert_eq!(removed_photo.action, ServiceAction::PhotoRemoved);
 
         let channel = service_action_to_message(
@@ -884,7 +924,12 @@ mod tests {
             41,
             None,
         );
-        assert_eq!(channel.action, ServiceAction::ChannelCreated { title: "Updates".into() });
+        assert_eq!(
+            channel.action,
+            ServiceAction::ChannelCreated {
+                title: "Updates".into()
+            }
+        );
         let channel_from_group = service_action_to_message(
             &tl::enums::MessageAction::ChannelMigrateFrom(
                 tl::types::MessageActionChannelMigrateFrom {
@@ -895,7 +940,13 @@ mod tests {
             41,
             None,
         );
-        assert_eq!(channel_from_group.action, ServiceAction::ChannelMigratedFromGroup { group_id: 17, title: "Updates".into() });
+        assert_eq!(
+            channel_from_group.action,
+            ServiceAction::ChannelMigratedFromGroup {
+                group_id: 17,
+                title: "Updates".into()
+            }
+        );
     }
 
     #[test]
