@@ -50,6 +50,7 @@ class VoicePlaybackCoordinator(
 
     fun toggle(mediaId: String, file: File) {
         if (mediaId.isBlank() || !file.isFile || !file.canRead()) {
+            reset()
             mutableState.value = VoicePlaybackState(error = "Voice file is not available")
             return
         }
@@ -60,7 +61,12 @@ class VoicePlaybackCoordinator(
         }
         reset()
         val expectedEpoch = epoch
-        val newPlayer = ExoPlayer.Builder(appContext).build()
+        val newPlayer = try {
+            ExoPlayer.Builder(appContext).build()
+        } catch (_: RuntimeException) {
+            mutableState.value = VoicePlaybackState(mediaId = mediaId, error = "Cannot initialize audio player")
+            return
+        }
         player = newPlayer
         mutableState.value = VoicePlaybackState(mediaId = mediaId)
         newPlayer.setAudioAttributes(
@@ -88,11 +94,17 @@ class VoicePlaybackCoordinator(
                 mutableState.value = mutableState.value.copy(playing = false, error = "Audio playback failed")
             }
         })
-        newPlayer.setMediaItem(
-            MediaItem.Builder().setMediaId(mediaId).setUri(Uri.fromFile(file)).build(),
-        )
-        newPlayer.prepare()
-        newPlayer.play()
+        try {
+            newPlayer.setMediaItem(
+                MediaItem.Builder().setMediaId(mediaId).setUri(Uri.fromFile(file)).build(),
+            )
+            newPlayer.prepare()
+            newPlayer.play()
+        } catch (_: RuntimeException) {
+            reset()
+            mutableState.value = VoicePlaybackState(mediaId = mediaId, error = "Audio playback failed")
+            return
+        }
         progressJob = scope.launch {
             while (isActive && epoch == expectedEpoch) {
                 val duration = newPlayer.duration.takeIf { it > 0 && it != C.TIME_UNSET }
