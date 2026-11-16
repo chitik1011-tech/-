@@ -15,3 +15,14 @@ internal fun matchesMutationTarget(
         pendingMessageId > 0L &&
         pendingChatId == resultChatId &&
         pendingMessageId == resultMessageId
+
+/** Telegram update notifications can be remote or unrelated; only a command result is an ack. */
+internal fun mutationEventAcknowledges(
+    eventType: String,
+    pendingChatId: Long,
+    pendingMessageId: Long,
+    resultChatId: Long,
+    resultMessageId: Long,
+): Boolean =
+    eventType == "message_mutation_succeeded" &&
+        matchesMutationTarget(pendingChatId, pendingMessageId, resultChatId, resultMessageId)
