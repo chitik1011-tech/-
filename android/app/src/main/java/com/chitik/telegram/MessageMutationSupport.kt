@@ -26,3 +26,19 @@ internal fun mutationEventAcknowledges(
 ): Boolean =
     eventType == "message_mutation_succeeded" &&
         matchesMutationTarget(pendingChatId, pendingMessageId, resultChatId, resultMessageId)
+
+internal data class MessageMutationRequestState(
+    val pending: Boolean,
+    val error: String?,
+)
+
+internal fun messageMutationStateAfterSessionChange(
+    pending: Boolean,
+    currentError: String?,
+    reason: String,
+): MessageMutationRequestState =
+    if (pending) {
+        MessageMutationRequestState(pending = false, error = reason)
+    } else {
+        MessageMutationRequestState(pending = false, error = currentError)
+    }
