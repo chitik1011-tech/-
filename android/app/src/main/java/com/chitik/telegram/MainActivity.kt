@@ -91,6 +91,7 @@ private fun TelegramRustApp(
     var selectedChatId by rememberSaveable { mutableLongStateOf(0L) }
     var showContacts by rememberSaveable { mutableStateOf(false) }
     var draft by rememberSaveable { mutableStateOf("") }
+    var lastRestoredFailureId by rememberSaveable { mutableLongStateOf(0L) }
     var replyToMessageId by rememberSaveable { mutableStateOf<Long?>(null) }
     var replyToPreview by rememberSaveable { mutableStateOf<String?>(null) }
     var jumpToMessageId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -117,6 +118,14 @@ private fun TelegramRustApp(
             activeLocationRequest?.cancel()
             activeLocationRequest = null
             pendingLocationChatId = 0L
+        }
+    }
+    LaunchedEffect(state.failedTextSendId, state.failedTextSendText, selectedChatId) {
+        val failedId = state.failedTextSendId
+        if (failedId != null && failedId != lastRestoredFailureId &&
+            selectedChatId == state.outbox[failedId]?.chatId) {
+            if (draft.isBlank()) draft = state.failedTextSendText.orEmpty()
+            lastRestoredFailureId = failedId
         }
     }
     val sendCurrentLocation: (Long) -> Unit = { chatId ->
@@ -252,7 +261,7 @@ private fun TelegramRustApp(
                     messages = messages,
                     draft = draft,
                     loading = state.busy,
-                    sending = false,
+                    sending = state.sendingText && state.activeTextSendChatId == selectedChatId,
                     error = state.error,
                     pendingReactionKeys = state.pendingReactionKeys,
                     reactionErrors = state.reactionErrors,
@@ -315,11 +324,12 @@ private fun TelegramRustApp(
                 onSend = { chatId, text ->
                     chatId.toLongOrNull()?.let { numericChatId ->
                         val target = replyToMessageId
-                        if (target != null) viewModel.replyMessage(numericChatId, target, text)
-                        else viewModel.sendText(numericChatId, text)
-                        draft = ""
-                        replyToMessageId = null
-                        replyToPreview = null
+                        if (target != null) {
+                            viewModel.replyMessage(numericChatId, target, text)
+                            // Reply uses the existing one-shot command path; retain text until reliable replies exist.
+                        } else if (viewModel.sendText(numericChatId, text)) {
+                            draft = ""
+                        }
                     }
                 },
                 onPollVote = viewModel::votePoll,
