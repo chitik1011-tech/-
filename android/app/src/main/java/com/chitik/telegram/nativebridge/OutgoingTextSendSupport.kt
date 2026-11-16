@@ -92,3 +92,19 @@ internal fun NativeUiState.applyOutgoingTextSend(send: OutgoingTextSendUi): Nati
         else -> copy(outbox = updated)
     }
 }
+
+internal fun NativeUiState.textSendStatusForChat(chatId: Long): String? {
+    val id = lastTextSendId ?: return null
+    val send = outbox[id] ?: return if (activeTextSendId == id && activeTextSendChatId == chatId) "В очереди" else null
+    if (send.chatId != chatId) return null
+    return when (send.status) {
+        "pending" -> "В очереди"
+        "sending" -> "Отправляется"
+        "awaiting_confirmation" -> "Ожидается подтверждение Telegram"
+        "flood_wait" -> "Ожидание ограничения Telegram"
+        "sent" -> "Отправлено"
+        "failed", "rejected" -> "Ошибка отправки"
+        "cancelled" -> "Отменено"
+        else -> null
+    }
+}
