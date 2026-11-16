@@ -235,7 +235,9 @@ fn voice_waveform(document: &Document) -> Option<Vec<u8>> {
         return None;
     };
     raw.attributes.iter().find_map(|attribute| match attribute {
-        tl::enums::DocumentAttribute::Audio(audio) if audio.voice => audio.waveform.clone()
+        tl::enums::DocumentAttribute::Audio(audio) if audio.voice => audio
+            .waveform
+            .clone()
             .filter(|waveform| !waveform.is_empty() && waveform.len() <= 4096),
         _ => None,
     })
