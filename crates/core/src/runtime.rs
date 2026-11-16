@@ -758,6 +758,18 @@ fn operation_error_events(command: &CoreCommand, error: CoreError) -> Vec<CoreEv
                     .collect(),
             },
         )],
+        CoreCommand::EditMessage { chat_id, message_id, .. } => vec![CoreEvent::MessageMutationFailed {
+            chat_id: *chat_id,
+            message_id: *message_id,
+            action: crate::event::MessageMutationAction::Edit,
+            error: error.to_string(),
+        }],
+        CoreCommand::DeleteMessageForEveryone { chat_id, message_id } => vec![CoreEvent::MessageMutationFailed {
+            chat_id: *chat_id,
+            message_id: *message_id,
+            action: crate::event::MessageMutationAction::DeleteForEveryone,
+            error: error.to_string(),
+        }],
         _ => vec![CoreEvent::Error(error.to_string())],
     }
 }
