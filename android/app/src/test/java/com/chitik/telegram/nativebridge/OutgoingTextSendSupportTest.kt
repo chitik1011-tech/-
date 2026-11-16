@@ -64,7 +64,7 @@ class OutgoingTextSendSupportTest {
         assertFalse(failed.sendingText)
         assertEquals(31L, failed.failedTextSendId)
         assertEquals("hello", failed.failedTextSendText)
-        assertNotNull(failed.error)
+        assertNotNull(failed.textSendError)
     }
 
     @Test
