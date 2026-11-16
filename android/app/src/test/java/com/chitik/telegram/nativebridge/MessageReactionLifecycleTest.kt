@@ -2,6 +2,8 @@ package com.chitik.telegram.nativebridge
 
 import com.chitik.telegram.AuthorizationUiStep
 import com.chitik.telegram.ConversationMessageUi
+import com.chitik.telegram.ConversationReactionUi
+import com.chitik.telegram.ReactionRevisionUi
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -43,6 +45,29 @@ class MessageReactionLifecycleTest {
         assertTrue(updated.messages[5L].isNullOrEmpty())
         assertTrue(updated.pendingReactionKeys.isEmpty())
         assertTrue(updated.reactionErrors.isEmpty())
+    }
+
+    @Test
+    fun staleReactionSnapshotCannotReplaceNewerVisibleSnapshot() {
+        val authoritative = listOf(ConversationReactionUi("emoji", "👍", 4, true))
+        val state = NativeUiState(
+            messages = mapOf(5L to listOf(message(12L, 5L).copy(
+                reactions = authoritative,
+                reactionRevision = ReactionRevisionUi(3, 2, 9),
+            ))),
+            pendingReactionKeys = setOf("5:12"),
+        )
+
+        val updated = state.applyReactionUpdate(
+            chatId = 5L,
+            messageId = 12L,
+            reactions = listOf(ConversationReactionUi("emoji", "❤️", 1, false)),
+            revision = ReactionRevisionUi(3, 2, 8),
+        )
+
+        assertEquals(authoritative, updated.messages[5L]?.single()?.reactions)
+        assertEquals(ReactionRevisionUi(3, 2, 9), updated.messages[5L]?.single()?.reactionRevision)
+        assertTrue("stale updates must not clear an in-flight operation", "5:12" in updated.pendingReactionKeys)
     }
 
     private fun message(id: Long, chatId: Long) = ConversationMessageUi(

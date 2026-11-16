@@ -102,9 +102,15 @@ data class ConversationMessageUi(
     val pollVoting: Boolean = false,
     val pollError: String? = null,
     val reactions: List<ConversationReactionUi> = emptyList(),
+    val reactionRevision: ReactionRevisionUi? = null,
     val forwardedFrom: String? = null,
     val serviceAction: ServiceActionUi? = null,
 )
+
+data class ReactionRevisionUi(val generation: Long, val epoch: Long, val sequence: Long) : Comparable<ReactionRevisionUi> {
+    override fun compareTo(other: ReactionRevisionUi): Int =
+        compareValuesBy(this, other, ReactionRevisionUi::generation, ReactionRevisionUi::epoch, ReactionRevisionUi::sequence)
+}
 
 data class ConversationReactionUi(
     val type: String,
