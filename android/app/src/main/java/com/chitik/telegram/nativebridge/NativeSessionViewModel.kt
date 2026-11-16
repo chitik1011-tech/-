@@ -347,7 +347,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
     }
 
     fun loadMessages(chatId: Long, limit: Int = 100) {
-        _state.update { it.copy(busy = true, error = null) }
+        _state.update { it.copy(busy = true, error = null, deleteError = null) }
         sendCommand(
             JSONObject()
                 .put("type", "load_messages")
