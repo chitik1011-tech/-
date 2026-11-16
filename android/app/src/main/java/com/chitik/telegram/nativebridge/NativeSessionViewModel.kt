@@ -1573,6 +1573,11 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                         .takeIf { it.has("duration_ms") && !it.isNull("duration_ms") }
                         ?.optLong("duration_ms")
                         ?.takeIf { it >= 0L },
+                    voiceWaveform = attachment.optJSONArray("voice_waveform")?.let { waveform ->
+                        if (waveform.length() !in 1..4096) null
+                        else (0 until waveform.length()).map { index -> waveform.optInt(index, -1) }
+                            .takeIf { samples -> samples.all { it in 0..255 } }
+                    },
                     filename = attachment
                         .optString("filename")
                         .takeIf { it.isNotBlank() },
