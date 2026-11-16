@@ -354,6 +354,7 @@ async fn runtime_drops_updates_from_the_previous_session_generation() {
         text: "old session".into(),
         timestamp_unix: 4,
         outgoing: false,
+        location: None,
         attachments: Vec::new(),
         forwarded_from: None,
         edited: false,

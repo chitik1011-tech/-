@@ -91,6 +91,7 @@ fn empty_attachment_list_keeps_old_message_wire_shape() {
         text: String::new(),
         timestamp_unix: 1_700_000_000,
         outgoing: false,
+        location: None,
         attachments: Vec::new(),
         forwarded_from: None,
         edited: false,

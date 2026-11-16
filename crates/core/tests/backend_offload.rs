@@ -116,6 +116,7 @@ fn message(id: i64, chat_id: i64) -> MessageSummary {
         text: format!("message {id}"),
         timestamp_unix: id,
         outgoing: false,
+        location: None,
         attachments: vec![],
         forwarded_from: None,
         edited: false,

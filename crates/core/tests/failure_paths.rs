@@ -100,6 +100,7 @@ fn message(id: i64, chat_id: i64, timestamp_unix: i64, text: &str) -> MessageSum
         text: text.into(),
         timestamp_unix,
         outgoing: false,
+        location: None,
         attachments: Vec::new(),
         forwarded_from: None,
         edited: false,
