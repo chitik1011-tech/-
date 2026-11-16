@@ -25,6 +25,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
@@ -137,6 +138,7 @@ fun ConversationScreen(
 ) {
     val listState = rememberLazyListState()
     var viewerKey by rememberSaveable { mutableStateOf<String?>(null) }
+    var actionTarget by remember(state.chatId) { mutableStateOf<ConversationMessageUi?>(null) }
     var selectedMessageIds by remember(state.chatId) { mutableStateOf<Set<Long>>(emptySet()) }
     // Only a server-confirmed, fully successful forward ends selection mode.
     LaunchedEffect(state.forwardSuccessCount) {
@@ -287,7 +289,7 @@ fun ConversationScreen(
                                         }
                                     }
                                 },
-                                onLongPress = { message.id.toLongOrNull()?.let { selectedMessageIds = selectedMessageIds + it } },
+                                onLongPress = { actionTarget = message },
                             )
                         }
 
@@ -323,6 +325,17 @@ fun ConversationScreen(
             ?.attachments
             ?.firstOrNull { it.index == attachmentIndex }
             ?.let { attachment -> messageId.toLongOrNull()?.let { it to attachment } }
+    }
+
+    actionTarget?.let { message ->
+        MessageActionDialog(
+            message = message,
+            onDismiss = { actionTarget = null },
+            onSelectForForward = {
+                message.id.toLongOrNull()?.let { selectedMessageIds = selectedMessageIds + it }
+                actionTarget = null
+            },
+        )
     }
 
     viewerSelection?.let { (messageId, attachment) ->
@@ -434,6 +447,29 @@ private fun MessageBubble(
             }
         }
     }
+}
+
+
+@Composable
+private fun MessageActionDialog(
+    message: ConversationMessageUi,
+    onDismiss: () -> Unit,
+    onSelectForForward: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Действия с сообщением") },
+        text = {
+            Column {
+                TextButton(onClick = onSelectForForward) { Text("Выбрать для пересылки") }
+                TextButton(onClick = {}, enabled = false) { Text("Изменить — недоступно") }
+                Text(messageMutationUnavailableReason(MessageMutationAction.Edit))
+                TextButton(onClick = {}, enabled = false) { Text("Удалить — недоступно") }
+                Text(messageMutationUnavailableReason(MessageMutationAction.Delete))
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Закрыть") } },
+    )
 }
 
 @Composable
