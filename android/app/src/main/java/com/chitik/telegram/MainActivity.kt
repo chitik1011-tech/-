@@ -91,6 +91,10 @@ private fun TelegramRustApp(
     var selectedChatId by rememberSaveable { mutableLongStateOf(0L) }
     var showContacts by rememberSaveable { mutableStateOf(false) }
     var draft by rememberSaveable { mutableStateOf("") }
+    var replyToMessageId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var replyToPreview by rememberSaveable { mutableStateOf<String?>(null) }
+    var jumpToMessageId by rememberSaveable { mutableStateOf<String?>(null) }
+    var replySelectionGeneration by rememberSaveable { mutableLongStateOf(state.selectionGeneration) }
     var pendingLocationChatId by rememberSaveable { mutableLongStateOf(0L) }
     var activeLocationRequest by remember { mutableStateOf<LocationRequestHandle?>(null) }
     DisposableEffect(lifecycleOwner) {
@@ -144,6 +148,12 @@ private fun TelegramRustApp(
     LaunchedEffect(state.selectionGeneration, state.authorization) {
         showForwardTargets = false
         forwardingMessageIds = emptyList()
+        if (replySelectionGeneration != state.selectionGeneration || state.authorization != AuthorizationUiStep.Ready) {
+            replyToMessageId = null
+            replyToPreview = null
+            jumpToMessageId = null
+            replySelectionGeneration = state.selectionGeneration
+        }
     }
     var confirmedJoinIntent by remember(incomingLink) { mutableStateOf<TelegramJoinInviteIntent?>(null) }
 
@@ -180,6 +190,9 @@ private fun TelegramRustApp(
             onLoadMore = { viewModel.loadContacts(offset = state.contacts.size) },
             onContactSelected = { contact ->
                 selectedChatId = contact.userId
+                replyToMessageId = null
+                replyToPreview = null
+                jumpToMessageId = null
                 viewModel.loadMessages(contact.userId)
             },
         )
@@ -196,6 +209,9 @@ private fun TelegramRustApp(
             },
             onChatSelected = { chatId ->
                 selectedChatId = chatId
+                replyToMessageId = null
+                replyToPreview = null
+                jumpToMessageId = null
                 viewModel.loadMessages(chatId)
             },
         )
@@ -203,16 +219,28 @@ private fun TelegramRustApp(
         else -> {
             val chat = state.chats.firstOrNull { it.id == selectedChatId }
             val contact = state.contacts.firstOrNull { it.userId == selectedChatId }
-            val messages = state.messages[selectedChatId].orEmpty().map { message ->
+            val rawMessages = state.messages[selectedChatId].orEmpty()
+            val messagesById = rawMessages.associateBy { it.id }
+            val messages = rawMessages.map { message ->
                 val pollId = message.poll?.id
-                if (pollId == null) {
-                    message
-                } else {
-                    message.copy(
-                        pollVoting = pollId in state.votingPollIds,
-                        pollError = state.pollVoteErrors[pollId],
-                    )
+                val replyId = message.replyToMessageId
+                val original = replyId?.let(messagesById::get)
+                val summary = replyId?.let {
+                    if (original == null) "Сообщение $it недоступно"
+                    else {
+                        val sender = if (original.isOutgoing) "Вы"
+                        else original.senderId.takeIf { id -> id != 0L }?.let { id -> "Пользователь $id" } ?: "Пользователь"
+                        val body = original.text.takeIf(String::isNotBlank)
+                            ?: original.attachments.firstOrNull()?.kind?.name?.lowercase()
+                            ?: "Медиа"
+                        "$sender: $body"
+                    }
                 }
+                message.copy(
+                    pollVoting = pollId != null && pollId in state.votingPollIds,
+                    pollError = pollId?.let(state.pollVoteErrors::get),
+                    replyToSummary = summary,
+                )
             }
 
             ConversationScreen(
@@ -239,16 +267,46 @@ private fun TelegramRustApp(
                     messageMutationSuccessChatId = state.messageMutationSuccessChatId,
                     messageMutationSuccessMessageId = state.messageMutationSuccessMessageId,
                     capabilities = state.chatCapabilities[selectedChatId] ?: ChatCapabilitiesUi(),
+                    replyingToMessageId = replyToMessageId?.toString(),
+                    replyingToPreview = replyToPreview,
+                    jumpToMessageId = jumpToMessageId,
                 ),
                 onBack = {
                     selectedChatId = 0L
                     draft = ""
+                    replyToMessageId = null
+                    replyToPreview = null
+                    jumpToMessageId = null
                 },
                 onDraftChange = { draft = it },
+                onReplyMessage = { message ->
+                    replyToMessageId = message.id.toLongOrNull()
+                    replyToPreview = message.text.takeIf(String::isNotBlank)
+                        ?: message.attachments.firstOrNull()?.kind?.name?.lowercase()
+                        ?: "Медиа"
+                },
+                onCancelReply = {
+                    replyToMessageId = null
+                    replyToPreview = null
+                },
+                onOpenReplyTarget = { targetId ->
+                    jumpToMessageId = targetId
+                    if (replyTargetIndex(messages, targetId) < 0) {
+                        targetId.toLongOrNull()?.takeIf { it in 1 until Long.MAX_VALUE }?.let {
+                            viewModel.loadMessagesBefore(selectedChatId, it + 1L)
+                        }
+                        Toast.makeText(context, "Загружаю исходное сообщение", Toast.LENGTH_SHORT).show()
+                    }
+                },
+                onJumpComplete = { jumpToMessageId = null },
                 onSend = { chatId, text ->
                     chatId.toLongOrNull()?.let { numericChatId ->
-                        viewModel.sendText(numericChatId, text)
+                        val target = replyToMessageId
+                        if (target != null) viewModel.replyMessage(numericChatId, target, text)
+                        else viewModel.sendText(numericChatId, text)
                         draft = ""
+                        replyToMessageId = null
+                        replyToPreview = null
                     }
                 },
                 onPollVote = viewModel::votePoll,

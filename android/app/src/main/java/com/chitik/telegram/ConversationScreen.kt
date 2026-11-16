@@ -130,6 +130,9 @@ data class ConversationMessageUi(
     val forwardedFrom: String? = null,
     val serviceAction: ServiceActionUi? = null,
     val location: ConversationLocationUi? = null,
+    val senderId: Long = 0L,
+    val replyToMessageId: String? = null,
+    val replyToSummary: String? = null,
 )
 
 data class ReactionRevisionUi(val generation: Long, val epoch: Long, val sequence: Long) : Comparable<ReactionRevisionUi> {
@@ -169,10 +172,16 @@ data class ConversationScreenState(
     val messageMutationSuccessCount: Long = 0L,
     val messageMutationSuccessChatId: Long = 0L,
     val messageMutationSuccessMessageId: Long = 0L,
+    val replyingToMessageId: String? = null,
+    val replyingToPreview: String? = null,
+    val jumpToMessageId: String? = null,
 )
 
 internal fun selectedForwardMessageIds(messages: List<ConversationMessageUi>, selectedIds: Set<Long>): List<Long> =
     messages.mapNotNull { it.id.toLongOrNull() }.filter { it in selectedIds }.distinct()
+
+internal fun replyTargetIndex(messages: List<ConversationMessageUi>, messageId: String): Int =
+    messages.indexOfFirst { it.id == messageId }
 
 internal fun selectedMessageText(messages: List<ConversationMessageUi>, selectedIds: Set<Long>): String =
     messages.filter { message -> message.id.toLongOrNull()?.let { it in selectedIds } == true }
@@ -220,6 +229,10 @@ fun ConversationScreen(
     onEditMessage: (chatId: Long, messageId: Long, text: String) -> Unit,
     onDeleteMessageForEveryone: (chatId: Long, messageId: Long) -> Unit,
     onDeleteMessageForMe: (chatId: Long, messageId: Long) -> Unit,
+    onReplyMessage: (ConversationMessageUi) -> Unit = {},
+    onOpenReplyTarget: (String) -> Unit = {},
+    onCancelReply: () -> Unit = {},
+    onJumpComplete: () -> Unit = {},
     onRetry: () -> Unit,
     onOpenProfile: () -> Unit,
     onDownloadMedia: (messageId: Long, attachmentIndex: Int, retry: Boolean) -> Unit,
@@ -279,8 +292,17 @@ fun ConversationScreen(
         }
     }
 
+    LaunchedEffect(state.jumpToMessageId, state.messages) {
+        val target = state.jumpToMessageId ?: return@LaunchedEffect
+        val index = replyTargetIndex(state.messages, target)
+        if (index >= 0) {
+            listState.animateScrollToItem(index)
+            onJumpComplete()
+        }
+    }
+
     LaunchedEffect(state.messages.size, latestMessageId, state.loading) {
-        if (state.messages.isNotEmpty()) {
+        if (state.messages.isNotEmpty() && state.jumpToMessageId == null) {
             listState.animateScrollToItem(state.messages.lastIndex)
         }
     }
@@ -439,6 +461,8 @@ fun ConversationScreen(
                         onDraftChange = onDraftChange,
                         onSend = submitMessage,
                         onSendLocation = { onSendLocation(state.chatId) },
+                        replyingToPreview = state.replyingToPreview,
+                        onCancelReply = onCancelReply,
                     )
                 }
             }
@@ -522,6 +546,8 @@ fun ConversationScreen(
                                     viewerKey = "${message.id}:${attachment.index}"
                                 },
                                 onOpenDocument = onOpenDocument,
+                                onReplyMessage = { onReplyMessage(message) },
+                                onOpenReplyTarget = onOpenReplyTarget,
                                 reactionPending = "${message.chatId}:${message.id}" in state.pendingReactionKeys,
                                 reactionError = state.reactionErrors["${message.chatId}:${message.id}"],
                                 onReaction = { reaction -> onReaction(message.chatId, message.id, reaction) },
@@ -696,6 +722,8 @@ private fun MessageBubble(
     onCancelMedia: (attachmentIndex: Int) -> Unit,
     onOpenViewer: (MediaAttachmentUi) -> Unit,
     onOpenDocument: (MediaAttachmentUi) -> Unit,
+    onReplyMessage: () -> Unit,
+    onOpenReplyTarget: (String) -> Unit,
     reactionPending: Boolean,
     reactionError: String?,
     onReaction: (ConversationReactionUi?) -> Unit,
@@ -745,6 +773,13 @@ private fun MessageBubble(
             },
         ) {
             Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                message.replyToMessageId?.let { targetId ->
+                    TextButton(onClick = { onOpenReplyTarget(targetId) }, contentPadding = PaddingValues(0.dp)) {
+                        Text(message.replyToSummary ?: "Сообщение $targetId недоступно",
+                            maxLines = 2, overflow = TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.labelMedium)
+                    }
+                }
                 message.location?.let { location ->
                     LocationMessageCard(location = location, onClick = { onOpenLocation(location) })
                     Spacer(Modifier.height(8.dp))
@@ -784,6 +819,9 @@ private fun MessageBubble(
                     )
                 }
                 ReactionRow(message.reactions, reactionPending, reactionError, onReaction)
+                TextButton(onClick = onReplyMessage, contentPadding = PaddingValues(0.dp)) {
+                    Text("Ответить", style = MaterialTheme.typography.labelSmall)
+                }
                 if (message.timestamp.isNotBlank()) {
                     Spacer(Modifier.height(5.dp))
                     Row(
@@ -1428,6 +1466,8 @@ private fun ComposerBar(
     onCancel: (() -> Unit)? = null,
     onSendLocation: () -> Unit = {},
     showLocationAction: Boolean = true,
+    replyingToPreview: String? = null,
+    onCancelReply: () -> Unit = {},
 ) {
     val canSubmit = draft.isNotBlank() && !sending && canSend
 
@@ -1440,6 +1480,16 @@ private fun ComposerBar(
     ) {
         Column {
             HorizontalDivider()
+            replyingToPreview?.let { preview ->
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(preview, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.labelMedium)
+                    TextButton(onClick = onCancelReply) { Text("Отмена") }
+                }
+            }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()

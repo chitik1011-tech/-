@@ -504,6 +504,19 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         }
     }
 
+    fun loadMessagesBefore(chatId: Long, beforeMessageId: Long) {
+        if (chatId == 0L || beforeMessageId <= 0L) return
+        sendCommand(
+            JSONObject()
+                .put("type", "load_messages_page")
+                .put("payload", JSONObject()
+                    .put("chat_id", chatId)
+                    .put("before_message_id", beforeMessageId)
+                    .put("limit", 100))
+                .toString(),
+        )
+    }
+
     fun loadMessages(chatId: Long, limit: Int = 100) {
         _state.update { it.copy(busy = true, error = null, deleteError = null) }
         sendCommand(
@@ -537,6 +550,19 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 .toString(),
         )
         if (!accepted) _state.update { it.copy(contactsLoading = false) }
+    }
+
+    fun replyMessage(chatId: Long, replyToMessageId: Long, text: String) {
+        if (chatId == 0L || replyToMessageId <= 0L || text.isBlank()) return
+        sendCommand(
+            JSONObject()
+                .put("type", "reply_message")
+                .put("payload", JSONObject()
+                    .put("chat_id", chatId)
+                    .put("reply_to_message_id", replyToMessageId)
+                    .put("text", text))
+                .toString(),
+        )
     }
 
     fun sendText(chatId: Long, text: String) {
@@ -1463,6 +1489,11 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                                     message.optJSONArray("attachments") ?: JSONArray(),
                                 ),
                                 forwardedFrom = forwardLabel,
+                                senderId = message.optLong("sender_id"),
+                                replyToMessageId = message.optJSONObject("reply_to")
+                                    ?.optLong("message_id")
+                                    ?.takeIf { it > 0L }
+                                    ?.toString(),
                                 serviceAction = parseServiceAction(message),
                                 location = parseLocation(message.optJSONObject("location")),
                                 poll = polls[chatId to message.optLong("id")],

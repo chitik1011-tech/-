@@ -62,6 +62,12 @@ pub enum CoreCommand {
         chat_id: i64,
         location: crate::model::GeoPoint,
     },
+    /// Send text as a reply to a message in the same chat.
+    ReplyMessage {
+        chat_id: i64,
+        reply_to_message_id: i64,
+        text: String,
+    },
     /// Reliable text send. Retrying the same client_id with the same payload is idempotent.
     SendTextReliable {
         client_id: i64,
@@ -173,6 +179,7 @@ impl CoreCommand {
             Self::ForwardMessages(_) => "forward_messages",
             Self::DeleteMessages { .. } => "delete_messages",
             Self::SendText { .. } => "send_text",
+            Self::ReplyMessage { .. } => "reply_message",
             Self::SendLocation { .. } => "send_location",
             Self::SendTextReliable { .. } => "send_text_reliable",
             Self::EditMessage { .. } => "edit_message",
@@ -294,6 +301,19 @@ impl CoreCommand {
             Self::SendText { chat_id, text } => {
                 validate_chat_id(*chat_id)?;
                 require_non_blank("message text", text)
+            }
+            Self::ReplyMessage {
+                chat_id,
+                reply_to_message_id,
+                text,
+            } => {
+                validate_chat_id(*chat_id)?;
+                if *reply_to_message_id <= 0 {
+                    return Err(CoreError::InvalidInput(
+                        "reply target message id must be positive".into(),
+                    ));
+                }
+                require_non_blank("reply text", text)
             }
             Self::SendLocation { chat_id, location } => {
                 validate_chat_id(*chat_id)?;

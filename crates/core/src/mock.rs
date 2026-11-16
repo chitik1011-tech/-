@@ -192,6 +192,27 @@ impl MockTelegramBackend {
             CoreCommand::ForwardMessages(_) => Err(CoreError::Backend(
                 "message forwarding is not implemented by the mock backend".into(),
             )),
+            CoreCommand::ReplyMessage {
+                chat_id,
+                reply_to_message_id,
+                text,
+            } => {
+                let mut events = self.handle_inner(CoreCommand::SendText { chat_id, text })?;
+                for event in &mut events {
+                    if let CoreEvent::MessageAdded(message) = event {
+                        message.reply_to = Some(crate::model::ReplyMetadata {
+                            message_id: reply_to_message_id,
+                            chat_id: Some(chat_id),
+                            sender_id: None,
+                            sender_display_name: None,
+                        });
+                        if let Some(chat) = self.chats.iter_mut().find(|chat| chat.id == chat_id) {
+                            chat.last_message = Some(message.clone());
+                        }
+                    }
+                }
+                Ok(events)
+            }
             CoreCommand::DeleteMessages { .. } => Err(CoreError::Backend(
                 "message deletion is not implemented by the mock backend".into(),
             )),
