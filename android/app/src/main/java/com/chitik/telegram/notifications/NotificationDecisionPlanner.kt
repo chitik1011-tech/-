@@ -55,9 +55,8 @@ internal class NotificationDecisionPlanner(
     @Synchronized
     fun markRead(session: Long, chatId: Long, throughMessageId: Long) {
         if (session != activeSession || throughMessageId <= 0L) return
-        seen.keys.removeAll {
-            it.session == session && it.chatId == chatId &&
-                it.serverMessageId <= throughMessageId
-        }
+        // Deliberately retain identities after a read: a reconnect replay must not
+        // re-notify a message simply because its notification was dismissed.
+        // Read cleanup belongs to the Android publisher; dedup is independent.
     }
 }
