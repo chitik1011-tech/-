@@ -7,6 +7,9 @@ import com.chitik.telegram.AuthorizationUiStep
 import com.chitik.telegram.ChatListEntry
 import com.chitik.telegram.ChatListPreview
 import com.chitik.telegram.ConversationMessageUi
+import com.chitik.telegram.ContactListEntry
+import com.chitik.telegram.parseContactListState
+import com.chitik.telegram.parseContactPage
 import com.chitik.telegram.ConversationPollOptionUi
 import com.chitik.telegram.ConversationPollUi
 import com.chitik.telegram.MediaAttachmentUi
@@ -32,6 +35,9 @@ data class NativeUiState(
     val telegramConfigured: Boolean = false,
     val authorization: AuthorizationUiStep = AuthorizationUiStep.Closed,
     val chats: List<ChatListEntry> = emptyList(),
+    val contacts: List<ContactListEntry> = emptyList(),
+    val contactTotal: Int = 0,
+    val contactsLoading: Boolean = false,
     val messages: Map<Long, List<ConversationMessageUi>> = emptyMap(),
     val votingPollIds: Set<Long> = emptySet(),
     val pollVoteErrors: Map<Long, String> = emptyMap(),
@@ -45,6 +51,13 @@ data class NativeUiState(
     val coreReady: Boolean
         get() = libraryLoaded && nativeHandle != 0L && error == null
 }
+
+private data class ParsedNativeState(
+    val authorization: AuthorizationUiStep,
+    val chats: List<ChatListEntry>,
+    val messages: Map<Long, List<ConversationMessageUi>>,
+    val contacts: List<ContactListEntry>,
+)
 
 class NativeSessionViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -349,6 +362,26 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         )
     }
 
+    fun loadContacts(offset: Int = 0, limit: Int = 100) {
+        if (offset < 0 || limit !in 1..100) {
+            setErrorIfOpen("Invalid contacts page")
+            return
+        }
+        _state.update { it.copy(contactsLoading = true, error = null) }
+        val accepted = sendCommand(
+            JSONObject()
+                .put("type", "load_contacts")
+                .put(
+                    "payload",
+                    JSONObject()
+                        .put("offset", offset)
+                        .put("limit", limit),
+                )
+                .toString(),
+        )
+        if (!accepted) _state.update { it.copy(contactsLoading = false) }
+    }
+
     fun sendText(chatId: Long, text: String) {
         sendCommand(
             JSONObject()
@@ -518,6 +551,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
             _state.update {
                 it.copy(
                     busy = false,
+                    contactsLoading = false,
                     error = message,
                 )
             }
@@ -545,11 +579,39 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                     )
                 }
             }
+            "contacts_loaded" -> {
+                val page = parseContactPage(payload)
+                if (page == null) {
+                    _state.update {
+                        it.copy(contactsLoading = false, error = "Invalid contacts response")
+                    }
+                } else {
+                    _state.update {
+                        val contacts = if (page.offset == 0) {
+                            page.contacts
+                        } else {
+                            (it.contacts + page.contacts).distinctBy(ContactListEntry::userId)
+                                .sortedBy(ContactListEntry::userId)
+                        }
+                        it.copy(
+                            contacts = contacts,
+                            contactsLoading = false,
+                            contactTotal = page.total,
+                            lastEventType = type,
+                            // Keep contact names and usernames out of diagnostic state.
+                            lastEventPayload = "{\"offset\":${page.offset},\"count\":${page.contacts.size},\"total\":${page.total}}",
+                            error = null,
+                        )
+                    }
+                }
+            }
+            "contacts_refresh_requested" -> loadContacts(offset = 0)
             "messages_loaded" -> {
                 val target = parseReadTarget(payload)
                 _state.update {
                     it.copy(
                         busy = false,
+                        contactsLoading = false,
                         lastEventType = type,
                         lastEventPayload = payload,
                         error = null,
@@ -648,6 +710,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 _state.update {
                     it.copy(
                         busy = false,
+                        contactsLoading = false,
                         lastEventType = type,
                         lastEventPayload = payload,
                         error = message,
@@ -675,6 +738,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
             it.copy(
                 authorization = authorization,
                 busy = false,
+                contactsLoading = false,
                 lastEventType = "authorization_changed",
                 lastEventPayload = payload,
                 error = null,
@@ -683,6 +747,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
 
         if (authorization == AuthorizationUiStep.Ready) {
             loadChats()
+            loadContacts(offset = 0)
         }
     }
 
@@ -695,16 +760,20 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
             val polls = parsePolls(root.optJSONObject("polls"))
             val readOutboxMaxIds = parseReadOutboxMaxIds(root.optJSONObject("read_receipts"))
             val messages = parseMessages(root.optJSONObject("messages"), polls, readOutboxMaxIds)
-            Triple(authorization, chats, messages)
-        }.onSuccess { (authorization, chats, messages) ->
+            val contacts = parseContactListState(root.optJSONObject("contacts"))
+            ParsedNativeState(authorization, chats, messages, contacts)
+        }.onSuccess { (authorization, chats, messages, contacts) ->
             _state.update {
                 it.copy(
                     authorization = authorization,
                     chats = chats,
+                    contacts = contacts,
+                    contactTotal = maxOf(it.contactTotal, contacts.size),
                     messages = messages,
                     busy = false,
+                    contactsLoading = false,
                     lastEventType = "state",
-                    lastEventPayload = payload,
+                    lastEventPayload = payloadWithoutContacts(payload),
                     error = null,
                 )
             }
@@ -712,11 +781,16 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
             _state.update {
                 it.copy(
                     busy = false,
+                    contactsLoading = false,
                     error = "Invalid Rust state payload: ${error.message}",
                 )
             }
         }
     }
+
+    private fun payloadWithoutContacts(payload: String): String = runCatching {
+        JSONObject(payload).apply { remove("contacts") }.toString()
+    }.getOrDefault("")
 
     private fun parseChats(array: JSONArray): List<ChatListEntry> = buildList {
         for (index in 0 until array.length()) {

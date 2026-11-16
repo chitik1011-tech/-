@@ -77,6 +77,7 @@ private fun TelegramRustApp(
     val state by viewModel.state.collectAsState()
     val context = LocalContext.current
     var selectedChatId by rememberSaveable { mutableLongStateOf(0L) }
+    var showContacts by rememberSaveable { mutableStateOf(false) }
     var draft by rememberSaveable { mutableStateOf("") }
     var showForwardTargets by remember { mutableStateOf(false) }
     var forwardingSourceChatId by remember { mutableLongStateOf(0L) }
@@ -106,12 +107,30 @@ private fun TelegramRustApp(
             },
         )
 
+        selectedChatId == 0L && showContacts -> ContactsScreen(
+            contacts = state.contacts,
+            total = state.contactTotal,
+            isLoading = state.contactsLoading,
+            error = state.error,
+            onBack = { showContacts = false },
+            onRefresh = { viewModel.loadContacts(offset = 0) },
+            onLoadMore = { viewModel.loadContacts(offset = state.contacts.size) },
+            onContactSelected = { contact ->
+                selectedChatId = contact.userId
+                viewModel.loadMessages(contact.userId)
+            },
+        )
+
         selectedChatId == 0L -> ChatListScreen(
             chats = state.chats,
             selectedChatId = null,
             isLoading = state.busy,
             error = state.error,
             onRefresh = { viewModel.loadChats() },
+            onOpenContacts = {
+                showContacts = true
+                viewModel.loadContacts(offset = 0)
+            },
             onChatSelected = { chatId ->
                 selectedChatId = chatId
                 viewModel.loadMessages(chatId)
@@ -120,6 +139,7 @@ private fun TelegramRustApp(
 
         else -> {
             val chat = state.chats.firstOrNull { it.id == selectedChatId }
+            val contact = state.contacts.firstOrNull { it.userId == selectedChatId }
             val messages = state.messages[selectedChatId].orEmpty().map { message ->
                 val pollId = message.poll?.id
                 if (pollId == null) {
@@ -135,7 +155,7 @@ private fun TelegramRustApp(
             ConversationScreen(
                 state = ConversationScreenState(
                     chatId = selectedChatId.toString(),
-                    chatTitle = chat?.title.orEmpty(),
+                    chatTitle = chat?.title ?: contact?.displayName.orEmpty(),
                     messages = messages,
                     draft = draft,
                     loading = state.busy,

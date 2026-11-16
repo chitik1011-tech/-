@@ -28,6 +28,7 @@ use crate::{
     auth::AuthFlow,
     chats::{PeerRegistry, find_peer, load_chats, new_peer_registry},
     config::TelegramConfig,
+    contacts::load_contacts,
     downloads::{MediaTarget, event as media_event, spawn_download, state_from_snapshot},
     error::{TelegramBackendError, session_error},
     messages::{
@@ -670,6 +671,16 @@ impl GrammersBackend {
                 self.require_ready().await?;
                 let chats = load_chats(&self.client, &self.peers, limit).await?;
                 vec![CoreEvent::ChatsLoaded(chats)]
+            }
+            CoreCommand::LoadContacts { offset, limit } => {
+                self.require_ready().await?;
+                let (total, contacts) =
+                    load_contacts(&self.client, &self.peers, offset, limit).await?;
+                vec![CoreEvent::ContactsLoaded {
+                    offset,
+                    total,
+                    contacts,
+                }]
             }
             CoreCommand::ResolvePeer { input } => {
                 self.require_ready().await?;

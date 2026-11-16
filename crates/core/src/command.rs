@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    contacts::validate_contact_page,
     error::{CoreError, Result},
     peer::parse_peer_reference,
     search::SearchMessagesRequest,
@@ -17,6 +18,11 @@ pub enum CoreCommand {
     SubmitCode(String),
     SubmitPassword(String),
     LoadChats {
+        limit: usize,
+    },
+    /// Load one page from the authenticated account's Telegram contacts.
+    LoadContacts {
+        offset: usize,
         limit: usize,
     },
     LoadMessages {
@@ -114,6 +120,7 @@ impl CoreCommand {
             Self::SubmitCode(_) => "submit_code",
             Self::SubmitPassword(_) => "submit_password",
             Self::LoadChats { .. } => "load_chats",
+            Self::LoadContacts { .. } => "load_contacts",
             Self::LoadMessages { .. } => "load_messages",
             Self::LoadMessagesPage { .. } => "load_messages_page",
             Self::MarkRead { .. } => "mark_read",
@@ -171,6 +178,7 @@ impl CoreCommand {
                 }
             }
             Self::LoadChats { limit } => validate_limit("chat load", *limit, MAX_CHAT_LOAD_LIMIT),
+            Self::LoadContacts { limit, .. } => validate_contact_page(*limit),
             Self::LoadMessages { chat_id, limit } => {
                 validate_chat_id(*chat_id)?;
                 validate_limit("message load", *limit, MAX_MESSAGE_LOAD_LIMIT)

@@ -35,6 +35,7 @@ pub enum TelegramUpdate {
         message_ids: Vec<i64>,
     },
     PollUpdated(PollSummary),
+    ContactsRefreshRequested,
     ChatChanged {
         chat_id: i64,
     },
@@ -74,6 +75,7 @@ impl TelegramUpdate {
                 message_ids: message_ids.clone(),
             }),
             Self::PollUpdated(poll) => Some(CoreEvent::PollUpdated(poll.clone())),
+            Self::ContactsRefreshRequested => Some(CoreEvent::ContactsRefreshRequested),
             Self::ReadReceiptUpdated {
                 chat_id,
                 direction,
@@ -644,6 +646,7 @@ async fn map_update(
                 .map(TelegramUpdate::PollUpdated)
                 .into_iter()
                 .collect()),
+            tl::enums::Update::ContactsReset => Ok(vec![TelegramUpdate::ContactsRefreshRequested]),
             tl::enums::Update::ReadHistoryInbox(update) => {
                 Ok(vec![TelegramUpdate::ReadReceiptUpdated {
                     chat_id: raw_peer_to_core(&update.peer),
@@ -893,6 +896,10 @@ mod tests {
                 token,
                 event: LinkEvent::SyncCompleted,
             })
+        );
+        assert_eq!(
+            TelegramUpdate::ContactsRefreshRequested.to_core_event(),
+            Some(CoreEvent::ContactsRefreshRequested),
         );
         assert!(TelegramUpdate::Unhandled.to_core_event().is_none());
     }

@@ -5,6 +5,7 @@ pub mod backend;
 pub mod command;
 pub mod connection;
 pub mod connection_machine;
+pub mod contacts;
 pub mod error;
 pub mod event;
 pub mod forwarding;
@@ -33,6 +34,7 @@ pub use connection_machine::{
     ConnectionEpoch, ConnectionMachine, ConnectionToken, LinkError, LinkEvent, LinkPhase,
     Outcome as ConnectionOutcome, SessionGeneration,
 };
+pub use contacts::{Contact, ContactBook, MAX_CONTACT_PAGE_LIMIT};
 pub use error::{CoreError, Result};
 pub use event::CoreEvent;
 pub use forwarding::{

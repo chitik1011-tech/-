@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     connection::ConnectionState,
     connection_machine::{ConnectionMachine, LinkEvent, LinkPhase, Outcome},
+    contacts::ContactBook,
     event::CoreEvent,
     model::{
         AccountState, AttachmentDownloadState, ChatFolder, ChatSummary, Draft, MessageHistoryState,
@@ -22,6 +23,9 @@ pub const MAX_CACHED_POLLS: usize = 512;
 pub struct CoreState {
     pub running: bool,
     pub account: AccountState,
+    /// Server-provided contact names and stable IDs; phone numbers are never stored here.
+    #[serde(default)]
+    pub contacts: ContactBook,
     /// Current Telegram transport state. Older persisted snapshots default to disconnected.
     #[serde(default)]
     pub connection_state: ConnectionState,
@@ -66,6 +70,7 @@ impl Default for CoreState {
         Self {
             running: true,
             account: AccountState::default(),
+            contacts: ContactBook::default(),
             connection_state: ConnectionState::Disconnected,
             connection_machine: ConnectionMachine::default(),
             messages: BTreeMap::new(),
@@ -84,6 +89,14 @@ impl Default for CoreState {
 }
 
 impl CoreState {
+    /// Clone the live state for persistence, omitting session-only contacts.
+    /// Contact fields remain available in the live JNI state.
+    pub fn persistence_snapshot(&self) -> Self {
+        let mut snapshot = self.clone();
+        snapshot.contacts = ContactBook::default();
+        snapshot
+    }
+
     /// Validate persisted or externally constructed state invariants.
     pub fn validate(&self) -> crate::error::Result<()> {
         use crate::error::CoreError;
@@ -247,6 +260,13 @@ impl CoreState {
                 }
                 self.last_error = None;
             }
+            CoreEvent::ContactsLoaded {
+                offset, contacts, ..
+            } => {
+                self.contacts.apply_page(*offset, contacts);
+                self.last_error = None;
+            }
+            CoreEvent::ContactsRefreshRequested => {}
             CoreEvent::MessagesLoaded { chat_id, messages } => {
                 self.merge_messages(*chat_id, messages);
                 self.last_error = None;

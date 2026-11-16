@@ -65,7 +65,7 @@ impl StateStore for MemoryStateStore {
                 .state
                 .write()
                 .map_err(|_| CoreError::Storage("memory state lock poisoned".into()))?;
-            *slot = Some(state.clone());
+            *slot = Some(state.persistence_snapshot());
             Ok(())
         })
     }
@@ -113,7 +113,7 @@ impl StateStore for JsonFileStateStore {
         let path = self.path.clone();
         let stored = StoredState {
             schema_version: STATE_SCHEMA_VERSION,
-            state: state.clone(),
+            state: state.persistence_snapshot(),
         };
         let encoded = serde_json::to_vec(&stored)
             .map_err(|error| CoreError::Serialization(error.to_string()));
@@ -146,11 +146,12 @@ impl StateStore for JsonFileStateStore {
 fn decode_stored_state(content: &str) -> Result<CoreState> {
     match serde_json::from_str::<StoredState>(content) {
         Ok(stored) if (1..=STATE_SCHEMA_VERSION).contains(&stored.schema_version) => {
-            stored
-                .state
+            let mut state = stored.state;
+            state.contacts = Default::default();
+            state
                 .validate()
                 .map_err(|error| CoreError::Storage(error.to_string()))?;
-            Ok(stored.state)
+            Ok(state)
         }
         Ok(stored) => Err(CoreError::Storage(format!(
             "unsupported state schema version: {}",
@@ -162,6 +163,8 @@ fn decode_stored_state(content: &str) -> Result<CoreState> {
                     "invalid persisted state: versioned={versioned_error}; legacy={legacy_error}"
                 ))
             })?;
+            let mut state = state;
+            state.contacts = Default::default();
             state
                 .validate()
                 .map_err(|error| CoreError::Storage(error.to_string()))?;
@@ -186,6 +189,7 @@ mod tests {
         let state = decode_stored_state(&stored).unwrap();
         assert!(state.folders.is_empty());
         assert!(state.drafts.is_empty());
+        assert!(state.contacts.is_empty());
     }
 
     #[test]
