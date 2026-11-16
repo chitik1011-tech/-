@@ -91,7 +91,6 @@ impl TelegramUpdate {
                 message_ids: message_ids.clone(),
                 pinned: *pinned,
                 pts: Some(*pts),
-                request_revision: None,
             }),
             Self::ContactsRefreshRequested => Some(CoreEvent::ContactsRefreshRequested),
             Self::ReadReceiptUpdated {
@@ -931,6 +930,7 @@ mod tests {
             text: "hello".into(),
             timestamp_unix: 4,
             outgoing: false,
+            location: None,
             attachments: Vec::new(),
             forwarded_from: None,
             edited: false,
@@ -1009,6 +1009,7 @@ mod tests {
             text: "message".into(),
             timestamp_unix: 4,
             outgoing: false,
+            location: None,
             attachments: Vec::new(),
             forwarded_from: None,
             edited: false,

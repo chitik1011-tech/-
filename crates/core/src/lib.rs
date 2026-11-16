@@ -43,9 +43,9 @@ pub use forwarding::{
 pub use mock::MockTelegramBackend;
 pub use model::{
     AccountState, AttachmentDownloadState, AttachmentKind, AttachmentThumbnail, AuthorizationState,
-    ChatActivityKind, ChatFolder, ChatFolderFacts, ChatSummary, Draft, ForwardedFrom,
-    MediaAttachment, MessageHistoryState, MessageSummary, ReadDirection, ReadReceipt,
-    ReplyMetadata,
+    ChatActivityKind, ChatFolder, ChatFolderFacts, ChatSummary, Draft, ForwardedFrom, GeoPoint,
+    MediaAttachment, MessageHistoryState, MessageLocation, MessageSummary, ReadDirection,
+    ReadReceipt, ReplyMetadata, Venue,
 };
 pub use peer::{
     parse_peer_reference, MessageLink, MessageLinkMetadata, MessageLinkResolution, MessagePeer,

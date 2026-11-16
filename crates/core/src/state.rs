@@ -66,9 +66,6 @@ pub struct CoreState {
     /// Per-chat revision used to reject snapshots raced by a newer update.
     #[serde(default)]
     pub pinned_message_revision: BTreeMap<i64, u64>,
-    /// Per-message revision used to reject stale no-pts pin RPC acknowledgements.
-    #[serde(default)]
-    pub pinned_message_target_revision: BTreeMap<i64, BTreeMap<i64, u64>>,
     /// Per-chat drafts survive navigation and restart.
     #[serde(default)]
     pub drafts: BTreeMap<i64, Draft>,
@@ -96,7 +93,6 @@ impl Default for CoreState {
             pinned_messages: BTreeMap::new(),
             pinned_message_pts: BTreeMap::new(),
             pinned_message_revision: BTreeMap::new(),
-            pinned_message_target_revision: BTreeMap::new(),
             drafts: BTreeMap::new(),
             last_error: None,
             folders: Vec::new(),
@@ -385,34 +381,19 @@ impl CoreState {
                 message_ids,
                 pinned,
                 pts,
-                request_revision,
             } => {
-                let request_is_current = request_revision.is_none_or(|revision| {
-                    message_ids.iter().all(|message_id| {
-                        self.pinned_message_target_revision
-                            .get(chat_id)
-                            .and_then(|revisions| revisions.get(message_id))
-                            .copied()
-                            .unwrap_or_default()
-                            == revision
-                    })
-                });
-                let is_newer = request_is_current && pts.is_none_or(|incoming| {
-                    self.pinned_message_pts
+                // A no-pts RPC acknowledgement cannot supersede a newer Telegram
+                // update. Without a Telegram pts watermark, accept it provisionally.
+                let is_newer = match pts {
+                    Some(incoming) => self
+                        .pinned_message_pts
                         .get(chat_id)
-                        .is_none_or(|current| incoming > *current)
-                });
+                        .is_none_or(|current| incoming > current),
+                    None => !self.pinned_message_pts.contains_key(chat_id),
+                };
                 if *chat_id != 0 && is_newer {
                     if let Some(pts) = pts {
                         self.pinned_message_pts.insert(*chat_id, *pts);
-                    }
-                    let revisions = self
-                        .pinned_message_target_revision
-                        .entry(*chat_id)
-                        .or_default();
-                    for message_id in message_ids.iter().copied().filter(|id| *id > 0) {
-                        let revision = revisions.get(&message_id).copied().unwrap_or_default();
-                        revisions.insert(message_id, revision.saturating_add(1));
                     }
                     let ids = self.pinned_messages.entry(*chat_id).or_default();
                     for message_id in message_ids.iter().copied().filter(|id| *id > 0) {
@@ -619,14 +600,6 @@ impl CoreState {
                     updated |= self.poll_order.len() != order_before;
 
                     if let Some(chat_id) = chat_id {
-                        let target_revisions = self
-                            .pinned_message_target_revision
-                            .entry(*chat_id)
-                            .or_default();
-                        for message_id in &deleted {
-                            let revision = target_revisions.get(message_id).copied().unwrap_or_default();
-                            target_revisions.insert(*message_id, revision.saturating_add(1));
-                        }
                         if let Some(pinned) = self.pinned_messages.get_mut(chat_id) {
                             let old_len = pinned.len();
                             pinned.retain(|id| !deleted.contains(id));
@@ -645,22 +618,6 @@ impl CoreState {
                             }
                         }
                     } else {
-                        let mut pinned_chat_ids = self
-                            .pinned_messages
-                            .keys()
-                            .copied()
-                            .collect::<BTreeSet<_>>();
-                        pinned_chat_ids.extend(self.pinned_message_target_revision.keys().copied());
-                        for pinned_chat_id in pinned_chat_ids {
-                            let revisions = self
-                                .pinned_message_target_revision
-                                .entry(pinned_chat_id)
-                                .or_default();
-                            for message_id in &deleted {
-                                let revision = revisions.get(message_id).copied().unwrap_or_default();
-                                revisions.insert(*message_id, revision.saturating_add(1));
-                            }
-                        }
                         let mut changed_chat_ids = Vec::new();
                         for (pinned_chat_id, pinned) in &mut self.pinned_messages {
                             let old_len = pinned.len();
@@ -1174,6 +1131,7 @@ mod message_ordering_tests {
             text: format!("message {id}"),
             timestamp_unix,
             outgoing,
+            location: None,
             attachments: vec![],
             forwarded_from: None,
             edited: false,

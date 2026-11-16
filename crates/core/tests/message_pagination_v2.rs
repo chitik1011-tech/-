@@ -15,6 +15,7 @@ fn message(id: i64, timestamp_unix: i64) -> MessageSummary {
         text: format!("message-{id}"),
         timestamp_unix,
         outgoing: false,
+        location: None,
         attachments: Vec::new(),
         forwarded_from: None,
         edited: false,

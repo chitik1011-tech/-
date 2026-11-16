@@ -37,14 +37,12 @@ fn pinned_snapshots_and_updates_are_idempotent_and_reject_stale_pts() {
         message_ids: vec![11, 7],
         pinned: true,
         pts: Some(20),
-        request_revision: None,
     });
     state.reduce(&CoreEvent::PinnedMessagesChanged {
         chat_id: 9,
         message_ids: vec![7, 11],
         pinned: true,
         pts: Some(20),
-        request_revision: None,
     });
     assert_eq!(state.pinned_messages.get(&9), Some(&vec![3, 7, 11]));
 
@@ -54,7 +52,6 @@ fn pinned_snapshots_and_updates_are_idempotent_and_reject_stale_pts() {
         message_ids: vec![7],
         pinned: false,
         pts: Some(19),
-        request_revision: None,
     });
     assert_eq!(state.pinned_messages.get(&9), Some(&vec![3, 7, 11]));
 
@@ -63,7 +60,6 @@ fn pinned_snapshots_and_updates_are_idempotent_and_reject_stale_pts() {
         message_ids: vec![7],
         pinned: false,
         pts: Some(21),
-        request_revision: None,
     });
     assert_eq!(state.pinned_messages.get(&9), Some(&vec![3, 11]));
 }
@@ -163,7 +159,6 @@ fn delayed_pinned_snapshot_cannot_roll_back_a_newer_update() {
         message_ids: vec![12],
         pinned: true,
         pts: Some(20),
-        request_revision: None,
     });
     state.reduce(&CoreEvent::PinnedMessagesLoaded {
         chat_id: 9,
@@ -175,35 +170,26 @@ fn delayed_pinned_snapshot_cannot_roll_back_a_newer_update() {
 }
 
 #[test]
-fn delayed_pin_rpc_ack_cannot_override_a_newer_unpin_update() {
+fn no_pts_pin_rpc_ack_cannot_override_a_newer_unpin_update() {
     let mut state = CoreState::default();
     state.reduce(&CoreEvent::PinnedMessagesLoaded {
         chat_id: 9,
         message_ids: vec![7, 8],
         request_revision: Some(0),
     });
-    let captured_target_revision = state
-        .pinned_message_target_revision
-        .get(&9)
-        .and_then(|revisions| revisions.get(&7))
-        .copied()
-        .unwrap_or_default();
-
     state.reduce(&CoreEvent::PinnedMessagesChanged {
         chat_id: 9,
         message_ids: vec![7],
         pinned: false,
         pts: Some(21),
-        request_revision: None,
     });
-    // This acknowledgement belongs to an earlier PinMessage RPC. Its missing
-    // pts must not be interpreted as newer than Telegram's update at pts=21.
+    // A delayed earlier PinMessage RPC acknowledgement has no pts and cannot
+    // supersede Telegram's newer authoritative update.
     state.reduce(&CoreEvent::PinnedMessagesChanged {
         chat_id: 9,
         message_ids: vec![7],
         pinned: true,
         pts: None,
-        request_revision: Some(captured_target_revision),
     });
 
     assert_eq!(state.pinned_messages.get(&9), Some(&vec![8]));
@@ -211,25 +197,16 @@ fn delayed_pin_rpc_ack_cannot_override_a_newer_unpin_update() {
 }
 
 #[test]
-fn accepted_rpc_ack_invalidates_an_older_ack_for_the_same_target_only() {
+fn pin_state_does_not_persist_per_message_acknowledgement_history() {
     let mut state = CoreState::default();
-    state.pinned_messages.insert(9, vec![7, 8]);
-    let captured_revision = 0;
-
-    state.reduce(&CoreEvent::PinnedMessagesChanged {
-        chat_id: 9,
-        message_ids: vec![7],
-        pinned: false,
-        pts: None,
-        request_revision: Some(captured_revision),
-    });
-    state.reduce(&CoreEvent::PinnedMessagesChanged {
-        chat_id: 9,
-        message_ids: vec![7],
-        pinned: true,
-        pts: None,
-        request_revision: Some(captured_revision),
-    });
-
-    assert_eq!(state.pinned_messages.get(&9), Some(&vec![8]));
+    for message_id in 1..=2_000 {
+        state.reduce(&CoreEvent::PinnedMessagesChanged {
+            chat_id: 9,
+            message_ids: vec![message_id],
+            pinned: true,
+            pts: None,
+        });
+    }
+    let serialized = serde_json::to_value(&state).expect("serialize state");
+    assert!(serialized.get("pinned_message_target_revision").is_none());
 }

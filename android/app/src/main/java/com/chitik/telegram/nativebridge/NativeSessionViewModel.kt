@@ -7,6 +7,8 @@ import com.chitik.telegram.AuthorizationUiStep
 import com.chitik.telegram.ChatListEntry
 import com.chitik.telegram.ChatListPreview
 import com.chitik.telegram.ConversationMessageUi
+import com.chitik.telegram.ConversationLocationUi
+import com.chitik.telegram.ConversationGeoPointUi
 import com.chitik.telegram.ContactListEntry
 import com.chitik.telegram.parseContactListState
 import com.chitik.telegram.parseContactPage
@@ -485,6 +487,43 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 )
                 .toString(),
         )
+    }
+
+    fun sendLocation(
+        chatId: Long,
+        latitude: Double,
+        longitude: Double,
+        accuracyRadiusMeters: Int?,
+    ) {
+        if (!latitude.isFinite() || !longitude.isFinite() ||
+            latitude !in -90.0..90.0 || longitude !in -180.0..180.0
+        ) {
+            setErrorIfOpen("Invalid location coordinates")
+            return
+        }
+        if (accuracyRadiusMeters != null && accuracyRadiusMeters !in 0..1_500) {
+            setErrorIfOpen("Invalid location accuracy radius")
+            return
+        }
+        val point = JSONObject()
+            .put("latitude", latitude)
+            .put("longitude", longitude)
+        accuracyRadiusMeters?.let { point.put("accuracy_radius_meters", it) }
+        sendCommand(
+            JSONObject()
+                .put("type", "send_location")
+                .put(
+                    "payload",
+                    JSONObject()
+                        .put("chat_id", chatId)
+                        .put("location", point),
+                )
+                .toString(),
+        )
+    }
+
+    fun reportLocationError(message: String) {
+        setErrorIfOpen(message)
     }
 
     fun forwardMessages(sourceChatId: Long, messageIds: List<Long>, destinationChatId: Long) {
@@ -1080,6 +1119,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                                 ),
                                 forwardedFrom = forwardLabel,
                                 serviceAction = parseServiceAction(message),
+                                location = parseLocation(message.optJSONObject("location")),
                                 poll = polls[chatId to message.optLong("id")],
                             ),
                         )
@@ -1207,6 +1247,41 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         "LoggingOut" -> AuthorizationUiStep.LoggingOut
         "Closed" -> AuthorizationUiStep.Closed
         else -> AuthorizationUiStep.Starting
+    }
+
+    private fun parseLocation(root: JSONObject?): ConversationLocationUi? {
+        if (root == null) return null
+        return when (root.optString("kind")) {
+            "location" -> parseGeoPoint(root.optJSONObject("point"))
+                ?.let { ConversationLocationUi.Point(it) }
+            "venue" -> {
+                val venue = root.optJSONObject("venue") ?: return null
+                val title = venue.optString("title").trim()
+                val address = venue.optString("address").trim()
+                if (title.isEmpty() || address.isEmpty()) return null
+                ConversationLocationUi.Venue(
+                    point = parseGeoPoint(venue.optJSONObject("point")),
+                    title = title,
+                    address = address,
+                    provider = venue.optString("provider"),
+                    venueId = venue.optString("venue_id"),
+                    venueType = venue.optString("venue_type").takeIf(String::isNotEmpty),
+                )
+            }
+            else -> null
+        }
+    }
+
+    private fun parseGeoPoint(root: JSONObject?): ConversationGeoPointUi? {
+        if (root == null || !root.has("latitude") || !root.has("longitude")) return null
+        val latitude = root.optDouble("latitude", Double.NaN)
+        val longitude = root.optDouble("longitude", Double.NaN)
+        if (!latitude.isFinite() || !longitude.isFinite()) return null
+        if (latitude !in -90.0..90.0 || longitude !in -180.0..180.0) return null
+        val radius = if (root.has("accuracy_radius_meters")) {
+            root.optInt("accuracy_radius_meters", -1).takeIf { it in 0..1_500 }
+        } else null
+        return ConversationGeoPointUi(latitude, longitude, radius)
     }
 
     private fun formatTimestamp(timestampUnix: Long): String {

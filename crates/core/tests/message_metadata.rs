@@ -38,6 +38,7 @@ fn message_metadata_round_trips_with_media_compatible_defaults() {
         text: "forwarded reply".into(),
         timestamp_unix: 200,
         outgoing: false,
+        location: None,
         attachments: Vec::new(),
         forwarded_from: Some(ForwardedFrom {
             sender_id: Some(12),

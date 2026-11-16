@@ -2,15 +2,16 @@ use std::collections::{HashSet, VecDeque};
 
 use grammers_client::{
     Client,
-    media::{Document, Media, Photo, PhotoSize},
-    message::Message,
+    media::{Document, Geo, Media, Photo, PhotoSize},
+    message::{InputMessage, Message},
     sender::InvocationError,
     session::types::{PeerKind, PeerRef},
     tl,
 };
 use tg_mobile_core::{
     AttachmentDownloadState, AttachmentKind, AttachmentThumbnail, CoreError, ForwardedFrom,
-    MediaAttachment, MessageSummary, PollSummary, ReplyMetadata, ServiceAction, ServiceMessage,
+    GeoPoint, MediaAttachment, MessageLocation, MessageSummary, PollSummary, ReplyMetadata,
+    ServiceAction, ServiceMessage, Venue,
 };
 use tokio::sync::Mutex;
 
@@ -59,6 +60,7 @@ pub(crate) fn message_to_summary(message: &Message) -> MessageSummary {
     });
     summary.edited = edit_timestamp_unix.is_some();
     summary.edit_timestamp_unix = edit_timestamp_unix;
+    summary.location = message.media().as_ref().and_then(media_to_location);
     summary.service_message = message.action().is_some();
     summary.service = message.action().map(|action| {
         service_action_to_message(
@@ -79,6 +81,30 @@ pub(crate) fn message_to_summary(message: &Message) -> MessageSummary {
         });
 
     summary
+}
+
+fn geo_to_core(geo: &Geo) -> Option<GeoPoint> {
+    GeoPoint::new(geo.raw.lat, geo.raw.long, geo.raw.accuracy_radius).ok()
+}
+
+fn media_to_location(media: &Media) -> Option<MessageLocation> {
+    match media {
+        Media::Geo(geo) => geo_to_core(geo).map(|point| MessageLocation::Location { point }),
+        Media::Venue(venue) => {
+            let point = venue.geo.as_ref().and_then(geo_to_core);
+            Venue::new(
+                point,
+                venue.title().to_owned(),
+                venue.address().to_owned(),
+                venue.provider().to_owned(),
+                venue.venue_id().to_owned(),
+                (!venue.venue_type().is_empty()).then(|| venue.venue_type().to_owned()),
+            )
+            .ok()
+            .map(|venue| MessageLocation::Venue { venue })
+        }
+        _ => None,
+    }
 }
 
 fn service_action_to_message(
@@ -292,6 +318,7 @@ fn message_summary_from_fields(fields: MessageFields<'_>) -> MessageSummary {
         text: fields.text.to_owned(),
         timestamp_unix: fields.timestamp_unix,
         outgoing: fields.outgoing,
+        location: None,
         attachments: Vec::new(),
         forwarded_from: None,
         edited: false,
@@ -545,6 +572,26 @@ pub(crate) async fn send_text(
     Ok(message_to_summary(&message))
 }
 
+pub(crate) async fn send_location(
+    client: &Client,
+    peer: PeerRef,
+    location: GeoPoint,
+) -> tg_mobile_core::Result<MessageSummary> {
+    location.validate()?;
+    let geo_point: tl::enums::InputGeoPoint = tl::types::InputGeoPoint {
+        lat: location.latitude(),
+        long: location.longitude(),
+        accuracy_radius: location.accuracy_radius_meters(),
+    }
+    .into();
+    let media = tl::types::InputMediaGeoPoint { geo_point };
+    let message = client
+        .send_message(peer, InputMessage::new().media(media))
+        .await
+        .map_err(|error| api_error("send location", error))?;
+    Ok(message_to_summary(&message))
+}
+
 pub(crate) async fn send_text_idempotent(
     client: &Client,
     peer: PeerRef,
@@ -784,9 +831,22 @@ impl MessageDeduplicator {
 mod tests {
     use super::{
         MessageDeduplicator, MessageFields, finalize_message_page, finalize_search_page,
-        message_summary_from_fields, service_action_to_message,
+        media_to_location, message_summary_from_fields, service_action_to_message,
     };
-    use tg_mobile_core::ServiceAction;
+    use grammers_client::{
+        media::{Geo, Media, Venue as TelegramVenue},
+        tl,
+    };
+    use tg_mobile_core::{MessageLocation, ServiceAction};
+
+    fn telegram_geo() -> tl::types::GeoPoint {
+        tl::types::GeoPoint {
+            long: 21.012_228_7,
+            lat: 52.229_675_6,
+            access_hash: 7,
+            accuracy_radius: Some(15),
+        }
+    }
 
     #[test]
     fn maps_message_fields_without_losing_identifiers() {
@@ -1036,6 +1096,43 @@ mod tests {
         let final_page = finalize_search_page(vec![hit(20), hit(10)], 2);
         assert_eq!(final_page.next_before_message_id, None);
         assert!(!final_page.has_more);
+    }
+
+    #[test]
+    fn maps_telegram_geo_media_to_core_location() {
+        let media = Media::Geo(Geo {
+            raw: telegram_geo(),
+        });
+        let mapped = media_to_location(&media).expect("geo must map");
+        let MessageLocation::Location { point } = mapped else {
+            panic!("expected location");
+        };
+        assert_eq!(point.latitude(), 52.229_675_6);
+        assert_eq!(point.longitude(), 21.012_228_7);
+        assert_eq!(point.accuracy_radius_meters(), Some(15));
+    }
+
+    #[test]
+    fn maps_telegram_venue_media_to_core_venue() {
+        let raw = tl::types::MessageMediaVenue {
+            geo: telegram_geo().into(),
+            title: "Central Library".into(),
+            address: "1 Example Street".into(),
+            provider: "foursquare".into(),
+            venue_id: "venue-1".into(),
+            venue_type: "library".into(),
+        };
+        let media = Media::Venue(TelegramVenue::from_raw_media(raw));
+        let mapped = media_to_location(&media).expect("venue must map");
+        let MessageLocation::Venue { venue } = mapped else {
+            panic!("expected venue");
+        };
+        assert_eq!(venue.title(), "Central Library");
+        assert_eq!(venue.address(), "1 Example Street");
+        assert_eq!(venue.provider(), "foursquare");
+        assert_eq!(venue.venue_id(), "venue-1");
+        assert_eq!(venue.venue_type(), Some("library"));
+        assert_eq!(venue.point().unwrap().accuracy_radius_meters(), Some(15));
     }
 
     #[tokio::test]
