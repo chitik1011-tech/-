@@ -156,6 +156,22 @@ internal fun selectedMessageText(messages: List<ConversationMessageUi>, selected
 internal fun toggleSelectedMessageId(selectedIds: Set<Long>, messageId: Long): Set<Long> =
     if (messageId in selectedIds) selectedIds - messageId else selectedIds + messageId
 
+internal data class PrunedMessageSelection(
+    val selectedIds: Set<Long>,
+    val shouldExitSelectionMode: Boolean,
+)
+
+internal fun pruneSelectedMessageIds(
+    selectedIds: Set<Long>,
+    visibleMessageIds: Set<Long>,
+): PrunedMessageSelection {
+    val remaining = selectedIds.intersect(visibleMessageIds)
+    return PrunedMessageSelection(
+        selectedIds = remaining,
+        shouldExitSelectionMode = selectedIds.isNotEmpty() && remaining.isEmpty(),
+    )
+}
+
 /**
  * Stateless conversation UI. Message history and poll results always come from the Rust-backed
  * state. Only an unsubmitted multiple-choice selection is kept locally.
@@ -188,8 +204,12 @@ fun ConversationScreen(
     var selectionMenuOpen by remember(state.chatId, state.selectionGeneration) { mutableStateOf(false) }
     var showDeleteConfirmation by remember(state.chatId, state.selectionGeneration) { mutableStateOf(false) }
     LaunchedEffect(state.messages, state.selectionGeneration) {
-        val currentIds = state.messages.mapNotNull { it.id.toLongOrNull() }.toSet()
-        selectedMessageIds = selectedMessageIds.intersect(currentIds)
+        if (selectedMessageIds.isNotEmpty()) {
+            val currentIds = state.messages.mapNotNull { it.id.toLongOrNull() }.toSet()
+            val pruned = pruneSelectedMessageIds(selectedMessageIds, currentIds)
+            selectedMessageIds = pruned.selectedIds
+            if (pruned.shouldExitSelectionMode) isSelectingMessages = false
+        }
     }
     // Only a server-confirmed, fully successful forward ends selection mode.
     LaunchedEffect(state.forwardSuccessCount) {
