@@ -12,7 +12,7 @@ grammers-session = { version = "=0.12.0", features = ["sqlite-storage"] }
 tg-mobile-core = { path = "../core" }
 tg-media-cache = { path = "../media-cache" }
 thiserror.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["fs", "io-util"] }
 
 [dev-dependencies]
 serde_json.workspace = true
