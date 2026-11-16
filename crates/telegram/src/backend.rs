@@ -1723,6 +1723,9 @@ impl Drop for GrammersBackend {
         for (_, task) in self.media_tasks.drain() {
             task.handle.abort();
         }
+        for (_, task) in self.media_send_tasks.drain() {
+            task.handle.abort();
+        }
         if let Some(shutdown) = self.update_shutdown.take() {
             let _ = shutdown.send(true);
         }
