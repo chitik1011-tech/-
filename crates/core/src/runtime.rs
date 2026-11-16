@@ -792,6 +792,36 @@ fn operation_error_events(command: &CoreCommand, error: CoreError) -> Vec<CoreEv
                     .collect(),
             },
         )],
+        CoreCommand::EditMessage {
+            chat_id,
+            message_id,
+            ..
+        } => vec![CoreEvent::MessageMutationFailed {
+            chat_id: *chat_id,
+            message_id: *message_id,
+            action: crate::event::MessageMutationAction::Edit,
+            error: error.to_string(),
+        }],
+        CoreCommand::DeleteMessageForEveryone {
+            chat_id,
+            message_id,
+        } => vec![CoreEvent::MessageMutationFailed {
+            chat_id: *chat_id,
+            message_id: *message_id,
+            action: crate::event::MessageMutationAction::DeleteForEveryone,
+            error: error.to_string(),
+        }],
+        CoreCommand::DeleteMessageForMe {
+            chat_id,
+            message_id,
+        } => {
+            vec![CoreEvent::MessageMutationFailed {
+                chat_id: *chat_id,
+                message_id: *message_id,
+                action: crate::event::MessageMutationAction::DeleteForMe,
+                error: error.to_string(),
+            }]
+        }
         _ => vec![CoreEvent::Error(error.to_string())],
     }
 }
@@ -917,6 +947,57 @@ mod capability_tests {
 }
 
 fn complete_operation_events(command: &CoreCommand, events: &mut Vec<CoreEvent>) {
+    if let CoreCommand::EditMessage {
+        chat_id,
+        message_id,
+        ..
+    }
+    | CoreCommand::DeleteMessageForMe {
+        chat_id,
+        message_id,
+    }
+    | CoreCommand::DeleteMessageForEveryone {
+        chat_id,
+        message_id,
+    } = command
+    {
+        let expected_action = match command {
+            CoreCommand::EditMessage { .. } => crate::event::MessageMutationAction::Edit,
+            CoreCommand::DeleteMessageForMe { .. } => {
+                crate::event::MessageMutationAction::DeleteForMe
+            }
+            CoreCommand::DeleteMessageForEveryone { .. } => {
+                crate::event::MessageMutationAction::DeleteForEveryone
+            }
+            _ => unreachable!(),
+        };
+        let confirmed = events.iter().any(|event| {
+            matches!(
+                event,
+                CoreEvent::MessageMutationSucceeded {
+                    chat_id: event_chat,
+                    message_id: event_message,
+                    action,
+                } if event_chat == chat_id && event_message == message_id && action == &expected_action
+            ) || matches!(
+                event,
+                CoreEvent::MessageMutationFailed {
+                    chat_id: event_chat,
+                    message_id: event_message,
+                    action,
+                    ..
+                } if event_chat == chat_id && event_message == message_id && action == &expected_action
+            )
+        });
+        if !confirmed {
+            events.push(CoreEvent::MessageMutationFailed {
+                chat_id: *chat_id,
+                message_id: *message_id,
+                action: expected_action,
+                error: "backend returned without confirming the message change".into(),
+            });
+        }
+    }
     if let CoreCommand::ForwardMessages(request) = command {
         *events = crate::forwarding::normalize_forward_events(request, std::mem::take(events));
     }
@@ -1258,4 +1339,55 @@ async fn persist_state<S: StateStore>(
 
 fn state_for_persistence(state: &CoreState) -> CoreState {
     state.persistence_snapshot()
+}
+
+#[cfg(test)]
+mod message_mutation_completion_tests {
+    use super::complete_operation_events;
+    use crate::{
+        command::CoreCommand,
+        event::{CoreEvent, MessageMutationAction},
+    };
+
+    #[test]
+    fn empty_mutation_backend_result_becomes_a_targeted_failure() {
+        let commands = [
+            (
+                CoreCommand::EditMessage {
+                    chat_id: 17,
+                    message_id: 42,
+                    text: "updated".into(),
+                },
+                MessageMutationAction::Edit,
+            ),
+            (
+                CoreCommand::DeleteMessageForMe {
+                    chat_id: 17,
+                    message_id: 42,
+                },
+                MessageMutationAction::DeleteForMe,
+            ),
+            (
+                CoreCommand::DeleteMessageForEveryone {
+                    chat_id: 17,
+                    message_id: 42,
+                },
+                MessageMutationAction::DeleteForEveryone,
+            ),
+        ];
+
+        for (command, action) in commands {
+            let mut events = Vec::new();
+            complete_operation_events(&command, &mut events);
+            assert_eq!(
+                events,
+                vec![CoreEvent::MessageMutationFailed {
+                    chat_id: 17,
+                    message_id: 42,
+                    action,
+                    error: "backend returned without confirming the message change".into(),
+                }]
+            );
+        }
+    }
 }

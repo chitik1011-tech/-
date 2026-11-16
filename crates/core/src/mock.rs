@@ -232,6 +232,15 @@ impl MockTelegramBackend {
 
                 Ok(vec![CoreEvent::MessageAdded(message)])
             }
+            CoreCommand::EditMessage { .. } => Err(CoreError::Backend(
+                "message editing is not implemented by the mock backend".into(),
+            )),
+            CoreCommand::DeleteMessageForEveryone { .. } => Err(CoreError::Backend(
+                "message deletion is not implemented by the mock backend".into(),
+            )),
+            CoreCommand::DeleteMessageForMe { .. } => Err(CoreError::Backend(
+                "message deletion is not implemented by the mock backend".into(),
+            )),
             CoreCommand::SendLocation { chat_id, location } => {
                 if self.authorization != AuthorizationState::Ready {
                     return Err(CoreError::Backend("not authorized".into()));

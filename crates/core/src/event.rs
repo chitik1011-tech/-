@@ -16,6 +16,14 @@ use crate::{
     send::OutgoingSend,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MessageMutationAction {
+    Edit,
+    DeleteForMe,
+    DeleteForEveryone,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 pub enum CoreEvent {
@@ -104,6 +112,18 @@ pub enum CoreEvent {
         unread: bool,
     },
     MessageEdited(MessageSummary),
+    /// A user requested message mutation failed at the backend; this is an ephemeral UI error.
+    MessageMutationSucceeded {
+        chat_id: i64,
+        message_id: i64,
+        action: MessageMutationAction,
+    },
+    MessageMutationFailed {
+        chat_id: i64,
+        message_id: i64,
+        action: MessageMutationAction,
+        error: String,
+    },
     MediaTransferUpdated {
         chat_id: i64,
         message_id: i64,
@@ -207,6 +227,8 @@ impl CoreEvent {
             Self::ChatPinned { .. } => "chat_pinned",
             Self::ChatUnreadChanged { .. } => "chat_unread_changed",
             Self::MessageEdited(_) => "message_edited",
+            Self::MessageMutationSucceeded { .. } => "message_mutation_succeeded",
+            Self::MessageMutationFailed { .. } => "message_mutation_failed",
             Self::MediaTransferUpdated { .. } => "media_transfer_updated",
             Self::MessagesDeleted { .. } => "messages_deleted",
             Self::PollUpdated(_) => "poll_updated",

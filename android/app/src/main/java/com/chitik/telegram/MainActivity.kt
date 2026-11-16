@@ -231,6 +231,13 @@ private fun TelegramRustApp(
                     selectionGeneration = state.selectionGeneration,
                     deletingMessages = state.deletingMessages,
                     deleteError = state.deleteError,
+                    messageMutationPending = state.messageMutationPending,
+                    messageMutationError = state.messageMutationError,
+                    messageMutationChatId = state.messageMutationChatId,
+                    messageMutationMessageId = state.messageMutationMessageId,
+                    messageMutationSuccessCount = state.messageMutationSuccessCount,
+                    messageMutationSuccessChatId = state.messageMutationSuccessChatId,
+                    messageMutationSuccessMessageId = state.messageMutationSuccessMessageId,
                     capabilities = state.chatCapabilities[selectedChatId] ?: ChatCapabilitiesUi(),
                 ),
                 onBack = {
@@ -245,6 +252,9 @@ private fun TelegramRustApp(
                     }
                 },
                 onPollVote = viewModel::votePoll,
+                onEditMessage = viewModel::editMessage,
+                onDeleteMessageForEveryone = viewModel::deleteMessageForEveryone,
+                onDeleteMessageForMe = viewModel::deleteMessageForMe,
                 onReaction = viewModel::setMessageReaction,
                 onSendLocation = { chatId ->
                     val numericChatId = chatId.toLongOrNull() ?: return@ConversationScreen

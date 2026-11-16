@@ -20,6 +20,9 @@ import com.chitik.telegram.ConversationPollOptionUi
 import com.chitik.telegram.ConversationPollUi
 import com.chitik.telegram.PeerProfileUi
 import com.chitik.telegram.MediaAttachmentUi
+import com.chitik.telegram.matchesMutationTarget
+import com.chitik.telegram.mutationEventAcknowledges
+import com.chitik.telegram.messageMutationStateAfterSessionChange
 import com.chitik.telegram.mediaDownloadStateFromWire
 import com.chitik.telegram.mediaKindFromWire
 import com.chitik.telegram.parseServiceAction
@@ -57,6 +60,13 @@ data class NativeUiState(
     val pollVoteErrors: Map<Long, String> = emptyMap(),
     val forwardError: String? = null,
     val forwardSuccessCount: Long = 0,
+    val messageMutationPending: Boolean = false,
+    val messageMutationError: String? = null,
+    val messageMutationChatId: Long = 0L,
+    val messageMutationMessageId: Long = 0L,
+    val messageMutationSuccessCount: Long = 0L,
+    val messageMutationSuccessChatId: Long = 0L,
+    val messageMutationSuccessMessageId: Long = 0L,
     val selectionGeneration: Long = 0,
     val lastConnectionSessionGeneration: Long? = null,
     val deletingMessages: Boolean = false,
@@ -332,6 +342,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         replaceNativeHandle(config)
 
     private fun replaceNativeHandle(config: TelegramRuntimeConfig?): Long {
+        markMessageMutationUnconfirmed("Сессия изменилась; проверьте сообщение в Telegram перед повтором")
         val creation = lifecycle.beginReplacement()
             ?: throw IllegalStateException("Native session replacement is already in progress")
 
@@ -542,6 +553,53 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         )
     }
 
+    fun editMessage(chatId: Long, messageId: Long, text: String) {
+        submitMessageMutation(
+            chatId = chatId,
+            messageId = messageId,
+            commandType = "edit_message",
+            extra = JSONObject().put("text", text),
+        )
+    }
+
+    fun deleteMessageForEveryone(chatId: Long, messageId: Long) {
+        submitMessageMutation(chatId, messageId, "delete_message_for_everyone")
+    }
+
+    fun deleteMessageForMe(chatId: Long, messageId: Long) {
+        submitMessageMutation(chatId, messageId, "delete_message_for_me")
+    }
+
+    private fun submitMessageMutation(
+        chatId: Long,
+        messageId: Long,
+        commandType: String,
+        extra: JSONObject = JSONObject(),
+    ) {
+        if (chatId == 0L || messageId <= 0L || _state.value.messageMutationPending) return
+        _state.update {
+            it.copy(
+                messageMutationPending = true,
+                messageMutationError = null,
+                messageMutationChatId = chatId,
+                messageMutationMessageId = messageId,
+            )
+        }
+        val payload = JSONObject().put("chat_id", chatId).put("message_id", messageId)
+        extra.keys().forEach { key -> payload.put(key, extra.get(key)) }
+        val accepted = sendCommand(
+            JSONObject().put("type", commandType).put("payload", payload).toString(),
+        )
+        if (!accepted) {
+            _state.update {
+                it.copy(
+                    messageMutationPending = false,
+                    messageMutationError = "Не удалось отправить запрос в Telegram",
+                )
+            }
+        }
+    }
+
     fun sendLocation(
         chatId: Long,
         latitude: Double,
@@ -558,19 +616,12 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
             setErrorIfOpen("Invalid location accuracy radius")
             return
         }
-        val point = JSONObject()
-            .put("latitude", latitude)
-            .put("longitude", longitude)
+        val point = JSONObject().put("latitude", latitude).put("longitude", longitude)
         accuracyRadiusMeters?.let { point.put("accuracy_radius_meters", it) }
         sendCommand(
             JSONObject()
                 .put("type", "send_location")
-                .put(
-                    "payload",
-                    JSONObject()
-                        .put("chat_id", chatId)
-                        .put("location", point),
-                )
+                .put("payload", JSONObject().put("chat_id", chatId).put("location", point))
                 .toString(),
         )
     }
@@ -806,6 +857,20 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         }
     }
 
+    private fun markMessageMutationUnconfirmed(message: String) {
+        _state.update {
+            val mutation = messageMutationStateAfterSessionChange(
+                pending = it.messageMutationPending,
+                currentError = it.messageMutationError,
+                reason = message,
+            )
+            it.copy(
+                messageMutationPending = mutation.pending,
+                messageMutationError = mutation.error,
+            )
+        }
+    }
+
     private fun onNativeEvent(generation: Long, type: String, payload: String) {
         if (!lifecycle.onNativeEvent(generation, type)) return
         lifecycle.runIfCurrent(generation) {
@@ -999,12 +1064,69 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                     )
                 }
             }
+            "connection_session_started" -> {
+                markMessageMutationUnconfirmed("Сессия Telegram обновилась; результат действия не подтверждён")
+                _state.update { it.copy(lastEventType = type, lastEventPayload = payload) }
+            }
+            "message_mutation_failed" -> {
+                val failure = runCatching {
+                    val payloadObject = JSONObject(payload).optJSONObject("payload") ?: JSONObject()
+                    val chatId = payloadObject.optLong("chat_id")
+                    val messageId = payloadObject.optLong("message_id")
+                    val error = payloadObject.optString("error").ifBlank { "Telegram отклонил действие" }
+                    Triple(chatId, messageId, error)
+                }.getOrNull()
+                _state.update {
+                    if (failure != null && it.messageMutationPending && matchesMutationTarget(
+                            it.messageMutationChatId,
+                            it.messageMutationMessageId,
+                            failure.first,
+                            failure.second,
+                        )
+                    ) {
+                        it.copy(
+                            messageMutationPending = false,
+                            messageMutationError = failure.third,
+                            lastEventType = type,
+                            lastEventPayload = payload,
+                        )
+                    } else it.copy(lastEventType = type, lastEventPayload = payload)
+                }
+            }
+            "message_mutation_succeeded" -> {
+                val target = runCatching {
+                    val body = JSONObject(payload).optJSONObject("payload") ?: JSONObject()
+                    body.optLong("chat_id") to body.optLong("message_id")
+                }.getOrDefault(0L to 0L)
+                _state.update {
+                    if (it.messageMutationPending && mutationEventAcknowledges(
+                            type,
+                            it.messageMutationChatId,
+                            it.messageMutationMessageId,
+                            target.first,
+                            target.second,
+                        )
+                    ) {
+                        it.copy(
+                            messageMutationPending = false,
+                            messageMutationError = null,
+                            messageMutationSuccessCount = it.messageMutationSuccessCount + 1,
+                            messageMutationSuccessChatId = target.first,
+                            messageMutationSuccessMessageId = target.second,
+                            lastEventType = type,
+                            lastEventPayload = payload,
+                        )
+                    } else it.copy(lastEventType = type, lastEventPayload = payload)
+                }
+            }
+            "message_edited" -> _state.update {
+                it.copy(lastEventType = type, lastEventPayload = payload)
+            }
             "message_reactions_updated" -> {
                 val update = parseReactionUpdate(payload)
                 _state.update { current ->
-                    if (update == null) {
-                        current.copy(lastEventType = type, lastEventPayload = payload)
-                    } else {
+                    if (update == null) current.copy(lastEventType = type, lastEventPayload = payload)
+                    else {
                         val (chatId, messageId, reactions, revision) = update
                         current.applyReactionUpdate(chatId, messageId, reactions, revision).copy(
                             lastEventType = type,
@@ -1017,16 +1139,13 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
             "reaction_operation_failed" -> {
                 val failure = parseReactionFailure(payload)
                 _state.update {
-                    if (failure == null) {
-                        it.copy(lastEventType = type, lastEventPayload = payload)
-                    } else {
-                        it.copy(
-                            pendingReactionKeys = it.pendingReactionKeys - failure.first,
-                            reactionErrors = it.reactionErrors + failure,
-                            lastEventType = type,
-                            lastEventPayload = payload,
-                        )
-                    }
+                    if (failure == null) it.copy(lastEventType = type, lastEventPayload = payload)
+                    else it.copy(
+                        pendingReactionKeys = it.pendingReactionKeys - failure.first,
+                        reactionErrors = it.reactionErrors + failure,
+                        lastEventType = type,
+                        lastEventPayload = payload,
+                    )
                 }
             }
             "message_added",

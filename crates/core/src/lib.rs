@@ -30,7 +30,10 @@ pub use backend::{
     TelegramBackend, DEFAULT_BACKEND_UPDATE_CAPACITY,
 };
 pub use capabilities::{CapabilityValue, ChatAction, ChatCapabilities, ChatKind};
-pub use command::{CoreCommand, MAX_CHAT_LOAD_LIMIT, MAX_MESSAGE_LOAD_LIMIT, MAX_REACTION_BYTES};
+pub use command::{
+    CoreCommand, MAX_CHAT_LOAD_LIMIT, MAX_EDIT_MESSAGE_TEXT_BYTES, MAX_MESSAGE_LOAD_LIMIT,
+    MAX_REACTION_BYTES,
+};
 pub use connection::ConnectionState;
 pub use connection_machine::{
     ConnectionEpoch, ConnectionMachine, ConnectionToken, LinkError, LinkEvent, LinkPhase,
@@ -38,7 +41,7 @@ pub use connection_machine::{
 };
 pub use contacts::{Contact, ContactBook, MAX_CONTACT_PAGE_LIMIT};
 pub use error::{CoreError, Result};
-pub use event::CoreEvent;
+pub use event::{CoreEvent, MessageMutationAction};
 pub use forwarding::{
     ForwardMessagesRequest, ForwardMessagesResult, ForwardOutcome, MAX_FORWARD_MESSAGES,
 };
