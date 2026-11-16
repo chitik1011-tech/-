@@ -212,7 +212,7 @@ impl MockTelegramBackend {
                     }
                 }
                 Ok(events)
-            },
+            }
             CoreCommand::DeleteMessages { .. } => Err(CoreError::Backend(
                 "message deletion is not implemented by the mock backend".into(),
             )),
