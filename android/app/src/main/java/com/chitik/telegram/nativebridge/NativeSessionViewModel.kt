@@ -608,12 +608,19 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 it.copy(
                     pendingPinnedMessageIds = it.pendingPinnedMessageIds - key,
                     pinnedError = error.message ?: error::class.java.simpleName,
+                    pinnedFailureKey = key,
                 )
             }
             return
         }
         if (result !in setOf(LifecycleDispatchResult.Accepted, LifecycleDispatchResult.Duplicate)) {
-            _state.update { it.copy(pendingPinnedMessageIds = it.pendingPinnedMessageIds - key) }
+            _state.update {
+                it.copy(
+                    pendingPinnedMessageIds = it.pendingPinnedMessageIds - key,
+                    pinnedError = "Rust rejected the pin command: $result",
+                    pinnedFailureKey = key,
+                )
+            }
         }
         reportDispatchResult(result, "Rust rejected the pin command")
     }
