@@ -93,3 +93,14 @@ internal fun importPickedMedia(context: Context, uri: Uri): PickedOutgoingMedia 
         sizeBytes = copied,
     )
 }
+
+/** Deletes only an app-private media copy after its send reaches a terminal state. */
+internal fun deletePickedMedia(context: Context, path: String) {
+    runCatching {
+        val directory = File(context.applicationContext.filesDir, "outgoing-media").canonicalFile
+        val candidate = File(path).canonicalFile
+        if (candidate.parentFile == directory && candidate.isFile) {
+            candidate.delete()
+        }
+    }
+}
