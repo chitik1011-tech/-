@@ -1022,6 +1022,7 @@ mod message_ordering_tests {
             text: format!("message {id}"),
             timestamp_unix,
             outgoing,
+            location: None,
             attachments: vec![],
             forwarded_from: None,
             edited: false,

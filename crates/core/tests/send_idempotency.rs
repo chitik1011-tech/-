@@ -654,6 +654,7 @@ fn test_message(id: i64, chat_id: i64, text: String) -> MessageSummary {
         text,
         timestamp_unix: 1_700_000_000,
         outgoing: true,
+        location: None,
         attachments: Vec::new(),
         forwarded_from: None,
         edited: false,
