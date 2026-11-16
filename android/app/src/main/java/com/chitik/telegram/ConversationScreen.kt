@@ -153,6 +153,9 @@ internal fun selectedMessageText(messages: List<ConversationMessageUi>, selected
         .filter(String::isNotEmpty)
         .joinToString("\n")
 
+internal fun toggleSelectedMessageId(selectedIds: Set<Long>, messageId: Long): Set<Long> =
+    if (messageId in selectedIds) selectedIds - messageId else selectedIds + messageId
+
 /**
  * Stateless conversation UI. Message history and poll results always come from the Rust-backed
  * state. Only an unsubmitted multiple-choice selection is kept locally.
@@ -179,6 +182,8 @@ fun ConversationScreen(
     val listState = rememberLazyListState()
     var viewerKey by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedMessageIds by remember(state.chatId, state.selectionGeneration) { mutableStateOf<Set<Long>>(emptySet()) }
+    var isSelectingMessages by remember(state.chatId, state.selectionGeneration) { mutableStateOf(false) }
+    val selectionActive = isSelectingMessages || selectedMessageIds.isNotEmpty()
     var selectionMenuOpen by remember(state.chatId, state.selectionGeneration) { mutableStateOf(false) }
     var showDeleteConfirmation by remember(state.chatId, state.selectionGeneration) { mutableStateOf(false) }
     LaunchedEffect(state.messages, state.selectionGeneration) {
@@ -187,7 +192,10 @@ fun ConversationScreen(
     }
     // Only a server-confirmed, fully successful forward ends selection mode.
     LaunchedEffect(state.forwardSuccessCount) {
-        if (state.forwardSuccessCount > 0L) selectedMessageIds = emptySet()
+        if (state.forwardSuccessCount > 0L) {
+            selectedMessageIds = emptySet()
+            isSelectingMessages = false
+        }
     }
     val contentMode = resolveAsyncContentMode(
         isLoading = state.loading,
@@ -217,7 +225,7 @@ fun ConversationScreen(
                 title = {
                     Column {
                         Text(
-                            text = if (selectedMessageIds.isNotEmpty()) {
+                            text = if (selectionActive) {
                                 "${selectedMessageIds.size} выбрано"
                             } else {
                                 state.chatTitle.ifBlank { "Диалог" }
@@ -236,13 +244,16 @@ fun ConversationScreen(
                 },
                 navigationIcon = {
                     TextButton(onClick = {
-                        if (selectedMessageIds.isNotEmpty()) selectedMessageIds = emptySet() else onBack()
+                        if (selectionActive) {
+                            selectedMessageIds = emptySet()
+                            isSelectingMessages = false
+                        } else onBack()
                     }) {
                         Text("←", style = MaterialTheme.typography.titleLarge)
                     }
                 },
                 actions = {
-                    if (selectedMessageIds.isNotEmpty()) {
+                    if (selectionActive) {
                         Box {
                             TextButton(onClick = { selectionMenuOpen = true }) { Text("⋮") }
                             DropdownMenu(
@@ -286,6 +297,10 @@ fun ConversationScreen(
                                     },
                                 )
                             }
+                        }
+                    } else {
+                        TextButton(onClick = { isSelectingMessages = true }) {
+                            Text("Выбрать")
                         }
                     }
                 },
@@ -386,12 +401,13 @@ fun ConversationScreen(
                                 selected = message.id.toLongOrNull()?.let { it in selectedMessageIds } == true,
                                 onClick = {
                                     message.id.toLongOrNull()?.let { id ->
-                                        if (selectedMessageIds.isNotEmpty()) {
-                                            selectedMessageIds = if (id in selectedMessageIds) selectedMessageIds - id else selectedMessageIds + id
+                                        if (selectionActive) {
+                                            selectedMessageIds = toggleSelectedMessageId(selectedMessageIds, id)
                                         }
                                     }
                                 },
-                                onLongPress = { message.id.toLongOrNull()?.let { selectedMessageIds = selectedMessageIds + it } },
+                                // Keep long-press available for per-message actions from #105.
+                                onLongPress = {},
                             )
                         }
 
