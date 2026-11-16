@@ -397,7 +397,6 @@ pub(crate) async fn run_update_worker(mut input: UpdateWorkerInput) {
         match outcome {
             NextOutcome::Item(update) => {
                 update_sequence = update_sequence.saturating_add(1);
-                update_sequence = update_sequence.saturating_add(1);
                 if active_token != operation_token {
                     if let Some(token) = active_token {
                         active_token = emit_lifecycle(
