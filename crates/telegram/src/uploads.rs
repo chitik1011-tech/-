@@ -122,7 +122,9 @@ pub(crate) fn spawn_media_send(
             inner: file,
             transferred: 0,
             last_reported: 0,
-            threshold: (media.size_bytes / 100).max(256 * 1024).min(media.size_bytes),
+            threshold: (media.size_bytes / 100)
+                .max(256 * 1024)
+                .min(media.size_bytes),
             token: active,
             transfers: Arc::clone(&transfers),
             updates: updates.clone(),
@@ -188,7 +190,9 @@ pub(crate) fn spawn_media_send(
             Ok(message) => {
                 let _ = transfers.complete(active);
                 if dedup.should_emit(&message).await {
-                    let _ = updates.send(Ok(CoreEvent::MessageAdded(message.clone()))).await;
+                    let _ = updates
+                        .send(Ok(CoreEvent::MessageAdded(message.clone())))
+                        .await;
                 }
                 let sent = OutgoingSend::sent_media(
                     client_id,
@@ -206,13 +210,22 @@ pub(crate) fn spawn_media_send(
             Err(error) => {
                 let retryable = matches!(
                     error,
-                    CoreError::TransientSend(_) | CoreError::TransientTransport(_) | CoreError::FloodWait { .. }
+                    CoreError::TransientSend(_)
+                        | CoreError::TransientTransport(_)
+                        | CoreError::FloodWait { .. }
                 );
                 if transfers.fail(active).is_ok() {
                     let failed = match error {
-                        CoreError::SendOutcomeUnknown(reason) => OutgoingSend::awaiting_confirmation_media(
-                            client_id, chat_id, media, caption, reason, transfer_generation,
-                        ),
+                        CoreError::SendOutcomeUnknown(reason) => {
+                            OutgoingSend::awaiting_confirmation_media(
+                                client_id,
+                                chat_id,
+                                media,
+                                caption,
+                                reason,
+                                transfer_generation,
+                            )
+                        }
                         CoreError::FloodWait { seconds } => OutgoingSend::failed_media(
                             client_id,
                             chat_id,
@@ -309,7 +322,9 @@ impl AsyncRead for ProgressReader {
                         .base
                         .with_upload_progress(current, this.base.transfer_generation)
                         .with_session_token(this.session_generation, this.session_epoch);
-                    let _ = this.updates.try_send(Ok(CoreEvent::MessageSendStateChanged(progress)));
+                    let _ = this
+                        .updates
+                        .try_send(Ok(CoreEvent::MessageSendStateChanged(progress)));
                     this.last_reported = current;
                 }
             }
