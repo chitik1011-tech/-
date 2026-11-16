@@ -63,6 +63,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
+import com.chitik.telegram.nativebridge.OutgoingTextSendUi
 import java.util.Locale
 import kotlin.math.roundToInt
 
@@ -159,6 +160,7 @@ data class ConversationScreenState(
     val loading: Boolean = false,
     val sending: Boolean = false,
     val sendStatus: String? = null,
+    val outgoingMediaSend: OutgoingTextSendUi? = null,
     val error: String? = null,
     val pendingReactionKeys: Set<String> = emptySet(),
     val reactionErrors: Map<String, String> = emptyMap(),
@@ -255,6 +257,10 @@ fun ConversationScreen(
     onReplyMessage: (ConversationMessageUi) -> Unit = {},
     onOpenReplyTarget: (String) -> Unit = {},
     onCancelReply: () -> Unit = {},
+    onPickPhotoOrVideo: (() -> Unit)? = null,
+    onPickDocument: (() -> Unit)? = null,
+    onRetryMediaSend: (Long) -> Unit = {},
+    onCancelMediaSend: (Long) -> Unit = {},
     onJumpComplete: () -> Unit = {},
     onRetry: () -> Unit,
     onOpenProfile: () -> Unit,
@@ -509,8 +515,45 @@ fun ConversationScreen(
                             text = status,
                             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = if (state.outgoingMediaSend?.isFailure == true) {
+                                MaterialTheme.colorScheme.error
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
                         )
+                    }
+                    state.outgoingMediaSend?.let { mediaSend ->
+                        if (mediaSend.status == "uploading") {
+                            LinearProgressIndicator(
+                                progress = { mediaSend.progressPercent?.div(100f) ?: 0f },
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                            )
+                        }
+                        mediaSend.reason?.takeIf { mediaSend.isFailure }?.let { reason ->
+                            Text(
+                                text = reason,
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                        if (mediaSend.canRetry || mediaSend.canCancel) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                                horizontalArrangement = Arrangement.End,
+                            ) {
+                                if (mediaSend.canRetry) {
+                                    TextButton(onClick = { onRetryMediaSend(mediaSend.clientId) }) {
+                                        Text("Повторить")
+                                    }
+                                }
+                                if (mediaSend.canCancel) {
+                                    TextButton(onClick = { onCancelMediaSend(mediaSend.clientId) }) {
+                                        Text("Отменить")
+                                    }
+                                }
+                            }
+                        }
                     }
                     ComposerBar(
                         draft = state.draft,
@@ -520,6 +563,8 @@ fun ConversationScreen(
                         onDraftChange = onDraftChange,
                         onSend = submitMessage,
                         onSendLocation = { onSendLocation(state.chatId) },
+                        onPickPhotoOrVideo = onPickPhotoOrVideo,
+                        onPickDocument = onPickDocument,
                         replyingToPreview = state.replyingToPreview,
                         onCancelReply = onCancelReply,
                     )
@@ -1598,11 +1643,16 @@ private fun ComposerBar(
     placeholder: String = "Сообщение",
     onCancel: (() -> Unit)? = null,
     onSendLocation: () -> Unit = {},
+    onPickPhotoOrVideo: (() -> Unit)? = null,
+    onPickDocument: (() -> Unit)? = null,
     showLocationAction: Boolean = true,
     replyingToPreview: String? = null,
     onCancelReply: () -> Unit = {},
 ) {
     val canSubmit = draft.isNotBlank() && !sending && canSend
+    var attachmentMenuExpanded by remember { mutableStateOf(false) }
+    val showAttachmentAction = canSendMedia &&
+        (onPickPhotoOrVideo != null || onPickDocument != null)
 
     Surface(
         tonalElevation = 2.dp,
@@ -1637,6 +1687,40 @@ private fun ComposerBar(
                         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 12.dp),
                     ) {
                         Text("📍")
+                    }
+                }
+                if (showAttachmentAction) {
+                    Box {
+                        TextButton(
+                            onClick = { attachmentMenuExpanded = true },
+                            enabled = !sending && canSend,
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 12.dp),
+                        ) {
+                            Text("📎")
+                        }
+                        DropdownMenu(
+                            expanded = attachmentMenuExpanded,
+                            onDismissRequest = { attachmentMenuExpanded = false },
+                        ) {
+                            onPickPhotoOrVideo?.let { pick ->
+                                DropdownMenuItem(
+                                    text = { Text("Фото или видео") },
+                                    onClick = {
+                                        attachmentMenuExpanded = false
+                                        pick()
+                                    },
+                                )
+                            }
+                            onPickDocument?.let { pick ->
+                                DropdownMenuItem(
+                                    text = { Text("Файл") },
+                                    onClick = {
+                                        attachmentMenuExpanded = false
+                                        pick()
+                                    },
+                                )
+                            }
+                        }
                     }
                 }
                 OutlinedTextField(
