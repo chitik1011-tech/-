@@ -17,11 +17,26 @@ class MessageReactionLifecycleTest {
 
         val updated = state.clearPendingReactionsAfterConnectionChange()
 
-        assertTrue(updated.pendingReactionKeys.isEmpty())
+        assertEquals(setOf("8:12"), updated.pendingReactionKeys)
         assertEquals(
             "Результат реакции не подтверждён после смены соединения",
             updated.reactionErrors["-100:12"],
         )
+    }
+
+    @Test
+    fun syncCompletedDoesNotClearPendingReaction() {
+        val state = NativeUiState(
+            pendingReactionKeys = setOf("5:12"),
+            reactionConnectionToken = 4L to 2L,
+        )
+
+        val updated = state.applyConnectionLifecycle(
+            """{"payload":{"token":{"generation":4,"epoch":2},"event":{"type":"sync_completed"}}}""",
+        )
+
+        assertEquals(setOf("5:12"), updated.pendingReactionKeys)
+        assertTrue(updated.reactionErrors.isEmpty())
     }
 
     @Test

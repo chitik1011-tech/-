@@ -42,6 +42,7 @@ data class NativeUiState(
     val contactsLoading: Boolean = false,
     val messages: Map<Long, List<ConversationMessageUi>> = emptyMap(),
     val pendingReactionKeys: Set<String> = emptySet(),
+    val reactionConnectionToken: Pair<Long, Long>? = null,
     val reactionErrors: Map<String, String> = emptyMap(),
     val votingPollIds: Set<Long> = emptySet(),
     val pollVoteErrors: Map<Long, String> = emptyMap(),
@@ -76,6 +77,34 @@ internal fun NativeUiState.applyReactionUpdate(
         pendingReactionKeys = pendingReactionKeys - key,
         reactionErrors = reactionErrors - key,
     )
+}
+
+internal fun NativeUiState.applyConnectionLifecycle(payload: String): NativeUiState {
+    val body = runCatching { JSONObject(payload).optJSONObject("payload") }.getOrNull()
+        ?: return this
+    val token = body.optJSONObject("token")?.let { tokenJson ->
+        val generation = tokenJson.optLong("generation", -1L)
+        val epoch = tokenJson.optLong("epoch", -1L)
+        if (generation < 0L || epoch < 0L) null else generation to epoch
+    }
+    val event = body.optJSONObject("event")
+    val eventType = event?.optString("type")?.takeIf(String::isNotBlank)
+        ?: event?.keys()?.asSequence()?.firstOrNull()
+    val disconnected = eventType in setOf(
+        "transport_lost",
+        "connect_failed",
+        "retry",
+        "logout",
+        "shutdown",
+    )
+    val generationChanged = token != null && reactionConnectionToken != null &&
+        token != reactionConnectionToken
+    val updated = copy(reactionConnectionToken = token ?: reactionConnectionToken)
+    return if (disconnected || generationChanged) {
+        updated.clearPendingReactionsAfterConnectionChange()
+    } else {
+        updated
+    }
 }
 
 internal fun NativeUiState.clearPendingReactionsAfterConnectionChange(): NativeUiState {
@@ -671,7 +700,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         when (type) {
             "connection_lifecycle" -> {
                 _state.update { current ->
-                    current.clearPendingReactionsAfterConnectionChange().copy(
+                    current.applyConnectionLifecycle(payload).copy(
                         lastEventType = type,
                         lastEventPayload = payload,
                     )
