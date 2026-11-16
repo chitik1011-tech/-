@@ -329,7 +329,6 @@ fun ConversationScreen(
 
     actionTarget?.let { message ->
         MessageActionDialog(
-            message = message,
             onDismiss = { actionTarget = null },
             onSelectForForward = {
                 message.id.toLongOrNull()?.let { selectedMessageIds = selectedMessageIds + it }
@@ -452,7 +451,6 @@ private fun MessageBubble(
 
 @Composable
 private fun MessageActionDialog(
-    message: ConversationMessageUi,
     onDismiss: () -> Unit,
     onSelectForForward: () -> Unit,
 ) {
