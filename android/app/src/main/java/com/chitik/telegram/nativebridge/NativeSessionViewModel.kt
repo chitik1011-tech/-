@@ -79,6 +79,7 @@ data class NativeUiState(
     val deletingMessages: Boolean = false,
     val outbox: Map<Long, OutgoingTextSendUi> = emptyMap(),
     val activeTextSendId: Long? = null,
+    val lastTextSendId: Long? = null,
     val activeTextSendChatId: Long? = null,
     val activeTextSendText: String? = null,
     val failedTextSendId: Long? = null,
@@ -204,6 +205,7 @@ internal fun NativeUiState.advanceSelectionGeneration(): NativeUiState = copy(
     selectionGeneration = selectionGeneration + 1,
     deletingMessages = false,
     activeTextSendId = null,
+    lastTextSendId = null,
     activeTextSendChatId = null,
     activeTextSendText = null,
     outbox = emptyMap(),
@@ -683,6 +685,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         _state.update {
             it.copy(
                 activeTextSendId = clientId,
+                lastTextSendId = clientId,
                 activeTextSendChatId = chatId,
                 activeTextSendText = text,
                 failedTextSendId = null,
@@ -1407,6 +1410,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
             current.clearPendingReactionsAfterConnectionChange().copy(
                 outbox = if (authorization == AuthorizationUiStep.Ready) current.outbox else emptyMap(),
                 activeTextSendId = if (authorization == AuthorizationUiStep.Ready) current.activeTextSendId else null,
+                lastTextSendId = if (authorization == AuthorizationUiStep.Ready) current.lastTextSendId else null,
                 activeTextSendChatId = if (authorization == AuthorizationUiStep.Ready) current.activeTextSendChatId else null,
                 activeTextSendText = if (authorization == AuthorizationUiStep.Ready) current.activeTextSendText else null,
                 textSendError = if (authorization == AuthorizationUiStep.Ready) current.textSendError else null,
