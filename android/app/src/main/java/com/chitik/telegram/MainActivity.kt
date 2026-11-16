@@ -149,6 +149,7 @@ private fun TelegramRustApp(
                     messageMutationMessageId = state.messageMutationMessageId,
                     messageMutationSuccessCount = state.messageMutationSuccessCount,
                     messageMutationSuccessChatId = state.messageMutationSuccessChatId,
+                    messageMutationSuccessMessageId = state.messageMutationSuccessMessageId,
                 ),
                 onBack = {
                     selectedChatId = 0L
