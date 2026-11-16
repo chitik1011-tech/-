@@ -8,7 +8,8 @@ async fn load_chats(core: &tg_mobile_core::CoreHandle) {
         .unwrap();
     tokio::time::timeout(std::time::Duration::from_secs(1), async {
         loop {
-            if core.state().chat(2).is_some() {
+            let state = core.state();
+            if state.chat(2).is_some() && state.chat_capabilities.contains_key(&2) {
                 break;
             }
             tokio::task::yield_now().await;
