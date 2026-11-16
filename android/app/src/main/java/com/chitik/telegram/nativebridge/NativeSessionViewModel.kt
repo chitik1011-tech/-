@@ -19,6 +19,7 @@ import com.chitik.telegram.parseContactPage
 import com.chitik.telegram.ConversationPollOptionUi
 import com.chitik.telegram.ConversationPollUi
 import com.chitik.telegram.PeerProfileUi
+import com.chitik.telegram.notifications.NotificationWireParser
 import com.chitik.telegram.notifications.NotificationDecisionPlanner
 import com.chitik.telegram.notifications.TelegramNotificationPublisher
 import com.chitik.telegram.MediaAttachmentUi
@@ -935,42 +936,18 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
             return
         }
         if (type == "message_added") {
-            val message = runCatching {
-                JSONObject(payload).optJSONObject("payload")
-            }.getOrNull() ?: return
-            val chatId = message.optLong("chat_id", 0L)
-            val messageId = message.optLong("id", 0L)
-            if (!message.has("outgoing")) return
-            val outgoing = message.optBoolean("outgoing", false)
+            val incoming = NotificationWireParser.parseLiveMessage(payload) ?: return
             if (_state.value.authorization != AuthorizationUiStep.Ready) return
-            val identity = NotificationDecisionPlanner.Identity(generation, chatId, messageId)
-            if (!notificationPlanner.shouldNotify(identity, outgoing, liveUpdate = true)) return
-            val chat = _state.value.chats.firstOrNull { it.id == chatId }
-            val attachment = message.optJSONArray("attachments")?.optJSONObject(0)
-            val kind = attachment?.optString("kind")
-            val fallback = when (kind) {
-                "photo" -> "Photo"
-                "video" -> "Video"
-                "voice" -> "Voice message"
-                "document" -> "Document"
-                "sticker" -> "Sticker"
-                "animation" -> "Animation"
-                else -> when {
-                    !message.isNull("location") && message.has("location") -> "Location"
-                    message.optBoolean("service_message", false) -> "Service message"
-                    message.optJSONObject("reply_to") != null -> "Reply"
-                    message.optJSONObject("forwarded_from") != null -> "Forwarded message"
-                    else -> "New message"
-                }
-            }
-            val preview = message.optString("text").ifBlank {
-                message.optString("media_caption").ifBlank { fallback }
-            }
+            val identity = NotificationDecisionPlanner.Identity(
+                generation, incoming.chatId, incoming.messageId,
+            )
+            if (!notificationPlanner.shouldNotify(identity, incoming.outgoing, liveUpdate = true)) return
+            val chat = _state.value.chats.firstOrNull { it.id == incoming.chatId }
             notifications.publish(
                 TelegramNotificationPublisher.IncomingMessage(
-                    chatId = chatId,
+                    chatId = incoming.chatId,
                     chatTitle = chat?.title ?: "Telegram",
-                    body = preview,
+                    body = incoming.preview,
                     isGroup = false,
                 ),
             )
