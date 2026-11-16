@@ -1200,6 +1200,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
             "state" -> applyStatePayload(payload)
             "message_send_state_changed" -> {
                 val send = parseOutgoingTextSendEvent(payload)
+                send?.let { cleanupTerminalOutgoingMedia(listOf(it)) }
                 _state.update { current ->
                     if (send == null) current.copy(lastEventType = type, lastEventPayload = "")
                     else current.applyOutgoingTextSend(send).copy(
@@ -1608,6 +1609,25 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         }
     }
 
+    private fun cleanupTerminalOutgoingMedia(sends: Collection<OutgoingTextSendUi>) {
+        val paths = sends.asSequence()
+            .filter { send ->
+                send.media != null && (
+                    send.status == "sent" ||
+                        send.status == "rejected" ||
+                        send.status == "cancelled" ||
+                        (send.status == "failed" && !send.retryable)
+                    )
+            }
+            .mapNotNull { it.media?.path }
+            .distinct()
+            .toList()
+        if (paths.isEmpty()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            paths.forEach { path -> deletePickedMedia(getApplication(), path) }
+        }
+    }
+
     private fun applyStatePayload(payload: String) {
         runCatching {
             val root = JSONObject(payload)
@@ -1625,6 +1645,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
             val ledger = parseOutgoingTextOutbox(root.optJSONObject("send_ledger"))
             ParsedNativeState(authorization, chats, messages, pinnedMessages, contacts, profiles, capabilities, outbox + ledger)
         }.onSuccess { parsed ->
+            cleanupTerminalOutgoingMedia(parsed.outbox.values)
             _state.update {
                 it.copy(
                     authorization = parsed.authorization,
