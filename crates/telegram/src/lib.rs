@@ -10,13 +10,13 @@ mod chats;
 mod config;
 mod contacts;
 mod downloads;
-mod uploads;
 mod error;
 mod ids;
 mod messages;
 mod polls;
 mod profiles;
 mod updates;
+mod uploads;
 
 pub use backend::GrammersBackend;
 pub use config::TelegramConfig;
