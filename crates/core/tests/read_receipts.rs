@@ -74,6 +74,7 @@ fn mark_read_wire_format_is_canonical() {
 fn reducer_only_clears_unread_when_receipt_covers_latest_message() {
     let mut state = CoreState::default();
     state.account.chats.push(ChatSummary {
+            kind: None,
         id: 77,
         title: "chat".into(),
         unread_count: 4,
@@ -101,6 +102,7 @@ fn reducer_only_clears_unread_when_receipt_covers_latest_message() {
 fn inbox_and_outbox_receipts_are_monotonic_and_persisted() {
     let mut state = CoreState::default();
     state.account.chats.push(ChatSummary {
+            kind: None,
         id: 77,
         title: "chat".into(),
         unread_count: 3,
