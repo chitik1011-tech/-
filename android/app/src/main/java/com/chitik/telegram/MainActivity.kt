@@ -4,10 +4,12 @@ import android.Manifest
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -47,6 +49,7 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.chitik.telegram.nativebridge.NativeSessionViewModel
 import com.chitik.telegram.nativebridge.NativeUiState
+import com.chitik.telegram.nativebridge.mediaSendForChat
 import com.chitik.telegram.nativebridge.textSendStatusForChat
 import com.chitik.telegram.deeplink.TelegramDeepLinkRouter
 import com.chitik.telegram.deeplink.TelegramJoinInviteIntent
@@ -99,6 +102,23 @@ private fun TelegramRustApp(
     var replySelectionGeneration by rememberSaveable { mutableLongStateOf(state.selectionGeneration) }
     var pendingLocationChatId by rememberSaveable { mutableLongStateOf(0L) }
     var activeLocationRequest by remember { mutableStateOf<LocationRequestHandle?>(null) }
+    val queuePickedMedia: (Uri?) -> Unit = { uri ->
+        val chatId = selectedChatId
+        val caption = draft
+        if (uri != null && chatId != 0L) {
+            viewModel.sendMediaFromUri(chatId, uri, caption) { accepted ->
+                if (accepted && selectedChatId == chatId && draft == caption) draft = ""
+            }
+        }
+    }
+    val photoPickerLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia(),
+        queuePickedMedia,
+    )
+    val documentPickerLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+        queuePickedMedia,
+    )
     DisposableEffect(lifecycleOwner) {
         if (lifecycleOwner == null) {
             onDispose { }
@@ -270,8 +290,11 @@ private fun TelegramRustApp(
                     messages = messages,
                     draft = draft,
                     loading = state.busy,
-                    sending = state.sendingText && state.activeTextSendChatId == selectedChatId,
-                    sendStatus = state.textSendStatusForChat(selectedChatId),
+                    sending = state.mediaImportInProgress ||
+                        (state.sendingText && state.activeTextSendChatId == selectedChatId),
+                    sendStatus = if (state.mediaImportInProgress) "Подготовка файла…" else
+                        state.textSendStatusForChat(selectedChatId),
+                    outgoingMediaSend = state.mediaSendForChat(selectedChatId),
                     error = state.textSendError ?: state.error,
                     pendingReactionKeys = state.pendingReactionKeys,
                     reactionErrors = state.reactionErrors,
@@ -331,6 +354,14 @@ private fun TelegramRustApp(
                     }
                 },
                 onJumpComplete = { jumpToMessageId = null },
+                onPickPhotoOrVideo = {
+                    photoPickerLauncher.launch(
+                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo),
+                    )
+                },
+                onPickDocument = { documentPickerLauncher.launch(arrayOf("*/*")) },
+                onRetryMediaSend = viewModel::retryMediaSend,
+                onCancelMediaSend = viewModel::cancelMediaSend,
                 onSend = { chatId, text ->
                     chatId.toLongOrNull()?.let { numericChatId ->
                         val target = replyToMessageId
