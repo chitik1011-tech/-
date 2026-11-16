@@ -64,6 +64,7 @@ class MessageReactionLifecycleTest {
         assertTrue(updated.reactionErrors.isEmpty())
     }
 
+    // Delayed broadcasts must not replace the reducer's newer authoritative snapshot.
     @Test
     fun staleReactionSnapshotCannotReplaceNewerVisibleSnapshot() {
         val authoritative = listOf(ConversationReactionUi("emoji", "👍", 4, true))
