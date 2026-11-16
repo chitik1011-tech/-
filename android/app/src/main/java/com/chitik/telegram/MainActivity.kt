@@ -22,6 +22,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
@@ -81,6 +82,10 @@ private fun TelegramRustApp(
     var showForwardTargets by remember { mutableStateOf(false) }
     var forwardingSourceChatId by remember { mutableLongStateOf(0L) }
     var forwardingMessageIds by remember { mutableStateOf<List<Long>>(emptyList()) }
+    LaunchedEffect(state.selectionGeneration, state.authorization) {
+        showForwardTargets = false
+        forwardingMessageIds = emptyList()
+    }
     var confirmedJoinIntent by remember(incomingLink) { mutableStateOf<TelegramJoinInviteIntent?>(null) }
 
     when {
