@@ -33,7 +33,7 @@ pub use connection_machine::{
     Outcome as ConnectionOutcome, SessionGeneration,
 };
 pub use error::{CoreError, Result};
-pub use event::CoreEvent;
+pub use event::{CoreEvent, MessageMutationAction};
 pub use forwarding::{
     ForwardMessagesRequest, ForwardMessagesResult, ForwardOutcome, MAX_FORWARD_MESSAGES,
 };
