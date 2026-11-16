@@ -208,6 +208,12 @@ impl MockTelegramBackend {
 
                 Ok(vec![CoreEvent::MessageAdded(message)])
             }
+            CoreCommand::EditMessage { .. } => Err(CoreError::Backend(
+                "message editing is not implemented by the mock backend".into(),
+            )),
+            CoreCommand::DeleteMessageForEveryone { .. } => Err(CoreError::Backend(
+                "message deletion is not implemented by the mock backend".into(),
+            )),
             CoreCommand::UpdateDraft(_) | CoreCommand::ClearDraft { .. } => Err(
                 CoreError::Backend("draft commands are handled by the core runtime".into()),
             ),
