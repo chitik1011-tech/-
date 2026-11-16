@@ -300,11 +300,15 @@ fun ConversationScreen(
                 )
             }
             state.deleteError?.let { message ->
-                Text(
-                    text = "Ошибка удаления: $message",
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                )
+                Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
+                    Text(
+                        text = "Ошибка удаления: $message",
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    TextButton(onClick = onRetry, enabled = !state.loading) {
+                        Text("Обновить сообщения")
+                    }
+                }
             }
 
             when (contentMode) {
