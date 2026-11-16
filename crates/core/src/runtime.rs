@@ -1216,7 +1216,9 @@ fn apply_event(
         return;
     }
     activity_tracker.apply(&event, Instant::now().into_std());
-    if !event.is_transient() {
+    // Capability snapshots are session-only, but still must reach CoreState so
+    // Rust command authorization and Android controls see Telegram's rights.
+    if !event.is_transient() || matches!(event, CoreEvent::ChatCapabilitiesUpdated(_)) {
         state.reduce(&event);
         let _ = state_tx.send(state.clone());
     }
