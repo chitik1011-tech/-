@@ -240,6 +240,8 @@ impl MockTelegramBackend {
                     service: None,
                     media_caption: None,
                     reply_to: None,
+                    reactions: Vec::new(),
+                    reaction_revision: None,
                 };
                 self.next_message_id += 1;
                 if let Some(chat) = self.chats.iter_mut().find(|chat| chat.id == chat_id) {
