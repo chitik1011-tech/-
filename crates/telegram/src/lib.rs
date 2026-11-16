@@ -5,6 +5,7 @@
 
 mod auth;
 mod backend;
+mod capabilities;
 mod chats;
 mod config;
 mod contacts;

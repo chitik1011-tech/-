@@ -10,6 +10,7 @@ use tokio::{
 use crate::{
     activity::{ChatActivityTracker, CHAT_ACTIVITY_EXPIRY_CHECK_INTERVAL_MS},
     backend::{BackendUpdateReceiver, TelegramBackend},
+    capabilities::CapabilityValue,
     command::CoreCommand,
     connection_machine::{LinkEvent, LinkPhase},
     error::{CoreError, Result},
@@ -399,6 +400,24 @@ where
                     };
                     let mut skip_backend = false;
 
+                    // Keep the permission boundary in Rust: Compose can make a
+                    // control unavailable for usability, but it cannot authorize
+                    // a network operation. Unknown snapshots fail closed.
+                    if let Some(reason) = command_capability_error(&command, &reduced_state) {
+                        for event in
+                            operation_error_events(&command, CoreError::InvalidInput(reason))
+                        {
+                            apply_event(
+                                event,
+                                &mut reduced_state,
+                                &state_tx,
+                                &event_tx_task,
+                                &mut activity_tracker,
+                            );
+                        }
+                        continue;
+                    }
+
                     if let CoreCommand::SendTextReliable {
                         client_id,
                         chat_id,
@@ -774,6 +793,119 @@ fn operation_error_events(command: &CoreCommand, error: CoreError) -> Vec<CoreEv
             },
         )],
         _ => vec![CoreEvent::Error(error.to_string())],
+    }
+}
+
+fn command_capability_error(command: &CoreCommand, state: &CoreState) -> Option<String> {
+    let require_send = |chat_id: i64| match state.chat_capabilities.get(&chat_id) {
+        Some(capabilities) if capabilities.can_send_now() == CapabilityValue::Known(true) => None,
+        Some(capabilities) if capabilities.can_send_now() == CapabilityValue::Known(false) => {
+            Some("Telegram currently does not allow sending in this chat".to_owned())
+        }
+        _ => Some("Telegram send permission is unavailable; refresh chat permissions".to_owned()),
+    };
+    match command {
+        CoreCommand::SendText { chat_id, .. } | CoreCommand::SendTextReliable { chat_id, .. } => {
+            require_send(*chat_id)
+        }
+        CoreCommand::SendLocation { chat_id, .. } => {
+            if let Some(reason) = require_send(*chat_id) {
+                return Some(reason);
+            }
+            if state.chat_capabilities.get(chat_id).map_or(true, |cap| {
+                cap.can_send_media != CapabilityValue::Known(true)
+            }) {
+                Some("Telegram does not confirm media sending is allowed in this chat".into())
+            } else {
+                None
+            }
+        }
+        CoreCommand::ForwardMessages(request) => {
+            let source = state.chat_capabilities.get(&request.source_chat_id);
+            if source.map_or(true, |cap| {
+                cap.can_forward_messages != CapabilityValue::Known(true)
+            }) {
+                return Some(
+                    "Telegram does not confirm forwarding is allowed from this chat".into(),
+                );
+            }
+            if let Some(reason) = require_send(request.destination_chat_id) {
+                return Some(reason);
+            }
+            let forwards_media_or_unknown = request.message_ids.iter().any(|id| {
+                state
+                    .messages
+                    .get(&request.source_chat_id)
+                    .and_then(|messages| messages.iter().find(|message| message.id == *id))
+                    .map_or(true, |message| !message.attachments.is_empty())
+            });
+            if forwards_media_or_unknown
+                && state
+                    .chat_capabilities
+                    .get(&request.destination_chat_id)
+                    .map_or(true, |cap| {
+                        cap.can_send_media != CapabilityValue::Known(true)
+                    })
+            {
+                return Some(
+                    "Telegram does not confirm media sending is allowed in the destination chat"
+                        .into(),
+                );
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod capability_tests {
+    use super::*;
+    use crate::{capabilities::ChatCapabilities, command::CoreCommand};
+
+    fn allowed(chat_id: i64) -> ChatCapabilities {
+        let mut capabilities = ChatCapabilities {
+            chat_id,
+            can_send_messages: CapabilityValue::Known(true),
+            can_forward_messages: CapabilityValue::Known(true),
+            can_send_media: CapabilityValue::Known(true),
+            slow_mode_enabled: CapabilityValue::Known(false),
+            slow_mode_remaining_seconds: CapabilityValue::Known(None),
+            ..ChatCapabilities::default()
+        };
+        capabilities.refresh_derived();
+        capabilities
+    }
+
+    #[test]
+    fn sending_requires_an_authoritative_current_permission() {
+        let command = CoreCommand::SendText {
+            chat_id: 8,
+            text: "hello".into(),
+        };
+        assert!(command_capability_error(&command, &CoreState::default()).is_some());
+        let mut state = CoreState::default();
+        state.chat_capabilities.insert(8, allowed(8));
+        assert_eq!(command_capability_error(&command, &state), None);
+    }
+
+    #[test]
+    fn forwarding_requires_source_and_destination_permissions() {
+        let command = CoreCommand::ForwardMessages(crate::forwarding::ForwardMessagesRequest {
+            request_id: "forward-1".into(),
+            source_chat_id: 2,
+            message_ids: vec![5],
+            destination_chat_id: 3,
+        });
+        let mut state = CoreState::default();
+        state.chat_capabilities.insert(2, allowed(2));
+        assert!(command_capability_error(&command, &state).is_some());
+        state.chat_capabilities.insert(3, allowed(3));
+        assert_eq!(command_capability_error(&command, &state), None);
+        let mut no_media = allowed(3);
+        no_media.can_send_media = CapabilityValue::Known(false);
+        state.chat_capabilities.insert(3, no_media);
+        assert!(command_capability_error(&command, &state).is_some());
     }
 }
 

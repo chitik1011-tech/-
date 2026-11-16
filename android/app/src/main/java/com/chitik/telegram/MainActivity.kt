@@ -223,6 +223,7 @@ private fun TelegramRustApp(
                     reactionErrors = state.reactionErrors,
                     forwardingError = state.forwardError,
                     forwardSuccessCount = state.forwardSuccessCount,
+                    capabilities = state.chatCapabilities[selectedChatId] ?: ChatCapabilitiesUi(),
                 ),
                 onBack = {
                     selectedChatId = 0L
@@ -327,7 +328,19 @@ private fun TelegramRustApp(
             title = { Text("Куда переслать?") },
             text = {
                 androidx.compose.foundation.lazy.LazyColumn(modifier = Modifier.heightIn(max = 360.dp)) {
-                    items(state.chats.filter { it.id != forwardingSourceChatId }, key = { it.id }) { target ->
+                    val sourceMessages = state.messages[forwardingSourceChatId].orEmpty()
+                        .associateBy { it.id.toLongOrNull() }
+                    val requiresMedia = forwardingMessageIds.any { messageId ->
+                        sourceMessages[messageId]?.attachments?.isNotEmpty() != false
+                    }
+                    items(
+                        state.chats.filter { target ->
+                            target.id != forwardingSourceChatId &&
+                                target.capabilities.canSendNow == true &&
+                                (!requiresMedia || target.capabilities.canSendMedia == true)
+                        },
+                        key = { it.id },
+                    ) { target ->
                         TextButton(
                             onClick = {
                                 viewModel.forwardMessages(forwardingSourceChatId, forwardingMessageIds, target.id)

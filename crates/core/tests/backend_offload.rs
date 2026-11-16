@@ -2,8 +2,9 @@ use std::sync::Arc;
 
 use tg_mobile_core::{
     backend_update_channel, spawn_core_with_store, AuthorizationState, BackendFuture,
-    BackendUpdateReceiver, BackendUpdateSender, CoreCommand, CoreEvent, MemoryStateStore,
-    MessageSummary, SearchMessagesRequest, TelegramBackend,
+    BackendUpdateReceiver, BackendUpdateSender, CapabilityValue, ChatCapabilities, ChatKind,
+    CoreCommand, CoreEvent, MemoryStateStore, MessageSummary, SearchMessagesRequest,
+    TelegramBackend,
 };
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio::time::{sleep, timeout, Duration};
@@ -185,7 +186,28 @@ async fn hanging_rpc_does_not_block_updates_or_persistence_tick() {
 async fn shutdown_persists_reliable_send_recovery_without_waiting_for_rpc() {
     let (backend, mut started, _release) = ControlledBackend::new(true);
     let store = MemoryStateStore::default();
+    let updates = backend.update_tx.clone();
     let core = spawn_core_with_store(backend, store.clone());
+    let mut capabilities = ChatCapabilities {
+        chat_id: 42,
+        chat_kind: ChatKind::Private,
+        can_send_messages: CapabilityValue::Known(true),
+        slow_mode_enabled: CapabilityValue::Known(false),
+        slow_mode_remaining_seconds: CapabilityValue::Known(None),
+        ..ChatCapabilities::default()
+    };
+    capabilities.refresh_derived();
+    updates
+        .send(Ok(CoreEvent::ChatCapabilitiesUpdated(capabilities)))
+        .await
+        .unwrap();
+    timeout(Duration::from_secs(1), async {
+        while !core.state().chat_capabilities.contains_key(&42) {
+            sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("capability update was not applied before send");
     core.send(CoreCommand::SendTextReliable {
         client_id: 9,
         chat_id: 42,
