@@ -61,17 +61,25 @@ pub(crate) fn auth_api_error(context: &'static str, error: InvocationError) -> C
             // Never interpolate an arbitrary upstream error string: it can contain
             // request parameters. Only expose explicitly allowlisted RPC classes.
             let detail = match error.name.as_str() {
-                "PHONE_NUMBER_INVALID" => "PHONE_NUMBER_INVALID: enter a valid international phone number",
+                "PHONE_NUMBER_INVALID" => {
+                    "PHONE_NUMBER_INVALID: enter a valid international phone number"
+                }
                 "PHONE_NUMBER_BANNED" => "PHONE_NUMBER_BANNED: Telegram has banned this number",
                 "API_ID_INVALID" => "API_ID_INVALID: check the Telegram API ID and API hash",
-                "API_ID_PUBLISHED_FLOOD" => "API_ID_PUBLISHED_FLOOD: Telegram has restricted this API ID",
+                "API_ID_PUBLISHED_FLOOD" => {
+                    "API_ID_PUBLISHED_FLOOD: Telegram has restricted this API ID"
+                }
                 "PHONE_CODE_INVALID" => "PHONE_CODE_INVALID: incorrect login code",
                 "PHONE_CODE_EXPIRED" => "PHONE_CODE_EXPIRED: request a new login code",
                 "PHONE_CODE_EMPTY" => "PHONE_CODE_EMPTY: enter the login code",
                 "PHONE_CODE_HASH_EMPTY" => "PHONE_CODE_HASH_EMPTY: request a new login code",
                 "PHONE_CODE_HASH_INVALID" => "PHONE_CODE_HASH_INVALID: request a new login code",
-                "SESSION_PASSWORD_NEEDED" => "SESSION_PASSWORD_NEEDED: two-step verification is required",
-                "PASSWORD_HASH_INVALID" => "PASSWORD_HASH_INVALID: incorrect two-step verification password",
+                "SESSION_PASSWORD_NEEDED" => {
+                    "SESSION_PASSWORD_NEEDED: two-step verification is required"
+                }
+                "PASSWORD_HASH_INVALID" => {
+                    "PASSWORD_HASH_INVALID: incorrect two-step verification password"
+                }
                 "PHONE_NUMBER_FLOOD" => "PHONE_NUMBER_FLOOD: too many attempts for this number",
                 "AUTH_RESTART" => "AUTH_RESTART: restart Telegram login",
                 _ => "Telegram rejected the authorization request (unclassified RPC error)",
