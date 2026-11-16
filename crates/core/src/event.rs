@@ -18,6 +18,7 @@ use crate::{
 #[serde(rename_all = "snake_case")]
 pub enum MessageMutationAction {
     Edit,
+    DeleteForMe,
     DeleteForEveryone,
 }
 
