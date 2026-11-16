@@ -97,6 +97,7 @@ class TelegramNotificationPublisher(context: Context) {
             .setWhen(message.timestampMillis)
             .setShowWhen(true)
             .setCategory(Notification.CATEGORY_MESSAGE)
+            .setGroup(MESSAGE_NOTIFICATION_GROUP)
             .setVisibility(Notification.VISIBILITY_PRIVATE)
             .setPublicVersion(
                 Notification.Builder(appContext, channelId)
@@ -160,5 +161,6 @@ class TelegramNotificationPublisher(context: Context) {
         const val GROUP_CHANNEL_ID = "telegram_group_messages"
         const val NOTIFICATION_TAG_PREFIX = "telegram_chat_"
         const val NOTIFICATION_ID = 1
+        const val MESSAGE_NOTIFICATION_GROUP = "telegram_message_chats"
     }
 }
