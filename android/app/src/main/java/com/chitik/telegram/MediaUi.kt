@@ -36,6 +36,7 @@ data class MediaAttachmentUi(
     val width: Int?,
     val height: Int?,
     val durationMs: Long?,
+    val voiceWaveform: List<Int>? = null,
     val filename: String?,
     val downloadState: MediaDownloadUiState,
 ) {
