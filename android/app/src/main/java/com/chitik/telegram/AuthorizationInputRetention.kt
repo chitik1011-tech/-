@@ -7,8 +7,6 @@ package com.chitik.telegram
  * confirms that the authorization flow has moved past the corresponding input step.
  */
 internal enum class AuthorizationInputField {
-    ApiId,
-    ApiHash,
     PhoneNumber,
     LoginCode,
     TwoFactorPassword,
@@ -18,11 +16,6 @@ internal enum class AuthorizationInputField {
 internal fun authorizationInputsToClear(
     state: AuthorizationUiState,
 ): Set<AuthorizationInputField> = buildSet {
-    if (state.isTelegramConfigured) {
-        add(AuthorizationInputField.ApiId)
-        add(AuthorizationInputField.ApiHash)
-    }
-
     if (state.authorization != AuthorizationUiStep.WaitingForPhoneNumber) {
         add(AuthorizationInputField.PhoneNumber)
     }

@@ -177,7 +177,6 @@ private fun TelegramRustApp(
                 isLoading = state.busy,
                 error = state.error,
             ),
-            onConfigureTelegram = viewModel::saveTelegramConfig,
             onStart = viewModel::sendStartCommand,
             onSubmitPhoneNumber = viewModel::submitPhoneNumber,
             onSubmitCode = viewModel::submitCode,
@@ -185,7 +184,7 @@ private fun TelegramRustApp(
             onBack = {
                 if (state.telegramConfigured) {
                     selectedChatId = 0L
-                    viewModel.clearTelegramConfig()
+                    viewModel.restartAuthorization()
                 }
             },
         )

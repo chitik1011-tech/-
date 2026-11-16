@@ -7,24 +7,14 @@ import org.junit.Test
 
 class AuthorizationInputRetentionTest {
     @Test
-    fun configurationInputsRemainOnlyUntilRuntimeConfigIsAccepted() {
-        val needsConfiguration = authorizationInputsToClear(
+    fun configurationFailureClearsAuthorizationInputs() {
+        val cleared = authorizationInputsToClear(
             AuthorizationUiState(
                 authorization = AuthorizationUiStep.Closed,
                 isTelegramConfigured = false,
             ),
         )
-        assertFalse(AuthorizationInputField.ApiId in needsConfiguration)
-        assertFalse(AuthorizationInputField.ApiHash in needsConfiguration)
-
-        val configured = authorizationInputsToClear(
-            AuthorizationUiState(
-                authorization = AuthorizationUiStep.WaitingForPhoneNumber,
-                isTelegramConfigured = true,
-            ),
-        )
-        assertTrue(AuthorizationInputField.ApiId in configured)
-        assertTrue(AuthorizationInputField.ApiHash in configured)
+        assertEquals(AuthorizationInputField.entries.toSet(), cleared)
     }
 
     @Test

@@ -359,19 +359,19 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         }
     }
 
-    fun clearTelegramConfig() {
+    fun restartAuthorization() {
         _state.update { it.copy(busy = true, error = null) }
 
         viewModelScope.launch(Dispatchers.IO) {
             runCatching {
-                TelegramRuntimeConfigStore.clear(getApplication())
-                replaceNativeHandle(config = null)
-            }.onSuccess { newHandle ->
-                lifecycle.runIfOpen {
+                val config = TelegramRuntimeConfigStore.load(getApplication())
+                config to replaceNativeHandle(config)
+            }.onSuccess { (config, newHandle) ->
+                val updated = lifecycle.runIfOpen {
                     _state.update {
                         it.copy(
                             nativeHandle = newHandle,
-                            telegramConfigured = false,
+                            telegramConfigured = config != null,
                             authorization = AuthorizationUiStep.Closed,
                             chats = emptyList(),
                             messages = emptyMap(),
@@ -381,6 +381,9 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                             error = null,
                         )
                     }
+                }
+                if (updated && config != null) {
+                    sendStartCommand()
                 }
             }.onFailure { error ->
                 lifecycle.runIfOpen {
