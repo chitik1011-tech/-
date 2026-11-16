@@ -26,7 +26,9 @@ pub use backend::{
     backend_update_channel, BackendFuture, BackendUpdateReceiver, BackendUpdateSender,
     TelegramBackend, DEFAULT_BACKEND_UPDATE_CAPACITY,
 };
-pub use command::{CoreCommand, MAX_CHAT_LOAD_LIMIT, MAX_EDIT_MESSAGE_TEXT_BYTES, MAX_MESSAGE_LOAD_LIMIT};
+pub use command::{
+    CoreCommand, MAX_CHAT_LOAD_LIMIT, MAX_EDIT_MESSAGE_TEXT_BYTES, MAX_MESSAGE_LOAD_LIMIT,
+};
 pub use connection::ConnectionState;
 pub use connection_machine::{
     ConnectionEpoch, ConnectionMachine, ConnectionToken, LinkError, LinkEvent, LinkPhase,
