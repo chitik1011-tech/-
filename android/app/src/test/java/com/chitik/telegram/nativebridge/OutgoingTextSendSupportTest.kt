@@ -82,4 +82,39 @@ class OutgoingTextSendSupportTest {
         assertFalse(updated.deletingMessages)
         assertEquals(3L, updated.selectionGeneration)
     }
+    @Test
+    fun bulkDeleteAcknowledgementResetsSendingFlag() {
+        val pending = NativeUiState(deletingMessages = true, busy = true, deleteError = "old")
+        val finished = pending.finishBulkDelete(99L, setOf(42L))
+        assertFalse(finished.deletingMessages)
+        assertFalse(finished.busy)
+        assertNull(finished.deleteError)
+    }
+
+    @Test
+    fun combinedLifecyclePreservesExistingReactionLogicAndResetsGeneration() {
+        val initial = NativeUiState(
+            selectionGeneration = 10L,
+            lastConnectionSessionGeneration = 3L,
+            deletingMessages = true,
+            activeTextSendId = 31L,
+            activeTextSendChatId = 99L,
+            activeTextSendText = "hello",
+        )
+        val event = """{"type":"connection_lifecycle","payload":{"token":{"generation":4,"epoch":1},"event":{"type":"ready"}}}"""
+        val updated = initial.applyConnectionLifecycleAndGeneration(event)
+        assertEquals(11L, updated.selectionGeneration)
+        assertFalse(updated.deletingMessages)
+        assertFalse(updated.sendingText)
+        assertEquals("hello", updated.failedTextSendText)
+    }
+
+    @Test
+    fun malformedLifecycleAndOutboxDoNotCrashOrClearExistingMessages() {
+        val initial = NativeUiState(selectionGeneration = 9L, lastConnectionSessionGeneration = 3L)
+        assertEquals(initial, initial.applyConnectionLifecycleAndGeneration("{invalid"))
+        assertNull(parseOutgoingTextSendEvent("[]"))
+        assertTrue(parseOutgoingTextOutbox(null).isEmpty())
+    }
+
 }
