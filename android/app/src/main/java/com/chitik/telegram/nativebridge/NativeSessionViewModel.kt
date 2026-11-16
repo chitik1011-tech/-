@@ -83,6 +83,7 @@ data class NativeUiState(
     val activeTextSendText: String? = null,
     val failedTextSendId: Long? = null,
     val failedTextSendText: String? = null,
+    val textSendError: String? = null,
     val deleteError: String? = null,
     val busy: Boolean = false,
     val lastEventType: String = "none",
@@ -206,8 +207,9 @@ internal fun NativeUiState.advanceSelectionGeneration(): NativeUiState = copy(
     activeTextSendChatId = null,
     activeTextSendText = null,
     outbox = emptyMap(),
-    failedTextSendId = null,
-    failedTextSendText = null,
+    failedTextSendId = activeTextSendId ?: failedTextSendId,
+    failedTextSendText = activeTextSendText ?: failedTextSendText,
+    textSendError = if (activeTextSendId != null) "Сессия сменилась: проверьте, доставлено ли сообщение, перед повтором" else textSendError,
     pinnedMessages = emptyMap(),
     pendingPinnedMessageIds = emptySet(),
     pinnedError = null,
@@ -685,7 +687,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 activeTextSendText = text,
                 failedTextSendId = null,
                 failedTextSendText = null,
-                error = null,
+                textSendError = null,
             )
         }
         val accepted = sendCommand(reliableTextCommand(clientId, chatId, text))
@@ -1407,6 +1409,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 activeTextSendId = if (authorization == AuthorizationUiStep.Ready) current.activeTextSendId else null,
                 activeTextSendChatId = if (authorization == AuthorizationUiStep.Ready) current.activeTextSendChatId else null,
                 activeTextSendText = if (authorization == AuthorizationUiStep.Ready) current.activeTextSendText else null,
+                textSendError = if (authorization == AuthorizationUiStep.Ready) current.textSendError else null,
                 authorization = authorization,
                 selectionGeneration = if (
                     authorization != AuthorizationUiStep.Ready &&
@@ -1474,7 +1477,10 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                     lastEventType = "state",
                     lastEventPayload = payloadWithoutPrivateState(payload),
                     error = null,
-                )
+                ).let { parsedState ->
+                    parsedState.activeTextSendId?.let(parsed.outbox::get)?.let(parsedState::applyOutgoingTextSend)
+                        ?: parsedState
+                }
             }
         }.onFailure { error ->
             _state.update {
