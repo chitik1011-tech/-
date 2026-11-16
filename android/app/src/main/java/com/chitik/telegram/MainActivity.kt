@@ -45,6 +45,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.chitik.telegram.notifications.NotificationPermissionRequester
+import com.chitik.telegram.notifications.TelegramNotificationRoute
 import com.chitik.telegram.nativebridge.NativeSessionViewModel
 import com.chitik.telegram.nativebridge.NativeUiState
 import com.chitik.telegram.deeplink.TelegramDeepLinkRouter
@@ -55,16 +57,28 @@ import com.chitik.telegram.deeplink.TelegramLinkTarget
 
 class MainActivity : ComponentActivity() {
     private var pendingTelegramLink by mutableStateOf<TelegramLinkIntent?>(null)
+    private var pendingNotificationChatId by mutableStateOf<Long?>(null)
+    private var notificationPermissionGranted by mutableStateOf(true)
+    private lateinit var notificationPermissionRequester: NotificationPermissionRequester
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        notificationPermissionRequester = NotificationPermissionRequester(this) { granted ->
+            notificationPermissionGranted = granted
+        }
+        notificationPermissionGranted = notificationPermissionRequester.isGranted()
         enableEdgeToEdge()
         pendingTelegramLink = TelegramDeepLinkRouter.parseIntent(intent?.action, intent?.dataString)
+        pendingNotificationChatId = TelegramNotificationRoute.parse(intent)?.chatId
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     TelegramRustApp(
                         incomingLink = pendingTelegramLink,
+                        incomingNotificationChatId = pendingNotificationChatId,
+                        onDismissNotification = { pendingNotificationChatId = null },
+                        onEnableNotifications = { notificationPermissionRequester.request() },
+                        showEnableNotifications = !notificationPermissionGranted,
                         onDismissLink = { pendingTelegramLink = null },
                     )
                 }
@@ -76,6 +90,7 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         pendingTelegramLink = TelegramDeepLinkRouter.parseIntent(intent.action, intent.dataString)
+        pendingNotificationChatId = TelegramNotificationRoute.parse(intent)?.chatId
     }
 }
 
@@ -83,12 +98,26 @@ class MainActivity : ComponentActivity() {
 private fun TelegramRustApp(
     incomingLink: TelegramLinkIntent?,
     onDismissLink: () -> Unit,
+    incomingNotificationChatId: Long?,
+    onDismissNotification: () -> Unit,
+    onEnableNotifications: () -> Unit,
+    showEnableNotifications: Boolean,
     viewModel: NativeSessionViewModel = viewModel(),
 ) {
     val state by viewModel.state.collectAsState()
     val context = LocalContext.current
     val lifecycleOwner = remember(context) { context.findLifecycleOwner() }
     var selectedChatId by rememberSaveable { mutableLongStateOf(0L) }
+    LaunchedEffect(incomingNotificationChatId, state.authorization, state.chats) {
+        val target = incomingNotificationChatId ?: return@LaunchedEffect
+        if (state.authorization != AuthorizationUiStep.Ready) return@LaunchedEffect
+        // Never navigate to a chat absent from the current authorized account.
+        if (state.chats.any { it.id == target }) {
+            selectedChatId = target
+            viewModel.loadMessages(target)
+        }
+        onDismissNotification()
+    }
     var showContacts by rememberSaveable { mutableStateOf(false) }
     var draft by rememberSaveable { mutableStateOf("") }
     var replyToMessageId by rememberSaveable { mutableStateOf<Long?>(null) }
@@ -97,11 +126,22 @@ private fun TelegramRustApp(
     var replySelectionGeneration by rememberSaveable { mutableLongStateOf(state.selectionGeneration) }
     var pendingLocationChatId by rememberSaveable { mutableLongStateOf(0L) }
     var activeLocationRequest by remember { mutableStateOf<LocationRequestHandle?>(null) }
-    DisposableEffect(lifecycleOwner) {
+    DisposableEffect(lifecycleOwner, selectedChatId, viewModel) {
         if (lifecycleOwner == null) {
-            onDispose { }
+            viewModel.setNotificationVisibility(false, null)
+            onDispose { viewModel.setNotificationVisibility(false, null) }
         } else {
+            viewModel.setNotificationVisibility(
+                lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED),
+                selectedChatId.takeIf { it != 0L },
+            )
             val observer = LifecycleEventObserver { _, event ->
+                if (event == Lifecycle.Event.ON_START) {
+                    viewModel.setNotificationVisibility(true, selectedChatId.takeIf { it != 0L })
+                }
+                if (event == Lifecycle.Event.ON_STOP) {
+                    viewModel.setNotificationVisibility(false, null)
+                }
                 if (event == Lifecycle.Event.ON_STOP) {
                     activeLocationRequest?.cancel()
                     activeLocationRequest = null
@@ -109,7 +149,10 @@ private fun TelegramRustApp(
                 }
             }
             lifecycleOwner.lifecycle.addObserver(observer)
-            onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+            onDispose {
+                lifecycleOwner.lifecycle.removeObserver(observer)
+                viewModel.setNotificationVisibility(false, null)
+            }
         }
     }
     DisposableEffect(selectedChatId) {
@@ -204,6 +247,8 @@ private fun TelegramRustApp(
             isLoading = state.busy,
             error = state.error,
             onRefresh = { viewModel.loadChats() },
+            onEnableNotifications = onEnableNotifications,
+            showEnableNotifications = showEnableNotifications,
             onOpenContacts = {
                 showContacts = true
                 viewModel.loadContacts(offset = 0)

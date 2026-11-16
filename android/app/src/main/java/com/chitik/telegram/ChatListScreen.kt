@@ -63,6 +63,8 @@ fun ChatListScreen(
     onRefresh: () -> Unit,
     onOpenContacts: () -> Unit,
     onChatSelected: (Long) -> Unit,
+    onEnableNotifications: () -> Unit = {},
+    showEnableNotifications: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val contentMode = resolveAsyncContentMode(isLoading, chats.isEmpty(), error != null)
@@ -96,6 +98,9 @@ fun ChatListScreen(
                 )
             }
             Spacer(Modifier.width(8.dp))
+            if (showEnableNotifications) {
+                TextButton(onClick = onEnableNotifications) { Text("Enable alerts") }
+            }
             TextButton(onClick = onOpenContacts) { Text("Contacts") }
             Spacer(Modifier.width(4.dp))
             OutlinedButton(
