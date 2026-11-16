@@ -774,6 +774,14 @@ fn operation_error_events(command: &CoreCommand, error: CoreError) -> Vec<CoreEv
             action: crate::event::MessageMutationAction::DeleteForEveryone,
             error: error.to_string(),
         }],
+        CoreCommand::DeleteMessageForMe { chat_id, message_id } => {
+            vec![CoreEvent::MessageMutationFailed {
+                chat_id: *chat_id,
+                message_id: *message_id,
+                action: crate::event::MessageMutationAction::DeleteForMe,
+                error: error.to_string(),
+            }]
+        }
         _ => vec![CoreEvent::Error(error.to_string())],
     }
 }
