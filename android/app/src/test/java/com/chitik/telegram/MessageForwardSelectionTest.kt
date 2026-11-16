@@ -30,6 +30,13 @@ class MessageForwardSelectionTest {
         assertEquals("first\nsecond", selectedMessageText(messages, setOf(12L, 10L)))
     }
 
+    @Test
+    fun selectModeTapAddsAndRemovesMessages() {
+        val firstTap = toggleSelectedMessageId(emptySet(), 17L)
+        assertEquals(setOf(17L), firstTap)
+        assertEquals(emptySet<Long>(), toggleSelectedMessageId(firstTap, 17L))
+    }
+
     private fun message(id: String) = ConversationMessageUi(
         id = id,
         chatId = "1",
