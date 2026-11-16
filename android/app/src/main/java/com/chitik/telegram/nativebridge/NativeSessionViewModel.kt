@@ -849,6 +849,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                                     message.optJSONArray("attachments") ?: JSONArray(),
                                 ),
                                 forwardedFrom = forwardLabel,
+                                serviceAction = parseServiceAction(message),
                                 poll = polls[chatId to message.optLong("id")],
                             ),
                         )

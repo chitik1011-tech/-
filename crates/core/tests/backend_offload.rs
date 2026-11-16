@@ -121,6 +121,7 @@ fn message(id: i64, chat_id: i64) -> MessageSummary {
         edited: false,
         edit_timestamp_unix: None,
         service_message: false,
+        service: None,
         media_caption: None,
         reply_to: None,
     }

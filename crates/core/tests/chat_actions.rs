@@ -93,6 +93,7 @@ fn incoming_message_for_unknown_chat_does_not_invent_chat_metadata() {
         edited: false,
         edit_timestamp_unix: None,
         service_message: false,
+        service: None,
         media_caption: None,
         reply_to: None,
     }));

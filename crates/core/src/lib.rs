@@ -14,6 +14,7 @@ pub mod peer;
 pub mod poll;
 pub mod runtime;
 pub mod search;
+pub mod service_message;
 pub mod selection;
 pub mod send;
 pub mod state;
@@ -44,6 +45,7 @@ pub use model::{
     MediaAttachment, MessageHistoryState, MessageSummary, ReadDirection, ReadReceipt,
     ReplyMetadata,
 };
+pub use service_message::{ServiceAction, ServiceIcon, ServiceMessage, ServicePresentation, ServiceTone};
 pub use peer::{
     parse_peer_reference, MessageLink, MessageLinkMetadata, MessageLinkResolution, MessagePeer,
     PeerParseError, PeerReference, PeerResolution, MAX_PEER_REFERENCE_LENGTH,

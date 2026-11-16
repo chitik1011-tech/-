@@ -99,6 +99,7 @@ data class ConversationMessageUi(
     val pollVoting: Boolean = false,
     val pollError: String? = null,
     val forwardedFrom: String? = null,
+    val serviceAction: ServiceActionUi? = null,
 )
 
 data class ConversationScreenState(
@@ -350,6 +351,22 @@ private fun MessageBubble(
     onClick: () -> Unit,
     onLongPress: () -> Unit,
 ) {
+    message.serviceAction?.let { action ->
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f),
+                shape = RoundedCornerShape(14.dp),
+            ) {
+                Text(
+                    text = "•  ${action.displayText()}  •",
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        return
+    }
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = if (message.isOutgoing) Arrangement.End else Arrangement.Start,
