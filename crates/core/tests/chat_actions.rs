@@ -221,6 +221,16 @@ async fn chat_action_requires_authorization() {
     core.send(CoreCommand::MuteChat { chat_id: 2 })
         .await
         .unwrap();
-    assert!(matches!(events.recv().await.unwrap(), CoreEvent::Error(_)));
+    // LoadChats publishes the state and then broadcasts its capability update.
+    // Ignore that possible in-flight notification before checking our action error.
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if matches!(events.recv().await.unwrap(), CoreEvent::Error(_)) {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("unauthorized chat action did not report an error");
     assert_eq!(core.state().chat(2).unwrap().muted, Some(false));
 }
