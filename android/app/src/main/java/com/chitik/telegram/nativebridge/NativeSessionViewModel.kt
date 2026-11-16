@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.chitik.telegram.AuthorizationUiStep
+import com.chitik.telegram.ChatKindUi
 import com.chitik.telegram.ChatListEntry
 import com.chitik.telegram.ChatListPreview
 import com.chitik.telegram.ChatCapabilitiesUi
@@ -1041,7 +1042,8 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                     chatId = incoming.chatId,
                     chatTitle = chat?.title ?: "Telegram",
                     body = incoming.preview,
-                    isGroup = false,
+                    isGroup = chat?.kind == ChatKindUi.Group ||
+                        chat?.kind == ChatKindUi.Supergroup || chat?.kind == ChatKindUi.Channel,
                 ),
             )
         }
@@ -1592,6 +1594,13 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 ChatListEntry(
                     id = chat.optLong("id"),
                     title = chat.optString("title", "Chat"),
+                    kind = when (chat.optString("kind")) {
+                        "private" -> ChatKindUi.Private
+                        "group" -> ChatKindUi.Group
+                        "supergroup" -> ChatKindUi.Supergroup
+                        "channel" -> ChatKindUi.Channel
+                        else -> ChatKindUi.Unknown
+                    },
                     unreadCount = chat.optLong("unread_count", 0L),
                     lastMessage = lastMessage?.let {
                         ChatListPreview(
