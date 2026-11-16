@@ -503,6 +503,12 @@ impl CoreState {
             CoreEvent::PollVoteFailed { error, .. } => {
                 self.last_error = Some(error.clone());
             }
+            CoreEvent::MessagesForwarded(result) => {
+                self.last_error = result.outcomes.iter().find_map(|outcome| match outcome {
+                    crate::forwarding::ForwardOutcome::Failed { error, .. } => Some(error.clone()),
+                    crate::forwarding::ForwardOutcome::Forwarded { .. } => None,
+                });
+            }
             CoreEvent::MessageSendStateChanged(update) => {
                 let client_id = update.client_id;
                 if let Some(existing) = self.send_ledger.get(&client_id) {

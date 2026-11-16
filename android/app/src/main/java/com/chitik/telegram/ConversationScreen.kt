@@ -17,6 +17,8 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -96,6 +98,7 @@ data class ConversationMessageUi(
     val poll: ConversationPollUi? = null,
     val pollVoting: Boolean = false,
     val pollError: String? = null,
+    val forwardedFrom: String? = null,
 )
 
 data class ConversationScreenState(
@@ -106,7 +109,12 @@ data class ConversationScreenState(
     val loading: Boolean = false,
     val sending: Boolean = false,
     val error: String? = null,
+    val forwardingError: String? = null,
+    val forwardSuccessCount: Long = 0,
 )
+
+internal fun selectedForwardMessageIds(messages: List<ConversationMessageUi>, selectedIds: Set<Long>): List<Long> =
+    messages.mapNotNull { it.id.toLongOrNull() }.filter { it in selectedIds }.distinct()
 
 /**
  * Stateless conversation UI. Message history and poll results always come from the Rust-backed
@@ -120,6 +128,7 @@ fun ConversationScreen(
     onDraftChange: (String) -> Unit,
     onSend: (chatId: String, text: String) -> Unit,
     onPollVote: (poll: ConversationPollUi, optionIds: List<List<Int>>) -> Unit,
+    onForward: (chatId: Long, messageIds: List<Long>) -> Unit,
     onRetry: () -> Unit,
     onDownloadMedia: (messageId: Long, attachmentIndex: Int, retry: Boolean) -> Unit,
     onCancelMedia: (messageId: Long, attachmentIndex: Int) -> Unit,
@@ -128,6 +137,11 @@ fun ConversationScreen(
 ) {
     val listState = rememberLazyListState()
     var viewerKey by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedMessageIds by remember(state.chatId) { mutableStateOf<Set<Long>>(emptySet()) }
+    // Only a server-confirmed, fully successful forward ends selection mode.
+    LaunchedEffect(state.forwardSuccessCount) {
+        if (state.forwardSuccessCount > 0L) selectedMessageIds = emptySet()
+    }
     val contentMode = resolveAsyncContentMode(
         isLoading = state.loading,
         isEmpty = state.messages.isEmpty(),
@@ -170,19 +184,33 @@ fun ConversationScreen(
                     }
                 },
                 navigationIcon = {
-                    TextButton(onClick = onBack) {
+                    TextButton(onClick = {
+                        if (selectedMessageIds.isNotEmpty()) selectedMessageIds = emptySet() else onBack()
+                    }) {
                         Text("←", style = MaterialTheme.typography.titleLarge)
+                    }
+                },
+                actions = {
+                    if (selectedMessageIds.isNotEmpty()) {
+                        TextButton(onClick = {
+                            val ordered = selectedForwardMessageIds(state.messages, selectedMessageIds)
+                            state.chatId.toLongOrNull()?.let { onForward(it, ordered) }
+                        }) { Text("Переслать (${selectedMessageIds.size})") }
                     }
                 },
             )
         },
         bottomBar = {
-            ComposerBar(
-                draft = state.draft,
-                sending = state.sending,
-                onDraftChange = onDraftChange,
-                onSend = submitMessage,
-            )
+            if (selectedMessageIds.isEmpty()) {
+                ComposerBar(
+                    draft = state.draft,
+                    sending = state.sending,
+                    onDraftChange = onDraftChange,
+                    onSend = submitMessage,
+                )
+            } else {
+                TextButton(onClick = { selectedMessageIds = emptySet() }) { Text("Отменить выбор") }
+            }
         },
     ) { innerPadding ->
         Column(
@@ -198,6 +226,13 @@ fun ConversationScreen(
                     retryEnabled = !state.loading,
                     onRetry = onRetry,
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                )
+            }
+            state.forwardingError?.let { message ->
+                Text(
+                    text = "Ошибка пересылки: $message",
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                 )
             }
 
@@ -244,6 +279,15 @@ fun ConversationScreen(
                                     viewerKey = "${message.id}:${attachment.index}"
                                 },
                                 onOpenDocument = onOpenDocument,
+                                selected = message.id.toLongOrNull()?.let { it in selectedMessageIds } == true,
+                                onClick = {
+                                    message.id.toLongOrNull()?.let { id ->
+                                        if (selectedMessageIds.isNotEmpty()) {
+                                            selectedMessageIds = if (id in selectedMessageIds) selectedMessageIds - id else selectedMessageIds + id
+                                        }
+                                    }
+                                },
+                                onLongPress = { message.id.toLongOrNull()?.let { selectedMessageIds = selectedMessageIds + it } },
                             )
                         }
 
@@ -293,6 +337,7 @@ fun ConversationScreen(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun MessageBubble(
     message: ConversationMessageUi,
@@ -301,20 +346,25 @@ private fun MessageBubble(
     onCancelMedia: (attachmentIndex: Int) -> Unit,
     onOpenViewer: (MediaAttachmentUi) -> Unit,
     onOpenDocument: (MediaAttachmentUi) -> Unit,
+    selected: Boolean,
+    onClick: () -> Unit,
+    onLongPress: () -> Unit,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = if (message.isOutgoing) Arrangement.End else Arrangement.Start,
     ) {
         Surface(
-            modifier = Modifier.fillMaxWidth(0.84f),
+            modifier = Modifier
+                .fillMaxWidth(0.84f)
+                .combinedClickable(onClick = onClick, onLongClick = onLongPress),
             shape = RoundedCornerShape(
                 topStart = 18.dp,
                 topEnd = 18.dp,
                 bottomEnd = if (message.isOutgoing) 6.dp else 18.dp,
                 bottomStart = if (message.isOutgoing) 18.dp else 6.dp,
             ),
-            color = if (message.isOutgoing) {
+            color = if (selected) MaterialTheme.colorScheme.secondaryContainer else if (message.isOutgoing) {
                 MaterialTheme.colorScheme.primaryContainer
             } else {
                 MaterialTheme.colorScheme.surfaceVariant
@@ -336,7 +386,13 @@ private fun MessageBubble(
                     )
                     Spacer(Modifier.height(8.dp))
                 }
-
+                message.forwardedFrom?.let { source ->
+                    Text(
+                        text = "Переслано от $source",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 if (message.text.isNotBlank()) {
                     Text(
                         text = message.text,

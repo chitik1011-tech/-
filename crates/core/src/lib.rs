@@ -7,6 +7,7 @@ pub mod connection;
 pub mod connection_machine;
 pub mod error;
 pub mod event;
+pub mod forwarding;
 pub mod mock;
 pub mod model;
 pub mod peer;
@@ -33,6 +34,9 @@ pub use connection_machine::{
 };
 pub use error::{CoreError, Result};
 pub use event::CoreEvent;
+pub use forwarding::{
+    ForwardMessagesRequest, ForwardMessagesResult, ForwardOutcome, MAX_FORWARD_MESSAGES,
+};
 pub use mock::MockTelegramBackend;
 pub use model::{
     AccountState, AttachmentDownloadState, AttachmentKind, AttachmentThumbnail, AuthorizationState,

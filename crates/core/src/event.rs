@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     connection::ConnectionState,
     connection_machine::{ConnectionToken, LinkEvent},
+    forwarding::ForwardMessagesResult,
     model::{
         AccountState, AttachmentDownloadState, AuthorizationState, ChatActivityKind, ChatSummary,
         MessageSummary,
@@ -113,6 +114,8 @@ pub enum CoreEvent {
         poll_id: i64,
         error: String,
     },
+    /// Forward results; successful messages also arrive as `MessageAdded`.
+    MessagesForwarded(ForwardMessagesResult),
     MessageSendStateChanged(OutgoingSend),
     /// `generation` must monotonically increase per (chat_id, user_id).
     ChatActivityChanged {
@@ -174,6 +177,7 @@ impl CoreEvent {
             Self::PollUpdated(_) => "poll_updated",
             Self::PollVoteSubmitted { .. } => "poll_vote_submitted",
             Self::PollVoteFailed { .. } => "poll_vote_failed",
+            Self::MessagesForwarded(_) => "messages_forwarded",
             Self::MessageSendStateChanged(_) => "message_send_state_changed",
             Self::ChatActivityChanged { .. } => "chat_activity_changed",
             Self::ChatActivityEnded { .. } => "chat_activity_ended",
@@ -191,6 +195,7 @@ impl CoreEvent {
             self,
             Self::PollVoteSubmitted { .. }
                 | Self::PollVoteFailed { .. }
+                | Self::MessagesForwarded(_)
                 | Self::ChatActivityChanged { .. }
                 | Self::ChatActivityEnded { .. }
                 | Self::ChatActivityExpired { .. }

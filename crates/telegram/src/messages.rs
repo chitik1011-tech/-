@@ -35,10 +35,28 @@ pub(crate) fn message_to_summary(message: &Message) -> MessageSummary {
         .and_then(media_to_attachment)
         .into_iter()
         .collect();
-    summary.forwarded_from = message
-        .forward_header()
-        .is_some()
-        .then(ForwardedFrom::default);
+    summary.forwarded_from = message.forward_header().map(|header| {
+        let tl::enums::MessageFwdHeader::Header(header) = header;
+        let mut forwarded = ForwardedFrom {
+            timestamp_unix: Some(i64::from(header.date)),
+            sender_display_name: header.from_name,
+            ..ForwardedFrom::default()
+        };
+        if let Some(peer) = header.from_id {
+            match peer {
+                tl::enums::Peer::User(peer) => {
+                    forwarded.sender_id = Some(peer.user_id);
+                }
+                tl::enums::Peer::Chat(peer) => {
+                    forwarded.chat_id = Some(peer.chat_id);
+                }
+                tl::enums::Peer::Channel(peer) => {
+                    forwarded.channel_id = Some(peer.channel_id);
+                }
+            }
+        }
+        forwarded
+    });
     summary.edited = edit_timestamp_unix.is_some();
     summary.edit_timestamp_unix = edit_timestamp_unix;
     summary.service_message = message.action().is_some();

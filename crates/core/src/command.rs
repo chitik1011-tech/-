@@ -34,6 +34,7 @@ pub enum CoreCommand {
         max_message_id: i64,
     },
     SearchMessages(SearchMessagesRequest),
+    ForwardMessages(crate::forwarding::ForwardMessagesRequest),
     SendText {
         chat_id: i64,
         text: String,
@@ -117,6 +118,7 @@ impl CoreCommand {
             Self::LoadMessagesPage { .. } => "load_messages_page",
             Self::MarkRead { .. } => "mark_read",
             Self::SearchMessages(_) => "search_messages",
+            Self::ForwardMessages(_) => "forward_messages",
             Self::SendText { .. } => "send_text",
             Self::SendTextReliable { .. } => "send_text_reliable",
             Self::VotePoll { .. } => "vote_poll",
@@ -201,6 +203,7 @@ impl CoreCommand {
                 }
             }
             Self::SearchMessages(request) => request.validate(),
+            Self::ForwardMessages(request) => request.validate(),
             Self::SendText { chat_id, text } => {
                 validate_chat_id(*chat_id)?;
                 require_non_blank("message text", text)
