@@ -357,6 +357,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         notifications.cancelAll()
         val creation = lifecycle.beginReplacement()
             ?: throw IllegalStateException("Native session replacement is already in progress")
+        notificationPlanner.reset(creation.generation)
 
         var createdHandle = 0L
         try {
