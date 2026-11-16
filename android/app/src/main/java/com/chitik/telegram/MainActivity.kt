@@ -86,6 +86,7 @@ private fun TelegramRustApp(
     viewModel: NativeSessionViewModel = viewModel(),
 ) {
     val state by viewModel.state.collectAsState()
+    val voicePlayback by viewModel.voicePlaybackState.collectAsState()
     val context = LocalContext.current
     val lifecycleOwner = remember(context) { context.findLifecycleOwner() }
     var selectedChatId by rememberSaveable { mutableLongStateOf(0L) }
@@ -244,6 +245,8 @@ private fun TelegramRustApp(
             }
 
             ConversationScreen(
+                voicePlayback = voicePlayback,
+                onVoiceToggle = viewModel::toggleVoicePlayback,
                 state = ConversationScreenState(
                     chatId = selectedChatId.toString(),
                     chatTitle = chat?.title ?: contact?.displayName.orEmpty(),
