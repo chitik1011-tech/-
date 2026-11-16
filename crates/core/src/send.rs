@@ -28,7 +28,10 @@ pub struct OutgoingMediaAttachment {
 
 impl OutgoingMediaAttachment {
     pub fn validate(&self) -> Result<(), String> {
-        if self.path.len() > 4096 || !Path::new(&self.path).is_absolute() || self.path.contains('\0') {
+        if self.path.len() > 4096
+            || !Path::new(&self.path).is_absolute()
+            || self.path.contains('\0')
+        {
             return Err("media path must be an absolute local path".into());
         }
         if self.file_name.trim().is_empty()
@@ -83,7 +86,12 @@ impl OutgoingSend {
         text: impl Into<String>,
         message_id: i64,
     ) -> Self {
-        Self::text_send(client_id, chat_id, text, OutgoingSendState::Sent { message_id })
+        Self::text_send(
+            client_id,
+            chat_id,
+            text,
+            OutgoingSendState::Sent { message_id },
+        )
     }
 
     pub fn failed(
@@ -327,11 +335,22 @@ pub enum OutgoingSendState {
         bytes_transferred: u64,
         total_bytes: u64,
     },
-    AwaitingConfirmation { reason: String },
-    FloodWait { seconds: u32 },
-    Sent { message_id: i64 },
-    Failed { reason: String, retryable: bool },
-    Rejected { reason: String },
+    AwaitingConfirmation {
+        reason: String,
+    },
+    FloodWait {
+        seconds: u32,
+    },
+    Sent {
+        message_id: i64,
+    },
+    Failed {
+        reason: String,
+        retryable: bool,
+    },
+    Rejected {
+        reason: String,
+    },
 }
 
 impl OutgoingSendState {
