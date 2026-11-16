@@ -128,12 +128,13 @@ internal fun NativeUiState.applyOutgoingTextSend(send: OutgoingTextSendUi): Nati
             failedTextSendText = activeTextSendText,
             textSendError = send.reason ?: "Отправка сообщения не удалась",
         )
-        send.status == "sent" || send.status == "cancelled" -> copy(
-            outbox = updated,
-            activeTextSendId = null,
-            activeTextSendChatId = null,
-            activeTextSendText = null,
-        )
+        send.status == "sent" || send.status == "cancelled" ||
+            send.status == "awaiting_confirmation" -> copy(
+                outbox = updated,
+                activeTextSendId = null,
+                activeTextSendChatId = null,
+                activeTextSendText = null,
+            )
         else -> copy(outbox = updated)
     }
 }
