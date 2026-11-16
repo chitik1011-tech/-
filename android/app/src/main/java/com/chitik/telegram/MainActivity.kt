@@ -90,6 +90,9 @@ private fun TelegramRustApp(
     val context = LocalContext.current
     val lifecycleOwner = remember(context) { context.findLifecycleOwner() }
     var selectedChatId by rememberSaveable { mutableLongStateOf(0L) }
+    LaunchedEffect(selectedChatId) {
+        viewModel.stopVoicePlayback()
+    }
     var showContacts by rememberSaveable { mutableStateOf(false) }
     var draft by rememberSaveable { mutableStateOf("") }
     var replyToMessageId by rememberSaveable { mutableStateOf<Long?>(null) }
