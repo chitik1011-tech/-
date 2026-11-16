@@ -573,6 +573,21 @@ mod tests {
     }
 
     #[test]
+    fn accepts_reaction_commands_over_the_canonical_json_jni_contract() {
+        let parsed = decode_command(
+            r#"{"type":"add_reaction","payload":{"chat_id":42,"message_id":7,"reaction":{"type":"custom_emoji","value":12345}}}"#,
+        );
+        assert!(matches!(
+            parsed,
+            Ok(CoreCommand::AddReaction {
+                chat_id: 42,
+                message_id: 7,
+                reaction: tg_mobile_core::MessageReactionType::CustomEmoji(12345),
+            })
+        ));
+    }
+
+    #[test]
     fn rejects_noncanonical_command_payload() {
         let parsed = decode_command(r#"{"type":"set_phone_number","phone_number":"123"}"#);
         assert!(parsed.is_err());
@@ -591,5 +606,26 @@ mod tests {
         let event = CoreEvent::Error("test".to_owned());
         let encoded = encode_event(&event);
         assert!(matches!(encoded, Ok(payload) if payload.contains("\"type\":\"error\"")));
+    }
+
+    #[test]
+    fn serializes_reaction_updates_with_stable_event_kind() {
+        let event = CoreEvent::MessageReactionsUpdated {
+            chat_id: 42,
+            message_id: 7,
+            reactions: vec![tg_mobile_core::MessageReaction {
+                reaction: tg_mobile_core::MessageReactionType::Emoji("👍".into()),
+                count: 2,
+                chosen_by_me: true,
+            }],
+            revision: tg_mobile_core::ReactionRevision {
+                token: Default::default(),
+                sequence: 1,
+            },
+        };
+        let encoded = encode_event(&event);
+        assert!(matches!(encoded, Ok(payload)
+            if event.kind() == "message_reactions_updated"
+                && payload.contains("\"chosen_by_me\":true")));
     }
 }
