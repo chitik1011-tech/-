@@ -5,7 +5,7 @@ use std::{
 
 use grammers_client::{
     Client,
-    media::{Document, Geo, InputMedia, InputVideo, Media, Photo, PhotoSize, Uploaded},
+    media::{Attribute, Document, Geo, InputMedia, Media, Photo, PhotoSize, Uploaded},
     message::{InputMessage, Message},
     sender::InvocationError,
     session::types::{PeerKind, PeerRef},
@@ -674,18 +674,17 @@ pub(crate) async fn send_media_idempotent(
 
     let media = match attachment.kind {
         OutgoingMediaKind::Photo => InputMedia::new().photo(uploaded),
-        OutgoingMediaKind::Video => {
-            let mut video = InputVideo::new(uploaded)
-                .mime_type(&attachment.mime_type)
-                .supports_streaming(true);
-            if let Some(duration_ms) = attachment.video_duration_ms {
-                video = video.duration(Duration::from_millis(duration_ms));
-            }
-            if let (Some(width), Some(height)) = (attachment.video_width, attachment.video_height) {
-                video = video.size(width as i32, height as i32);
-            }
-            video.into()
-        }
+        OutgoingMediaKind::Video => InputMedia::new()
+            .document(uploaded)
+            .mime_type(&attachment.mime_type)
+            .attribute(Attribute::Video {
+                round_message: false,
+                supports_streaming: true,
+                duration: Duration::from_millis(attachment.video_duration_ms.unwrap_or_default()),
+                w: attachment.video_width.unwrap_or_default() as i32,
+                h: attachment.video_height.unwrap_or_default() as i32,
+            })
+            .attribute(Attribute::FileName(attachment.file_name.clone()))
         OutgoingMediaKind::Document => InputMedia::new()
             .document(uploaded)
             .mime_type(&attachment.mime_type),
