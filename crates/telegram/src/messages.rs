@@ -684,7 +684,7 @@ pub(crate) async fn send_media_idempotent(
                 w: attachment.video_width.unwrap_or_default() as i32,
                 h: attachment.video_height.unwrap_or_default() as i32,
             })
-            .attribute(Attribute::FileName(attachment.file_name.clone()))
+            .attribute(Attribute::FileName(attachment.file_name.clone())),
         OutgoingMediaKind::Document => InputMedia::new()
             .document(uploaded)
             .mime_type(&attachment.mime_type),
