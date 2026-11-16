@@ -50,7 +50,7 @@ pub(crate) fn profile_from_peer(peer_id: i64, peer: &Peer) -> PeerProfile {
         Peer::Group(group) => {
             profile.kind = PeerKind::BasicGroup;
             if let tl::enums::Chat::Chat(raw) = &group.raw {
-                profile.member_count = u32::try_from(raw.participants_count).ok();
+                set_member_count(profile, Some(raw.participants_count));
             }
         }
         Peer::Channel(channel) => {
@@ -59,10 +59,7 @@ pub(crate) fn profile_from_peer(peer_id: i64, peer: &Peer) -> PeerProfile {
                 channel.raw.megagroup,
                 channel.raw.gigagroup,
             );
-            profile.member_count = channel
-                .raw
-                .participants_count
-                .and_then(|count| u32::try_from(count).ok());
+            set_member_count(profile, channel.raw.participants_count);
             profile.is_verified = Some(channel.raw.verified);
             profile.is_scam = Some(channel.raw.scam);
             profile.is_fake = Some(channel.raw.fake);
@@ -79,9 +76,9 @@ pub(crate) fn profile_from_peer(peer_id: i64, peer: &Peer) -> PeerProfile {
                 profile.can_post_messages = Some(rights.post_messages);
             }
         }
-        Peer::Community(_) => {
-            profile.kind = PeerKind::Supergroup;
-        }
+        // Grammers 0.12 exposes Community as a minimal snapshot without a
+        // full-community metadata RPC; keep unsupported type details unknown.
+        Peer::Community(_) => {}
     }
     profile
 }
@@ -150,7 +147,7 @@ pub(crate) async fn hydrate_profile(
                     if let Ok(tl::enums::users::UserFull::Full(full)) =
                         client.invoke(&request).await
                     {
-                        profile.bio = non_empty(full.full_user.about);
+                        set_profile_about(&mut profile, &full.full_user.about);
                     }
                 }
             }
@@ -158,10 +155,8 @@ pub(crate) async fn hydrate_profile(
         Peer::Group(group) => {
             if let tl::enums::Chat::Chat(raw) = &group.raw {
                 let request = tl::functions::messages::GetFullChat { chat_id: raw.id };
-                if let Ok(tl::enums::messages::ChatFull::Full(full)) =
-                    client.invoke(&request).await
-                {
-                    profile.bio = non_empty(full.full_chat.about());
+                if let Ok(tl::enums::messages::ChatFull::Full(full)) = client.invoke(&request).await {
+                    set_profile_about(&mut profile, &full.full_chat.about());
                 }
             }
         }
@@ -173,14 +168,10 @@ pub(crate) async fn hydrate_profile(
                         access_hash,
                     }),
                 };
-                if let Ok(tl::enums::messages::ChatFull::Full(full)) =
-                    client.invoke(&request).await
-                {
-                    profile.bio = non_empty(full.full_chat.about());
+                if let Ok(tl::enums::messages::ChatFull::Full(full)) = client.invoke(&request).await {
+                    set_profile_about(&mut profile, &full.full_chat.about());
                     if let tl::enums::ChatFull::ChannelFull(channel_full) = &full.full_chat {
-                        if let Some(count) = channel_full.participants_count {
-                            profile.member_count = u32::try_from(count).ok();
-                        }
+                        set_member_count(&mut profile, channel_full.participants_count);
                     }
                 }
             }
@@ -189,9 +180,13 @@ pub(crate) async fn hydrate_profile(
     }
 }
 
-fn non_empty(value: String) -> Option<String> {
+fn set_profile_about(profile: &mut PeerProfile, value: &str) {
     let value = value.trim();
-    (!value.is_empty()).then(|| value.to_owned())
+    profile.bio = (!value.is_empty()).then(|| value.to_owned());
+}
+
+fn set_member_count(profile: &mut PeerProfile, count: Option<i32>) {
+    profile.member_count = count.and_then(|count| u32::try_from(count).ok());
 }
 
 fn channel_profile_kind(broadcast: bool, megagroup: bool, gigagroup: bool) -> PeerKind {
@@ -230,5 +225,27 @@ mod tests {
             PeerKind::Supergroup
         );
         assert_eq!(channel_profile_kind(false, false, false), PeerKind::Unknown);
+    }
+
+    #[test]
+    fn full_profile_description_and_member_count_use_only_available_values() {
+        let mut profile = PeerProfile::unknown(51);
+        set_profile_about(&mut profile, "  A public description  ");
+        set_member_count(&mut profile, Some(42));
+        assert_eq!(profile.bio.as_deref(), Some("A public description"));
+        assert_eq!(profile.member_count, Some(42));
+
+        set_profile_about(&mut profile, "  ");
+        set_member_count(&mut profile, None);
+        assert_eq!(profile.bio, None);
+        assert_eq!(profile.member_count, None);
+    }
+
+    #[test]
+    fn invalid_member_count_and_community_kind_remain_unknown() {
+        let mut profile = PeerProfile::unknown(-901);
+        set_member_count(&mut profile, Some(-1));
+        assert_eq!(profile.member_count, None);
+        assert_eq!(profile.kind, PeerKind::Unknown);
     }
 }
