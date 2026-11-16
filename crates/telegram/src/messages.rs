@@ -231,7 +231,9 @@ fn document_attachment(
 }
 
 fn voice_waveform(document: &Document) -> Option<Vec<u8>> {
-    let tl::enums::Document::Document(raw) = document.raw.document.as_ref()?;
+    let tl::enums::Document::Document(raw) = document.raw.document.as_ref()? else {
+        return None;
+    };
     raw.attributes.iter().find_map(|attribute| match attribute {
         tl::enums::DocumentAttribute::Audio(audio) if audio.voice => audio.waveform.clone(),
         _ => None,
