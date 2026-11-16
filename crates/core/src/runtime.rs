@@ -743,6 +743,21 @@ fn operation_error_events(command: &CoreCommand, error: CoreError) -> Vec<CoreEv
             poll_id: *poll_id,
             error: error.to_string(),
         }],
+        CoreCommand::AddReaction {
+            chat_id,
+            message_id,
+            ..
+        }
+        | CoreCommand::RemoveReaction {
+            chat_id,
+            message_id,
+        } => {
+            vec![CoreEvent::ReactionOperationFailed {
+                chat_id: *chat_id,
+                message_id: *message_id,
+                error: error.to_string(),
+            }]
+        }
         CoreCommand::ForwardMessages(request) => vec![CoreEvent::MessagesForwarded(
             crate::forwarding::ForwardMessagesResult {
                 request_id: request.request_id.clone(),
@@ -787,6 +802,57 @@ fn operation_error_events(command: &CoreCommand, error: CoreError) -> Vec<CoreEv
 }
 
 fn complete_operation_events(command: &CoreCommand, events: &mut Vec<CoreEvent>) {
+    if let CoreCommand::EditMessage {
+        chat_id,
+        message_id,
+        ..
+    }
+    | CoreCommand::DeleteMessageForMe {
+        chat_id,
+        message_id,
+    }
+    | CoreCommand::DeleteMessageForEveryone {
+        chat_id,
+        message_id,
+    } = command
+    {
+        let expected_action = match command {
+            CoreCommand::EditMessage { .. } => crate::event::MessageMutationAction::Edit,
+            CoreCommand::DeleteMessageForMe { .. } => {
+                crate::event::MessageMutationAction::DeleteForMe
+            }
+            CoreCommand::DeleteMessageForEveryone { .. } => {
+                crate::event::MessageMutationAction::DeleteForEveryone
+            }
+            _ => unreachable!(),
+        };
+        let confirmed = events.iter().any(|event| {
+            matches!(
+                event,
+                CoreEvent::MessageMutationSucceeded {
+                    chat_id: event_chat,
+                    message_id: event_message,
+                    action,
+                } if event_chat == chat_id && event_message == message_id && action == &expected_action
+            ) || matches!(
+                event,
+                CoreEvent::MessageMutationFailed {
+                    chat_id: event_chat,
+                    message_id: event_message,
+                    action,
+                    ..
+                } if event_chat == chat_id && event_message == message_id && action == &expected_action
+            )
+        });
+        if !confirmed {
+            events.push(CoreEvent::MessageMutationFailed {
+                chat_id: *chat_id,
+                message_id: *message_id,
+                action: expected_action,
+                error: "backend returned without confirming the message change".into(),
+            });
+        }
+    }
     if let CoreCommand::ForwardMessages(request) = command {
         *events = crate::forwarding::normalize_forward_events(request, std::mem::take(events));
     }
@@ -974,6 +1040,11 @@ async fn restore_state<S: StateStore>(
 ) -> CoreState {
     match store.load().await {
         Ok(Some(mut state)) => {
+            // Profiles contain personal data and are fetched on demand. Drop
+            // profile fields from previously persisted snapshots.
+            state.contacts = Default::default();
+            state.profiles.clear();
+            state.profile_order.clear();
             state.running = true;
             state.connection_machine.reset_disconnected();
             state.connection_state = crate::connection::ConnectionState::Disconnected;
@@ -1007,7 +1078,7 @@ async fn restore_state<S: StateStore>(
                 }
             }
             if recovered_any {
-                if let Err(error) = store.save(&state).await {
+                if let Err(error) = store.save(&state_for_persistence(&state)).await {
                     state.last_error = Some(error.to_string());
                 }
             }
@@ -1048,7 +1119,7 @@ async fn persist_send_intent<S: StateStore>(
     state_tx: &watch::Sender<CoreState>,
     event_tx: &broadcast::Sender<CoreEvent>,
 ) -> bool {
-    match store.save(state).await {
+    match store.save(&state_for_persistence(state)).await {
         Ok(()) => true,
         Err(error) => {
             let message = error.to_string();
@@ -1111,10 +1182,65 @@ async fn persist_state<S: StateStore>(
     state_tx: &watch::Sender<CoreState>,
     event_tx: &broadcast::Sender<CoreEvent>,
 ) {
-    if let Err(error) = store.save(state).await {
+    if let Err(error) = store.save(&state_for_persistence(state)).await {
         let message = error.to_string();
         state.last_error = Some(message.clone());
         let _ = state_tx.send(state.clone());
         let _ = event_tx.send(CoreEvent::Error(message));
+    }
+}
+
+fn state_for_persistence(state: &CoreState) -> CoreState {
+    state.persistence_snapshot()
+}
+
+#[cfg(test)]
+mod message_mutation_completion_tests {
+    use super::complete_operation_events;
+    use crate::{
+        command::CoreCommand,
+        event::{CoreEvent, MessageMutationAction},
+    };
+
+    #[test]
+    fn empty_mutation_backend_result_becomes_a_targeted_failure() {
+        let commands = [
+            (
+                CoreCommand::EditMessage {
+                    chat_id: 17,
+                    message_id: 42,
+                    text: "updated".into(),
+                },
+                MessageMutationAction::Edit,
+            ),
+            (
+                CoreCommand::DeleteMessageForMe {
+                    chat_id: 17,
+                    message_id: 42,
+                },
+                MessageMutationAction::DeleteForMe,
+            ),
+            (
+                CoreCommand::DeleteMessageForEveryone {
+                    chat_id: 17,
+                    message_id: 42,
+                },
+                MessageMutationAction::DeleteForEveryone,
+            ),
+        ];
+
+        for (command, action) in commands {
+            let mut events = Vec::new();
+            complete_operation_events(&command, &mut events);
+            assert_eq!(
+                events,
+                vec![CoreEvent::MessageMutationFailed {
+                    chat_id: 17,
+                    message_id: 42,
+                    action,
+                    error: "backend returned without confirming the message change".into(),
+                }]
+            );
+        }
     }
 }

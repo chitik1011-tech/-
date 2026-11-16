@@ -94,4 +94,6 @@ dependencies {
     implementation("androidx.media3:media3-ui:1.11.1")
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
+    // Android's org.json stubs throw "Method ... not mocked" in local JVM tests.
+    testImplementation("org.json:json:20250517")
 }

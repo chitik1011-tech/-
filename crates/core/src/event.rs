@@ -3,10 +3,11 @@ use serde::{Deserialize, Serialize};
 use crate::{
     connection::ConnectionState,
     connection_machine::{ConnectionToken, LinkEvent},
+    contacts::Contact,
     forwarding::ForwardMessagesResult,
     model::{
         AccountState, AttachmentDownloadState, AuthorizationState, ChatActivityKind, ChatSummary,
-        MessageSummary,
+        MessageReaction, MessageSummary, PeerProfile, ReactionRevision,
     },
     peer::PeerResolution,
     poll::PollSummary,
@@ -42,6 +43,14 @@ pub enum CoreEvent {
     /// Legacy untagged state event. Runtime reducers ignore it; use `ConnectionLifecycle`.
     ConnectionStateChanged(ConnectionState),
     ChatsLoaded(Vec<ChatSummary>),
+    /// Replaces the contact snapshot at offset zero and appends later pages.
+    ContactsLoaded {
+        offset: usize,
+        total: usize,
+        contacts: Vec<Contact>,
+    },
+    /// Telegram invalidated its local contact snapshot; the client should reload it.
+    ContactsRefreshRequested,
     MessagesLoaded {
         chat_id: i64,
         messages: Vec<MessageSummary>,
@@ -82,6 +91,7 @@ pub enum CoreEvent {
         error: String,
     },
     MessageAdded(MessageSummary),
+    ProfileUpdated(PeerProfile),
     ChatArchived {
         chat_id: i64,
         archived: bool,
@@ -134,6 +144,24 @@ pub enum CoreEvent {
         poll_id: i64,
         error: String,
     },
+    /// Authoritative Telegram reaction state for a cached message.
+    MessageReactionsUpdated {
+        chat_id: i64,
+        message_id: i64,
+        reactions: Vec<MessageReaction>,
+        revision: ReactionRevision,
+    },
+    /// Finishes the UI's pending indicator after the reaction RPC completes.
+    ReactionOperationSucceeded {
+        chat_id: i64,
+        message_id: i64,
+    },
+    /// Reports a reaction RPC failure without losing the last server snapshot.
+    ReactionOperationFailed {
+        chat_id: i64,
+        message_id: i64,
+        error: String,
+    },
     /// Forward results; successful messages also arrive as `MessageAdded`.
     MessagesForwarded(ForwardMessagesResult),
     MessageSendStateChanged(OutgoingSend),
@@ -177,6 +205,8 @@ impl CoreEvent {
             Self::SessionUpdate { .. } => "session_update",
             Self::ConnectionStateChanged(_) => "connection_state_changed",
             Self::ChatsLoaded(_) => "chats_loaded",
+            Self::ContactsLoaded { .. } => "contacts_loaded",
+            Self::ContactsRefreshRequested => "contacts_refresh_requested",
             Self::MessagesLoaded { .. } => "messages_loaded",
             Self::MessagesPageLoading { .. } => "messages_page_loading",
             Self::MessagesPageLoaded { .. } => "messages_page_loaded",
@@ -187,6 +217,7 @@ impl CoreEvent {
             Self::MessageSearchCompleted(_) => "message_search_completed",
             Self::MessageSearchFailed { .. } => "message_search_failed",
             Self::MessageAdded(_) => "message_added",
+            Self::ProfileUpdated(_) => "profile_updated",
             Self::ChatArchived { .. } => "chat_archived",
             Self::ChatMuted { .. } => "chat_muted",
             Self::ChatPinned { .. } => "chat_pinned",
@@ -199,6 +230,9 @@ impl CoreEvent {
             Self::PollUpdated(_) => "poll_updated",
             Self::PollVoteSubmitted { .. } => "poll_vote_submitted",
             Self::PollVoteFailed { .. } => "poll_vote_failed",
+            Self::MessageReactionsUpdated { .. } => "message_reactions_updated",
+            Self::ReactionOperationSucceeded { .. } => "reaction_operation_succeeded",
+            Self::ReactionOperationFailed { .. } => "reaction_operation_failed",
             Self::MessagesForwarded(_) => "messages_forwarded",
             Self::MessageSendStateChanged(_) => "message_send_state_changed",
             Self::ChatActivityChanged { .. } => "chat_activity_changed",
@@ -217,10 +251,13 @@ impl CoreEvent {
             self,
             Self::PollVoteSubmitted { .. }
                 | Self::PollVoteFailed { .. }
+                | Self::ContactsRefreshRequested
                 | Self::MessagesForwarded(_)
                 | Self::ChatActivityChanged { .. }
                 | Self::ChatActivityEnded { .. }
                 | Self::ChatActivityExpired { .. }
+                | Self::ReactionOperationSucceeded { .. }
+                | Self::ReactionOperationFailed { .. }
         )
     }
 

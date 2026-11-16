@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    contacts::validate_contact_page,
     error::{CoreError, Result},
     peer::parse_peer_reference,
     search::SearchMessagesRequest,
@@ -9,6 +10,7 @@ use crate::{
 pub const MAX_CHAT_LOAD_LIMIT: usize = 500;
 pub const MAX_MESSAGE_LOAD_LIMIT: usize = 200;
 pub const MAX_EDIT_MESSAGE_TEXT_BYTES: usize = 64 * 1024;
+pub const MAX_REACTION_BYTES: usize = 128;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
@@ -18,6 +20,14 @@ pub enum CoreCommand {
     SubmitCode(String),
     SubmitPassword(String),
     LoadChats {
+        limit: usize,
+    },
+    LoadProfile {
+        peer_id: i64,
+    },
+    /// Load one page from the authenticated account's Telegram contacts.
+    LoadContacts {
+        offset: usize,
         limit: usize,
     },
     LoadMessages {
@@ -39,6 +49,12 @@ pub enum CoreCommand {
     SendText {
         chat_id: i64,
         text: String,
+    },
+    /// Send a user-selected one-shot geographic location. This intentionally does
+    /// not participate in the text reliable-send/outbox subsystem.
+    SendLocation {
+        chat_id: i64,
+        location: crate::model::GeoPoint,
     },
     /// Reliable text send. Retrying the same client_id with the same payload is idempotent.
     SendTextReliable {
@@ -68,6 +84,17 @@ pub enum CoreCommand {
         chat_id: i64,
         message_id: i64,
         option_ids: Vec<Vec<u8>>,
+    },
+    /// Add or change the current user's reaction on a Telegram message.
+    AddReaction {
+        chat_id: i64,
+        message_id: i64,
+        reaction: crate::model::MessageReactionType,
+    },
+    /// Remove the current user's reaction from a Telegram message.
+    RemoveReaction {
+        chat_id: i64,
+        message_id: i64,
     },
     ArchiveChat {
         chat_id: i64,
@@ -131,17 +158,22 @@ impl CoreCommand {
             Self::SubmitCode(_) => "submit_code",
             Self::SubmitPassword(_) => "submit_password",
             Self::LoadChats { .. } => "load_chats",
+            Self::LoadProfile { .. } => "load_profile",
+            Self::LoadContacts { .. } => "load_contacts",
             Self::LoadMessages { .. } => "load_messages",
             Self::LoadMessagesPage { .. } => "load_messages_page",
             Self::MarkRead { .. } => "mark_read",
             Self::SearchMessages(_) => "search_messages",
             Self::ForwardMessages(_) => "forward_messages",
             Self::SendText { .. } => "send_text",
+            Self::SendLocation { .. } => "send_location",
             Self::SendTextReliable { .. } => "send_text_reliable",
             Self::EditMessage { .. } => "edit_message",
             Self::DeleteMessageForMe { .. } => "delete_message_for_me",
             Self::DeleteMessageForEveryone { .. } => "delete_message_for_everyone",
             Self::VotePoll { .. } => "vote_poll",
+            Self::AddReaction { .. } => "add_reaction",
+            Self::RemoveReaction { .. } => "remove_reaction",
             Self::ArchiveChat { .. } => "archive_chat",
             Self::UnarchiveChat { .. } => "unarchive_chat",
             Self::MuteChat { .. } => "mute_chat",
@@ -191,6 +223,14 @@ impl CoreCommand {
                 }
             }
             Self::LoadChats { limit } => validate_limit("chat load", *limit, MAX_CHAT_LOAD_LIMIT),
+            Self::LoadProfile { peer_id } => {
+                if *peer_id == 0 {
+                    Err(CoreError::InvalidInput("peer id must be non-zero".into()))
+                } else {
+                    Ok(())
+                }
+            }
+            Self::LoadContacts { limit, .. } => validate_contact_page(*limit),
             Self::LoadMessages { chat_id, limit } => {
                 validate_chat_id(*chat_id)?;
                 validate_limit("message load", *limit, MAX_MESSAGE_LOAD_LIMIT)
@@ -227,6 +267,10 @@ impl CoreCommand {
             Self::SendText { chat_id, text } => {
                 validate_chat_id(*chat_id)?;
                 require_non_blank("message text", text)
+            }
+            Self::SendLocation { chat_id, location } => {
+                validate_chat_id(*chat_id)?;
+                location.validate()
             }
             Self::SendTextReliable {
                 client_id,
@@ -306,6 +350,18 @@ impl CoreCommand {
                 }
                 Ok(())
             }
+            Self::AddReaction {
+                chat_id,
+                message_id,
+                reaction,
+            } => {
+                validate_reaction_target(*chat_id, *message_id)?;
+                reaction.validate()
+            }
+            Self::RemoveReaction {
+                chat_id,
+                message_id,
+            } => validate_reaction_target(*chat_id, *message_id),
             Self::ArchiveChat { chat_id }
             | Self::UnarchiveChat { chat_id }
             | Self::MuteChat { chat_id }
@@ -362,6 +418,16 @@ fn validate_message_target(chat_id: i64, message_id: i64) -> Result<()> {
     validate_chat_id(chat_id)?;
     if message_id <= 0 {
         return Err(CoreError::InvalidInput("message id must be positive".into()));
+    }
+    Ok(())
+}
+
+fn validate_reaction_target(chat_id: i64, message_id: i64) -> Result<()> {
+    validate_chat_id(chat_id)?;
+    if message_id <= 0 {
+        return Err(CoreError::InvalidInput(
+            "message id must be positive".into(),
+        ));
     }
     Ok(())
 }

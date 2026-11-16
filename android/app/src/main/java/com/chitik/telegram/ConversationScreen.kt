@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.lazy.LazyColumn
@@ -29,6 +30,8 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
@@ -58,6 +61,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
+import java.util.Locale
 import kotlin.math.roundToInt
 
 data class ConversationPollOptionUi(
@@ -81,13 +85,35 @@ data class ConversationPollUi(
     val closed: Boolean,
     val explanation: String?,
 )
-
 /**
  * Display-ready message data supplied by the Rust-backed state layer.
  *
  * [timestamp] is formatted by the caller for the user's locale and timezone.
  * [id] should be the stable Telegram message identifier scoped to [chatId].
  */
+data class ConversationGeoPointUi(
+    val latitude: Double,
+    val longitude: Double,
+    val accuracyRadiusMeters: Int?,
+)
+
+sealed interface ConversationLocationUi {
+    val point: ConversationGeoPointUi?
+
+    data class Point(
+        override val point: ConversationGeoPointUi,
+    ) : ConversationLocationUi
+
+    data class Venue(
+        override val point: ConversationGeoPointUi?,
+        val title: String,
+        val address: String,
+        val provider: String,
+        val venueId: String,
+        val venueType: String?,
+    ) : ConversationLocationUi
+}
+
 data class ConversationMessageUi(
     val id: String,
     val chatId: String,
@@ -99,8 +125,26 @@ data class ConversationMessageUi(
     val poll: ConversationPollUi? = null,
     val pollVoting: Boolean = false,
     val pollError: String? = null,
+    val reactions: List<ConversationReactionUi> = emptyList(),
+    val reactionRevision: ReactionRevisionUi? = null,
     val forwardedFrom: String? = null,
+    val serviceAction: ServiceActionUi? = null,
+    val location: ConversationLocationUi? = null,
 )
+
+data class ReactionRevisionUi(val generation: Long, val epoch: Long, val sequence: Long) : Comparable<ReactionRevisionUi> {
+    override fun compareTo(other: ReactionRevisionUi): Int =
+        compareValuesBy(this, other, ReactionRevisionUi::generation, ReactionRevisionUi::epoch, ReactionRevisionUi::sequence)
+}
+
+data class ConversationReactionUi(
+    val type: String,
+    val value: String,
+    val count: Int,
+    val chosenByMe: Boolean,
+) {
+    val display: String get() = if (type == "emoji") value else "✨"
+}
 
 data class ConversationScreenState(
     val chatId: String,
@@ -110,6 +154,8 @@ data class ConversationScreenState(
     val loading: Boolean = false,
     val sending: Boolean = false,
     val error: String? = null,
+    val pendingReactionKeys: Set<String> = emptySet(),
+    val reactionErrors: Map<String, String> = emptyMap(),
     val forwardingError: String? = null,
     val forwardSuccessCount: Long = 0,
     val messageMutationPending: Boolean = false,
@@ -136,11 +182,15 @@ fun ConversationScreen(
     onDraftChange: (String) -> Unit,
     onSend: (chatId: String, text: String) -> Unit,
     onPollVote: (poll: ConversationPollUi, optionIds: List<List<Int>>) -> Unit,
+    onReaction: (chatId: String, messageId: String, reaction: ConversationReactionUi?) -> Unit,
+    onSendLocation: (chatId: String) -> Unit,
+    onOpenLocation: (ConversationLocationUi) -> Unit,
     onForward: (chatId: Long, messageIds: List<Long>) -> Unit,
     onEditMessage: (chatId: Long, messageId: Long, text: String) -> Unit,
     onDeleteMessageForEveryone: (chatId: Long, messageId: Long) -> Unit,
     onDeleteMessageForMe: (chatId: Long, messageId: Long) -> Unit,
     onRetry: () -> Unit,
+    onOpenProfile: () -> Unit,
     onDownloadMedia: (messageId: Long, attachmentIndex: Int, retry: Boolean) -> Unit,
     onCancelMedia: (messageId: Long, attachmentIndex: Int) -> Unit,
     onOpenDocument: (MediaAttachmentUi) -> Unit,
@@ -194,7 +244,7 @@ fun ConversationScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Column {
+                    Column(modifier = Modifier.clickable(onClick = onOpenProfile)) {
                         Text(
                             text = state.chatTitle.ifBlank { "Диалог" },
                             maxLines = 1,
@@ -255,6 +305,7 @@ fun ConversationScreen(
                             editingMessage = null
                             editDraft = ""
                         },
+                        showLocationAction = false,
                     )
                 }
             } else {
@@ -263,6 +314,7 @@ fun ConversationScreen(
                     sending = state.sending,
                     onDraftChange = onDraftChange,
                     onSend = submitMessage,
+                    onSendLocation = { onSendLocation(state.chatId) },
                 )
             }
         },
@@ -319,6 +371,7 @@ fun ConversationScreen(
                             MessageBubble(
                                 message = message,
                                 onPollVote = onPollVote,
+                                onOpenLocation = onOpenLocation,
                                 onDownloadMedia = { attachmentIndex, retry ->
                                     message.id.toLongOrNull()?.let { messageId ->
                                         onDownloadMedia(messageId, attachmentIndex, retry)
@@ -333,6 +386,9 @@ fun ConversationScreen(
                                     viewerKey = "${message.id}:${attachment.index}"
                                 },
                                 onOpenDocument = onOpenDocument,
+                                reactionPending = "${message.chatId}:${message.id}" in state.pendingReactionKeys,
+                                reactionError = state.reactionErrors["${message.chatId}:${message.id}"],
+                                onReaction = { reaction -> onReaction(message.chatId, message.id, reaction) },
                                 selected = message.id.toLongOrNull()?.let { it in selectedMessageIds } == true,
                                 onClick = {
                                     message.id.toLongOrNull()?.let { id ->
@@ -341,7 +397,18 @@ fun ConversationScreen(
                                         }
                                     }
                                 },
-                                onLongPress = { actionTarget = message },
+                                onLongPress = {
+                                    val messageId = message.id.toLongOrNull()
+                                    if (selectedMessageIds.isNotEmpty() && messageId != null) {
+                                        selectedMessageIds = if (messageId in selectedMessageIds) {
+                                            selectedMessageIds - messageId
+                                        } else {
+                                            selectedMessageIds + messageId
+                                        }
+                                    } else {
+                                        actionTarget = message
+                                    }
+                                },
                             )
                         }
 
@@ -382,6 +449,7 @@ fun ConversationScreen(
     actionTarget?.let { message ->
         MessageActionDialog(
             message = message,
+            mutationPending = state.messageMutationPending,
             onDismiss = { actionTarget = null },
             onSelectForForward = {
                 message.id.toLongOrNull()?.let { selectedMessageIds = selectedMessageIds + it }
@@ -406,12 +474,19 @@ fun ConversationScreen(
             state.messageMutationChatId == targetChatId &&
             state.messageMutationMessageId == targetMessageId
         val pending = matchingMutation && state.messageMutationPending
+        val mutationPending = state.messageMutationPending
         AlertDialog(
-            onDismissRequest = { if (!pending) deletionTarget = null },
-            title = { Text("Удалить сообщение у всех?") },
+            onDismissRequest = { if (!mutationPending) deletionTarget = null },
+            title = { Text("Удалить сообщение?") },
             text = {
                 Column {
-                    Text("Выберите область удаления. Удаление только для вас доступно в личных и обычных групповых чатах; в каналах Telegram его не поддерживает.")
+                    Text(
+                        if (supportsDeleteForMe(targetChatId ?: 0L)) {
+                            "Выберите область удаления. Удаление только для вас удалит сообщение из этого аккаунта."
+                        } else {
+                            "Удаление только для вас недоступно в каналах; можно удалить сообщение у всех, если Telegram разрешит это действие."
+                        },
+                    )
                     if (matchingMutation) {
                         state.messageMutationError?.let { error ->
                             Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp))
@@ -422,15 +497,16 @@ fun ConversationScreen(
             confirmButton = {
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     TextButton(
-                        enabled = !pending && targetChatId != null && targetMessageId != null,
+                        enabled = !mutationPending && targetChatId != null && targetMessageId != null &&
+                            supportsDeleteForMe(targetChatId),
                         onClick = {
-                            if (targetChatId != null && targetMessageId != null) {
+                            if (targetChatId != null && targetMessageId != null && supportsDeleteForMe(targetChatId)) {
                                 onDeleteMessageForMe(targetChatId, targetMessageId)
                             }
                         },
                     ) { Text(if (pending) "Удаляем…" else "Удалить у меня") }
                     TextButton(
-                        enabled = !pending && targetChatId != null && targetMessageId != null,
+                        enabled = !mutationPending && targetChatId != null && targetMessageId != null,
                         onClick = {
                             if (targetChatId != null && targetMessageId != null) {
                                 onDeleteMessageForEveryone(targetChatId, targetMessageId)
@@ -462,14 +538,34 @@ fun ConversationScreen(
 private fun MessageBubble(
     message: ConversationMessageUi,
     onPollVote: (ConversationPollUi, List<List<Int>>) -> Unit,
+    onOpenLocation: (ConversationLocationUi) -> Unit,
     onDownloadMedia: (attachmentIndex: Int, retry: Boolean) -> Unit,
     onCancelMedia: (attachmentIndex: Int) -> Unit,
     onOpenViewer: (MediaAttachmentUi) -> Unit,
     onOpenDocument: (MediaAttachmentUi) -> Unit,
+    reactionPending: Boolean,
+    reactionError: String?,
+    onReaction: (ConversationReactionUi?) -> Unit,
     selected: Boolean,
     onClick: () -> Unit,
     onLongPress: () -> Unit,
 ) {
+    message.serviceAction?.let { action ->
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f),
+                shape = RoundedCornerShape(14.dp),
+            ) {
+                Text(
+                    text = "•  ${action.displayText()}  •",
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        return
+    }
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = if (message.isOutgoing) Arrangement.End else Arrangement.Start,
@@ -496,6 +592,10 @@ private fun MessageBubble(
             },
         ) {
             Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                message.location?.let { location ->
+                    LocationMessageCard(location = location, onClick = { onOpenLocation(location) })
+                    Spacer(Modifier.height(8.dp))
+                }
                 message.attachments.forEach { attachment ->
                     MediaAttachmentCard(
                         attachment = attachment,
@@ -530,6 +630,7 @@ private fun MessageBubble(
                         onVote = { optionIds -> onPollVote(poll, optionIds) },
                     )
                 }
+                ReactionRow(message.reactions, reactionPending, reactionError, onReaction)
                 if (message.timestamp.isNotBlank()) {
                     Spacer(Modifier.height(5.dp))
                     Row(
@@ -560,6 +661,7 @@ private fun MessageBubble(
 @Composable
 private fun MessageActionDialog(
     message: ConversationMessageUi,
+    mutationPending: Boolean,
     onDismiss: () -> Unit,
     onSelectForForward: () -> Unit,
     onEdit: () -> Unit,
@@ -570,14 +672,68 @@ private fun MessageActionDialog(
         title = { Text("Действия с сообщением") },
         text = {
             Column {
-                TextButton(onClick = onSelectForForward) { Text("Выбрать для пересылки") }
-                TextButton(onClick = onEdit, enabled = canEditMessageText(message)) { Text("Изменить") }
-                TextButton(onClick = onDelete) { Text("Удалить…") }
+                TextButton(onClick = onSelectForForward, enabled = !mutationPending) { Text("Выбрать для пересылки") }
+                TextButton(onClick = onEdit, enabled = !mutationPending && canEditMessageText(message)) { Text("Изменить") }
+                TextButton(onClick = onDelete, enabled = !mutationPending) { Text("Удалить…") }
                 Text("«Удалить у меня» работает только в личных и обычных группах; каналы требуют удаления у всех.")
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Закрыть") } },
     )
+}
+
+@Composable
+private fun ReactionRow(
+    reactions: List<ConversationReactionUi>,
+    pending: Boolean,
+    error: String?,
+    onReaction: (ConversationReactionUi?) -> Unit,
+) {
+    var pickerOpen by remember { mutableStateOf(false) }
+    val common = listOf("👍", "❤️", "😂", "😮", "😢", "🔥")
+
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        reactions.forEach { reaction ->
+            Surface(
+                modifier = Modifier.clickable(enabled = !pending) {
+                    onReaction(if (reaction.chosenByMe) null else reaction)
+                },
+                shape = RoundedCornerShape(16.dp),
+                color = if (reaction.chosenByMe) MaterialTheme.colorScheme.secondaryContainer
+                else MaterialTheme.colorScheme.surface,
+                contentColor = MaterialTheme.colorScheme.onSurface,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            ) {
+                Text(
+                    text = "${reaction.display} ${reaction.count}",
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                    style = MaterialTheme.typography.labelMedium,
+                )
+            }
+        }
+        TextButton(onClick = { pickerOpen = true }, enabled = !pending) { Text("+") }
+        DropdownMenu(expanded = pickerOpen, onDismissRequest = { pickerOpen = false }) {
+            common.forEach { emoji ->
+                DropdownMenuItem(
+                    text = { Text(emoji) },
+                    onClick = {
+                        pickerOpen = false
+                        onReaction(ConversationReactionUi("emoji", emoji, 0, false))
+                    },
+                )
+            }
+        }
+        if (pending) {
+            CircularProgressIndicator(modifier = Modifier.width(14.dp), strokeWidth = 2.dp)
+        }
+    }
+    if (error != null) {
+        Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall)
+    }
 }
 
 @Composable
@@ -1043,6 +1199,70 @@ private fun MediaTransferControls(
 }
 
 @Composable
+private fun LocationMessageCard(
+    location: ConversationLocationUi,
+    onClick: () -> Unit,
+) {
+    val point = location.point
+    val title = when (location) {
+        is ConversationLocationUi.Point -> "Location"
+        is ConversationLocationUi.Venue -> location.title
+    }
+    val subtitle = when (location) {
+        is ConversationLocationUi.Point -> formatCoordinates(location.point)
+        is ConversationLocationUi.Venue -> location.address
+    }
+    val accuracy = point?.accuracyRadiusMeters?.let { "Accuracy ±$it m" }
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(enabled = point != null, onClick = onClick),
+        shape = RoundedCornerShape(14.dp),
+        tonalElevation = 2.dp,
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text("📍", style = MaterialTheme.typography.headlineSmall)
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                if (subtitle.isNotBlank()) {
+                    Text(
+                        text = subtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (location is ConversationLocationUi.Venue && point != null) {
+                    Text(
+                        text = formatCoordinates(point),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                accuracy?.let {
+                    Text(
+                        text = it,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun formatCoordinates(point: ConversationGeoPointUi): String =
+    String.format(Locale.US, "%.5f, %.5f", point.latitude, point.longitude)
+
+@Composable
 private fun ComposerBar(
     draft: String,
     sending: Boolean,
@@ -1051,6 +1271,8 @@ private fun ComposerBar(
     sendLabel: String = "Отправить",
     placeholder: String = "Сообщение",
     onCancel: (() -> Unit)? = null,
+    onSendLocation: () -> Unit = {},
+    showLocationAction: Boolean = true,
 ) {
     val canSend = draft.isNotBlank() && !sending
 
@@ -1070,6 +1292,15 @@ private fun ComposerBar(
                 verticalAlignment = Alignment.Bottom,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+                if (showLocationAction) {
+                    TextButton(
+                        onClick = onSendLocation,
+                        enabled = !sending,
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 12.dp),
+                    ) {
+                        Text("📍")
+                    }
+                }
                 OutlinedTextField(
                     value = draft,
                     onValueChange = onDraftChange,

@@ -1,5 +1,6 @@
 use tg_mobile_core::{
-    CoreCommand, CoreEvent, CoreState, MessageMutationAction, MAX_EDIT_MESSAGE_TEXT_BYTES,
+    CoreCommand, CoreEvent, CoreState, MessageMutationAction, MessageSummary,
+    MAX_EDIT_MESSAGE_TEXT_BYTES,
 };
 
 #[test]
@@ -94,4 +95,34 @@ fn mutation_failure_event_has_a_stable_wire_kind_and_does_not_persist_failure_st
     let mut state = CoreState::default();
     state.reduce(&event);
     assert_eq!(state.last_error, None);
+}
+
+#[test]
+fn successful_delete_is_persisted_without_a_ghost_after_state_restore() {
+    let mut state = CoreState::default();
+    state.reduce(&CoreEvent::MessageAdded(MessageSummary {
+        id: 42,
+        chat_id: -100123,
+        sender_id: 7,
+        text: "remove me".into(),
+        timestamp_unix: 100,
+        outgoing: false,
+        location: None,
+        attachments: Vec::new(),
+        forwarded_from: None,
+        edited: false,
+        edit_timestamp_unix: None,
+        service_message: false,
+        service: None,
+        media_caption: None,
+        reply_to: None,
+    }));
+    state.reduce(&CoreEvent::MessagesDeleted {
+        chat_id: Some(-100123),
+        message_ids: vec![42],
+    });
+
+    let persisted = serde_json::to_value(state.persistence_snapshot()).expect("persist state");
+    let restored: CoreState = serde_json::from_value(persisted).expect("restore state");
+    assert!(restored.messages_for_chat(-100123).is_empty());
 }

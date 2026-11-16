@@ -6,8 +6,8 @@ use grammers_client::{
 };
 pub use tg_mobile_core::ConnectionState;
 use tg_mobile_core::{
-    BackendUpdateSender, ConnectionToken, CoreError, CoreEvent, LinkEvent, MessageSummary,
-    PollSummary, ReadDirection,
+    BackendUpdateSender, ConnectionToken, CoreError, CoreEvent, LinkEvent, MessageReaction,
+    MessageSummary, PollSummary, ReactionRevision, ReadDirection,
 };
 use tokio::sync::{broadcast, mpsc, watch};
 use tokio::time::sleep;
@@ -15,7 +15,7 @@ use tokio::time::sleep;
 use crate::{
     chats::{PeerRegistry, remember_peer},
     ids::{PeerClass, channel_id_to_core, encode_peer},
-    messages::{MessageDeduplicator, message_to_summary},
+    messages::{MessageDeduplicator, map_reactions, message_to_summary},
     polls::{
         PollRegistry, forget_deleted_polls, poll_from_message, poll_from_update, remember_poll,
     },
@@ -30,11 +30,18 @@ use crate::{
 pub enum TelegramUpdate {
     MessageAdded(MessageSummary),
     MessageEdited(MessageSummary),
+    MessageReactionsUpdated {
+        chat_id: i64,
+        message_id: i64,
+        reactions: Vec<MessageReaction>,
+        revision: ReactionRevision,
+    },
     MessagesDeleted {
         chat_id: Option<i64>,
         message_ids: Vec<i64>,
     },
     PollUpdated(PollSummary),
+    ContactsRefreshRequested,
     ChatChanged {
         chat_id: i64,
     },
@@ -74,6 +81,18 @@ impl TelegramUpdate {
                 message_ids: message_ids.clone(),
             }),
             Self::PollUpdated(poll) => Some(CoreEvent::PollUpdated(poll.clone())),
+            Self::MessageReactionsUpdated {
+                chat_id,
+                message_id,
+                reactions,
+                revision,
+            } => Some(CoreEvent::MessageReactionsUpdated {
+                chat_id: *chat_id,
+                message_id: *message_id,
+                reactions: reactions.clone(),
+                revision: *revision,
+            }),
+            Self::ContactsRefreshRequested => Some(CoreEvent::ContactsRefreshRequested),
             Self::ReadReceiptUpdated {
                 chat_id,
                 direction,
@@ -327,6 +346,7 @@ pub(crate) async fn run_update_worker(mut input: UpdateWorkerInput) {
     }
 
     let mut backoff = RetryBackoff::default();
+    let mut update_sequence = 0_u64;
     loop {
         let observed_token = match (active_token, worker_generation) {
             (Some(expected), Some(generation)) => {
@@ -378,6 +398,7 @@ pub(crate) async fn run_update_worker(mut input: UpdateWorkerInput) {
 
         match outcome {
             NextOutcome::Item(update) => {
+                update_sequence = update_sequence.saturating_add(1);
                 if active_token != operation_token {
                     if let Some(token) = active_token {
                         active_token = emit_lifecycle(
@@ -407,7 +428,11 @@ pub(crate) async fn run_update_worker(mut input: UpdateWorkerInput) {
                         .await;
                     }
                 }
-                match map_update(update, &input.peers, &input.dedup, &input.polls).await {
+                let revision = ReactionRevision {
+                    token: operation_token.unwrap_or_default(),
+                    sequence: update_sequence,
+                };
+                match map_update(update, &input.peers, &input.dedup, &input.polls, revision).await {
                     Ok(events) => {
                         for event in events {
                             emit_update(&input.events, &input.core_updates, event, operation_token)
@@ -585,6 +610,7 @@ async fn map_update(
     peers: &PeerRegistry,
     dedup: &MessageDeduplicator,
     polls: &PollRegistry,
+    reaction_revision: ReactionRevision,
 ) -> tg_mobile_core::Result<Vec<TelegramUpdate>> {
     match update {
         Update::NewMessage(message) => {
@@ -644,6 +670,20 @@ async fn map_update(
                 .map(TelegramUpdate::PollUpdated)
                 .into_iter()
                 .collect()),
+            tl::enums::Update::MessageReactions(update) => {
+                let chat_id = match &update.peer {
+                    tl::enums::Peer::User(peer) => peer.user_id,
+                    tl::enums::Peer::Chat(peer) => peer.chat_id.saturating_neg(),
+                    tl::enums::Peer::Channel(peer) => channel_id_to_core(peer.channel_id),
+                };
+                Ok(vec![TelegramUpdate::MessageReactionsUpdated {
+                    chat_id,
+                    message_id: i64::from(update.msg_id),
+                    reactions: map_reactions(&update.reactions),
+                    revision: reaction_revision,
+                }])
+            }
+            tl::enums::Update::ContactsReset => Ok(vec![TelegramUpdate::ContactsRefreshRequested]),
             tl::enums::Update::ReadHistoryInbox(update) => {
                 Ok(vec![TelegramUpdate::ReadReceiptUpdated {
                     chat_id: raw_peer_to_core(&update.peer),
@@ -835,13 +875,17 @@ mod tests {
             text: "hello".into(),
             timestamp_unix: 4,
             outgoing: false,
+            location: None,
             attachments: Vec::new(),
             forwarded_from: None,
             edited: false,
             edit_timestamp_unix: None,
             service_message: false,
+            service: None,
             media_caption: None,
             reply_to: None,
+            reactions: Vec::new(),
+            reaction_revision: None,
         };
         assert!(matches!(
             TelegramUpdate::MessageAdded(message.clone()).to_core_event(),
@@ -893,6 +937,10 @@ mod tests {
                 event: LinkEvent::SyncCompleted,
             })
         );
+        assert_eq!(
+            TelegramUpdate::ContactsRefreshRequested.to_core_event(),
+            Some(CoreEvent::ContactsRefreshRequested),
+        );
         assert!(TelegramUpdate::Unhandled.to_core_event().is_none());
     }
 
@@ -908,13 +956,18 @@ mod tests {
             text: "message".into(),
             timestamp_unix: 4,
             outgoing: false,
+            location: None,
             attachments: Vec::new(),
             forwarded_from: None,
             edited: false,
             edit_timestamp_unix: None,
             service_message: false,
+            service: None,
             media_caption: None,
             reply_to: None,
+
+            reactions: Vec::new(),
+            reaction_revision: None,
         };
         let (core_tx, mut core_rx) = backend_update_channel();
         let (native_tx, _) = tokio::sync::broadcast::channel(1);

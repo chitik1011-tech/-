@@ -88,13 +88,18 @@ fn incoming_message_for_unknown_chat_does_not_invent_chat_metadata() {
         text: "hello".into(),
         timestamp_unix: 1,
         outgoing: false,
+        location: None,
         attachments: Vec::new(),
         forwarded_from: None,
         edited: false,
         edit_timestamp_unix: None,
         service_message: false,
+        service: None,
         media_caption: None,
         reply_to: None,
+
+        reactions: Vec::new(),
+        reaction_revision: None,
     }));
 
     assert!(state.chat(404).is_none());

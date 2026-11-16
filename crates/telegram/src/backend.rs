@@ -7,8 +7,9 @@ use std::{
 use grammers_client::{
     Client,
     media::Media,
+    message::InputReactions,
     sender::{SenderPool, SenderPoolHandle},
-    session::{storages::SqliteSession, updates::UpdatesLike},
+    session::{storages::SqliteSession, types::PeerKind, updates::UpdatesLike},
     tl,
 };
 use tg_media_cache::{CacheConfig, MediaCache};
@@ -28,11 +29,12 @@ use crate::{
     auth::AuthFlow,
     chats::{PeerRegistry, find_peer, load_chats, new_peer_registry},
     config::TelegramConfig,
+    contacts::load_contacts,
     downloads::{MediaTarget, event as media_event, spawn_download, state_from_snapshot},
     error::{TelegramBackendError, session_error},
     messages::{
         MessageDeduplicator, load_messages, load_messages_page, mark_read, message_to_summary,
-        search_messages_page, send_text, send_text_idempotent,
+        search_messages_page, send_location, send_text, send_text_idempotent,
     },
     polls::{PollRegistry, new_poll_registry, poll_by_id, polls_from_updates, remember_poll},
     updates::{TelegramUpdate, UpdateWorkerInput, run_update_worker},
@@ -671,6 +673,36 @@ impl GrammersBackend {
                 let chats = load_chats(&self.client, &self.peers, limit).await?;
                 vec![CoreEvent::ChatsLoaded(chats)]
             }
+            CoreCommand::LoadProfile { peer_id } => {
+                self.require_ready().await?;
+                let peer_ref = find_peer(&self.peers, peer_id)
+                    .await
+                    .ok_or(TelegramBackendError::UnknownChat(peer_id))?;
+                let peer = self
+                    .client
+                    .resolve_peer(peer_ref)
+                    .await
+                    .map_err(|error| crate::error::api_error("load profile", error))?;
+                let mut profile = crate::profiles::profile_from_peer(peer_id, &peer);
+                crate::profiles::hydrate_profile(
+                    &self.client,
+                    &peer,
+                    &mut profile,
+                    &self.media_cache,
+                )
+                .await;
+                vec![CoreEvent::ProfileUpdated(profile)]
+            }
+            CoreCommand::LoadContacts { offset, limit } => {
+                self.require_ready().await?;
+                let (total, contacts) =
+                    load_contacts(&self.client, &self.peers, offset, limit).await?;
+                vec![CoreEvent::ContactsLoaded {
+                    offset,
+                    total,
+                    contacts,
+                }]
+            }
             CoreCommand::ResolvePeer { input } => {
                 self.require_ready().await?;
                 let reference = tg_mobile_core::parse_peer_reference(&input)?;
@@ -733,6 +765,55 @@ impl GrammersBackend {
                     max_message_id,
                 }]
             }
+            CoreCommand::AddReaction {
+                chat_id,
+                message_id,
+                reaction,
+            } => {
+                self.require_ready().await?;
+                let peer = find_peer(&self.peers, chat_id)
+                    .await
+                    .ok_or(TelegramBackendError::UnknownChat(chat_id))?;
+                let message_id = i32::try_from(message_id).map_err(|_| {
+                    CoreError::InvalidInput("message id exceeds Telegram range".into())
+                })?;
+                let input = match reaction {
+                    tg_mobile_core::MessageReactionType::Emoji(value) => {
+                        InputReactions::emoticon(value)
+                    }
+                    tg_mobile_core::MessageReactionType::CustomEmoji(document_id) => {
+                        InputReactions::custom_emoji(document_id)
+                    }
+                };
+                self.client
+                    .send_reactions(peer, message_id, input)
+                    .await
+                    .map_err(|error| crate::error::api_error("set message reaction", error))?;
+                vec![CoreEvent::ReactionOperationSucceeded {
+                    chat_id,
+                    message_id: i64::from(message_id),
+                }]
+            }
+            CoreCommand::RemoveReaction {
+                chat_id,
+                message_id,
+            } => {
+                self.require_ready().await?;
+                let peer = find_peer(&self.peers, chat_id)
+                    .await
+                    .ok_or(TelegramBackendError::UnknownChat(chat_id))?;
+                let message_id = i32::try_from(message_id).map_err(|_| {
+                    CoreError::InvalidInput("message id exceeds Telegram range".into())
+                })?;
+                self.client
+                    .send_reactions(peer, message_id, InputReactions::remove())
+                    .await
+                    .map_err(|error| crate::error::api_error("remove message reaction", error))?;
+                vec![CoreEvent::ReactionOperationSucceeded {
+                    chat_id,
+                    message_id: i64::from(message_id),
+                }]
+            }
             CoreCommand::SearchMessages(request) => {
                 self.require_ready().await?;
                 let peer = find_peer(&self.peers, request.chat_id)
@@ -766,6 +847,18 @@ impl GrammersBackend {
                     .await
                     .ok_or(TelegramBackendError::UnknownChat(chat_id))?;
                 let message = send_text(&self.client, peer, text).await?;
+                if self.dedup.should_emit(&message).await {
+                    vec![CoreEvent::MessageAdded(message)]
+                } else {
+                    Vec::new()
+                }
+            }
+            CoreCommand::SendLocation { chat_id, location } => {
+                self.require_ready().await?;
+                let peer = find_peer(&self.peers, chat_id)
+                    .await
+                    .ok_or(TelegramBackendError::UnknownChat(chat_id))?;
+                let message = send_location(&self.client, peer, location).await?;
                 if self.dedup.should_emit(&message).await {
                     vec![CoreEvent::MessageAdded(message)]
                 } else {
@@ -882,7 +975,9 @@ impl GrammersBackend {
                     .into_iter()
                     .next()
                     .flatten()
-                    .ok_or_else(|| CoreError::InvalidInput("message no longer exists in this chat".into()))?;
+                    .ok_or_else(|| {
+                        CoreError::InvalidInput("message no longer exists in this chat".into())
+                    })?;
                 self.client
                     .delete_messages(peer, &[telegram_message_id])
                     .await

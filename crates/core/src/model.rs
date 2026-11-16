@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
-use serde::{Deserialize, Serialize};
+use crate::service_message::ServiceMessage;
+use serde::{de, Deserialize, Deserializer, Serialize};
 use std::collections::BTreeSet;
 
 /// Telegram activities surfaced transiently while a user is composing or uploading.
@@ -67,6 +68,9 @@ pub struct MessageSummary {
     pub text: String,
     pub timestamp_unix: i64,
     pub outgoing: bool,
+    /// Optional Telegram location or venue attached to this message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub location: Option<MessageLocation>,
     /// Media attached to this message. Missing fields in older persisted messages
     /// are treated as an empty list.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -83,12 +87,294 @@ pub struct MessageSummary {
     /// Whether this message represents a Telegram service action.
     #[serde(default, skip_serializing_if = "is_false")]
     pub service_message: bool,
+    /// Typed Telegram action metadata. New consumers should use this field; the
+    /// boolean above remains for compatibility with older persisted state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service: Option<ServiceMessage>,
     /// Caption attached to media, kept separate from ordinary message text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub media_caption: Option<String>,
     /// Target metadata when this message replies to another message.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_to: Option<ReplyMetadata>,
+    /// Telegram reaction counts for this message. Older persisted messages have none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reactions: Vec<MessageReaction>,
+    /// Last accepted reaction snapshot ordering token. Telegram updates are delivered
+    /// in protocol order; this also rejects callbacks from older connection epochs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reaction_revision: Option<ReactionRevision>,
+}
+
+/// The protocol-supported reaction identity. Custom emoji remain identified by
+/// their Telegram document ID and are never silently converted to ordinary emoji.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(tag = "type", content = "value", rename_all = "snake_case")]
+pub enum MessageReactionType {
+    Emoji(String),
+    CustomEmoji(i64),
+}
+
+impl MessageReactionType {
+    pub fn validate(&self) -> crate::error::Result<()> {
+        use crate::error::CoreError;
+
+        match self {
+            Self::Emoji(value)
+                if !value.trim().is_empty()
+                    && value.len() <= crate::command::MAX_REACTION_BYTES =>
+            {
+                Ok(())
+            }
+            Self::Emoji(_) => Err(CoreError::InvalidInput(
+                "reaction emoji must be non-empty and within the byte limit".into(),
+            )),
+            Self::CustomEmoji(id) if *id > 0 => Ok(()),
+            Self::CustomEmoji(_) => Err(CoreError::InvalidInput(
+                "custom emoji document id must be positive".into(),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MessageReaction {
+    pub reaction: MessageReactionType,
+    pub count: u32,
+    pub chosen_by_me: bool,
+}
+
+/// Orders snapshots within a Telegram session and connection epoch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct ReactionRevision {
+    pub token: crate::connection_machine::ConnectionToken,
+    pub sequence: u64,
+}
+
+/// A validated WGS84 point. Construction and deserialization reject non-finite
+/// values and coordinates outside Telegram's latitude/longitude ranges.
+#[derive(Debug, Clone, Serialize)]
+pub struct GeoPoint {
+    latitude: f64,
+    longitude: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    accuracy_radius_meters: Option<i32>,
+}
+
+impl GeoPoint {
+    pub fn new(
+        latitude: f64,
+        longitude: f64,
+        accuracy_radius_meters: Option<i32>,
+    ) -> crate::error::Result<Self> {
+        let point = Self {
+            latitude,
+            longitude,
+            accuracy_radius_meters,
+        };
+        point.validate()?;
+        Ok(point)
+    }
+
+    pub fn validate(&self) -> crate::error::Result<()> {
+        use crate::error::CoreError;
+
+        if !self.latitude.is_finite() {
+            return Err(CoreError::InvalidInput("latitude must be finite".into()));
+        }
+        if !self.longitude.is_finite() {
+            return Err(CoreError::InvalidInput("longitude must be finite".into()));
+        }
+        if !(-90.0..=90.0).contains(&self.latitude) {
+            return Err(CoreError::InvalidInput(
+                "latitude must be in -90..=90".into(),
+            ));
+        }
+        if !(-180.0..=180.0).contains(&self.longitude) {
+            return Err(CoreError::InvalidInput(
+                "longitude must be in -180..=180".into(),
+            ));
+        }
+        if self
+            .accuracy_radius_meters
+            .is_some_and(|radius| !(0..=1_500).contains(&radius))
+        {
+            return Err(CoreError::InvalidInput(
+                "accuracy radius must be in 0..=1500 meters".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    pub const fn latitude(&self) -> f64 {
+        self.latitude
+    }
+
+    pub const fn longitude(&self) -> f64 {
+        self.longitude
+    }
+
+    pub const fn accuracy_radius_meters(&self) -> Option<i32> {
+        self.accuracy_radius_meters
+    }
+}
+
+impl PartialEq for GeoPoint {
+    fn eq(&self, other: &Self) -> bool {
+        self.latitude == other.latitude
+            && self.longitude == other.longitude
+            && self.accuracy_radius_meters == other.accuracy_radius_meters
+    }
+}
+
+impl Eq for GeoPoint {}
+
+impl<'de> Deserialize<'de> for GeoPoint {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Wire {
+            latitude: f64,
+            longitude: f64,
+            #[serde(default)]
+            accuracy_radius_meters: Option<i32>,
+        }
+
+        let wire = Wire::deserialize(deserializer)?;
+        Self::new(wire.latitude, wire.longitude, wire.accuracy_radius_meters)
+            .map_err(de::Error::custom)
+    }
+}
+
+/// Backend-neutral Telegram venue metadata. Telegram may omit the geo point;
+/// title and address are required for a useful venue card.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Venue {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    point: Option<GeoPoint>,
+    title: String,
+    address: String,
+    provider: String,
+    venue_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    venue_type: Option<String>,
+}
+
+impl Venue {
+    pub fn new(
+        point: Option<GeoPoint>,
+        title: String,
+        address: String,
+        provider: String,
+        venue_id: String,
+        venue_type: Option<String>,
+    ) -> crate::error::Result<Self> {
+        let venue = Self {
+            point,
+            title,
+            address,
+            provider,
+            venue_id,
+            venue_type: venue_type.filter(|value| !value.is_empty()),
+        };
+        venue.validate()?;
+        Ok(venue)
+    }
+
+    pub fn validate(&self) -> crate::error::Result<()> {
+        use crate::error::CoreError;
+
+        if self.title.trim().is_empty() {
+            return Err(CoreError::InvalidInput("venue title is empty".into()));
+        }
+        if self.address.trim().is_empty() {
+            return Err(CoreError::InvalidInput("venue address is empty".into()));
+        }
+        if let Some(point) = &self.point {
+            point.validate()?;
+        }
+        Ok(())
+    }
+
+    pub const fn point(&self) -> Option<&GeoPoint> {
+        self.point.as_ref()
+    }
+
+    pub fn title(&self) -> &str {
+        &self.title
+    }
+
+    pub fn address(&self) -> &str {
+        &self.address
+    }
+
+    pub fn provider(&self) -> &str {
+        &self.provider
+    }
+
+    pub fn venue_id(&self) -> &str {
+        &self.venue_id
+    }
+
+    pub fn venue_type(&self) -> Option<&str> {
+        self.venue_type.as_deref()
+    }
+}
+
+impl<'de> Deserialize<'de> for Venue {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Wire {
+            #[serde(default)]
+            point: Option<GeoPoint>,
+            title: String,
+            address: String,
+            provider: String,
+            venue_id: String,
+            #[serde(default)]
+            venue_type: Option<String>,
+        }
+
+        let wire = Wire::deserialize(deserializer)?;
+        Self::new(
+            wire.point,
+            wire.title,
+            wire.address,
+            wire.provider,
+            wire.venue_id,
+            wire.venue_type,
+        )
+        .map_err(de::Error::custom)
+    }
+}
+
+/// Location media carried by a Telegram message.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum MessageLocation {
+    Location { point: GeoPoint },
+    Venue { venue: Venue },
+}
+
+impl MessageLocation {
+    pub fn validate(&self) -> crate::error::Result<()> {
+        match self {
+            Self::Location { point } => point.validate(),
+            Self::Venue { venue } => venue.validate(),
+        }
+    }
+
+    pub fn point(&self) -> Option<&GeoPoint> {
+        match self {
+            Self::Location { point } => Some(point),
+            Self::Venue { venue } => venue.point(),
+        }
+    }
 }
 
 fn is_false(value: &bool) -> bool {
@@ -423,6 +709,119 @@ pub struct ChatFolderFacts {
     pub muted: Option<bool>,
     pub read: bool,
     pub archived: Option<bool>,
+}
+
+/// Telegram peer category. Unknown is used until the backend identifies a peer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PeerKind {
+    #[default]
+    Unknown,
+    User,
+    BasicGroup,
+    Supergroup,
+    Channel,
+    Bot,
+}
+
+/// Presence is recorded only when Telegram supplies it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum PeerPresence {
+    #[default]
+    Unknown,
+    Online,
+    Offline {
+        last_seen_unix: i64,
+    },
+}
+
+/// Backend-owned avatar/file reference metadata; the core does not download it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AvatarReference {
+    pub file_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access_hash: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_reference: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_center_id: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+    /// Local private-cache path used by Android to render the avatar.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_path: Option<PathBuf>,
+}
+
+/// Profile fields are optional so the contract never invents Telegram data.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PeerProfile {
+    /// Stable Telegram peer ID. Zero is reserved as invalid.
+    pub peer_id: i64,
+    pub kind: PeerKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_bot: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_verified: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_scam: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_premium: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub can_send_messages: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub can_invite_users: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub can_change_info: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub can_post_messages: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_fake: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub member_count: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bio: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avatar: Option<AvatarReference>,
+    #[serde(default)]
+    pub presence: PeerPresence,
+}
+
+impl PeerProfile {
+    /// Create a placeholder without assuming any Telegram profile details.
+    pub fn unknown(peer_id: i64) -> Self {
+        Self {
+            peer_id,
+            kind: PeerKind::Unknown,
+            display_name: None,
+            first_name: None,
+            last_name: None,
+            username: None,
+            is_bot: None,
+            is_verified: None,
+            is_scam: None,
+            is_premium: None,
+            can_send_messages: None,
+            can_invite_users: None,
+            can_change_info: None,
+            can_post_messages: None,
+            is_fake: None,
+            member_count: None,
+            bio: None,
+            avatar: None,
+            presence: PeerPresence::Unknown,
+        }
+    }
 }
 
 impl Default for AccountState {

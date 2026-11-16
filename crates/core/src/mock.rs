@@ -8,7 +8,7 @@ use crate::{
     command::CoreCommand,
     error::{CoreError, Result},
     event::CoreEvent,
-    model::{AuthorizationState, ChatSummary, MessageSummary},
+    model::{AuthorizationState, ChatSummary, MessageLocation, MessageSummary, PeerProfile},
     send::OutgoingSend,
 };
 
@@ -49,13 +49,17 @@ impl Default for MockTelegramBackend {
                         text: "Core online".into(),
                         timestamp_unix: unix_timestamp(),
                         outgoing: false,
+                        location: None,
                         attachments: Vec::new(),
                         forwarded_from: None,
                         edited: false,
                         edit_timestamp_unix: None,
                         service_message: false,
+                        service: None,
                         media_caption: None,
                         reply_to: None,
+                        reactions: Vec::new(),
+                        reaction_revision: None,
                     }),
                 },
             ],
@@ -114,6 +118,12 @@ impl MockTelegramBackend {
                 let chats = self.chats.iter().take(limit).cloned().collect();
                 Ok(vec![CoreEvent::ChatsLoaded(chats)])
             }
+            CoreCommand::LoadProfile { peer_id } => Ok(vec![CoreEvent::ProfileUpdated(
+                PeerProfile::unknown(peer_id),
+            )]),
+            CoreCommand::LoadContacts { .. } => Err(CoreError::Backend(
+                "contacts are unavailable in the mock backend".into(),
+            )),
             CoreCommand::LoadMessages { chat_id, limit } => {
                 let mut messages = self
                     .chats
@@ -192,13 +202,17 @@ impl MockTelegramBackend {
                     text,
                     timestamp_unix: unix_timestamp(),
                     outgoing: true,
+                    location: None,
                     attachments: Vec::new(),
                     forwarded_from: None,
                     edited: false,
                     edit_timestamp_unix: None,
                     service_message: false,
+                    service: None,
                     media_caption: None,
                     reply_to: None,
+                    reactions: Vec::new(),
+                    reaction_revision: None,
                 };
                 self.next_message_id += 1;
 
@@ -217,6 +231,36 @@ impl MockTelegramBackend {
             CoreCommand::DeleteMessageForMe { .. } => Err(CoreError::Backend(
                 "message deletion is not implemented by the mock backend".into(),
             )),
+            CoreCommand::SendLocation { chat_id, location } => {
+                if self.authorization != AuthorizationState::Ready {
+                    return Err(CoreError::Backend("not authorized".into()));
+                }
+                location.validate()?;
+                let message = MessageSummary {
+                    id: self.next_message_id,
+                    chat_id,
+                    sender_id: 0,
+                    text: String::new(),
+                    timestamp_unix: unix_timestamp(),
+                    outgoing: true,
+                    location: Some(MessageLocation::Location { point: location }),
+                    attachments: Vec::new(),
+                    forwarded_from: None,
+                    edited: false,
+                    edit_timestamp_unix: None,
+                    service_message: false,
+                    service: None,
+                    media_caption: None,
+                    reply_to: None,
+                    reactions: Vec::new(),
+                    reaction_revision: None,
+                };
+                self.next_message_id += 1;
+                if let Some(chat) = self.chats.iter_mut().find(|chat| chat.id == chat_id) {
+                    chat.last_message = Some(message.clone());
+                }
+                Ok(vec![CoreEvent::MessageAdded(message)])
+            }
             CoreCommand::UpdateDraft(_) | CoreCommand::ClearDraft { .. } => Err(
                 CoreError::Backend("draft commands are handled by the core runtime".into()),
             ),
@@ -275,13 +319,17 @@ impl MockTelegramBackend {
                     text: text.clone(),
                     timestamp_unix: unix_timestamp(),
                     outgoing: true,
+                    location: None,
                     attachments: Vec::new(),
                     forwarded_from: None,
                     edited: false,
                     edit_timestamp_unix: None,
                     service_message: false,
+                    service: None,
                     media_caption: None,
                     reply_to: None,
+                    reactions: Vec::new(),
+                    reaction_revision: None,
                 };
                 self.next_message_id += 1;
 
@@ -375,6 +423,11 @@ impl MockTelegramBackend {
                     unread: false,
                 },
             ),
+            CoreCommand::AddReaction { .. } | CoreCommand::RemoveReaction { .. } => {
+                Err(CoreError::Backend(
+                    "message reactions are not implemented by the mock backend".into(),
+                ))
+            }
             CoreCommand::Shutdown => Ok(Vec::new()),
             CoreCommand::ResolvePeer { .. } => Err(CoreError::Backend(
                 "peer resolution is unsupported by this backend".into(),

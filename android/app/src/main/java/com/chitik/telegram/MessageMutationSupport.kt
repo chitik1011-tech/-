@@ -2,7 +2,12 @@ package com.chitik.telegram
 
 /** UI enables editing only when there is text to place in the edit composer. Telegram RPC remains authoritative. */
 internal fun canEditMessageText(message: ConversationMessageUi): Boolean =
-    message.text.isNotBlank() && message.poll == null
+    message.isOutgoing && message.text.isNotBlank() && message.poll == null &&
+        message.serviceAction == null && message.location == null
+
+// Core encodes channel peers below -1e12, while users and basic groups occupy the
+// remaining ranges. Delete-for-me is unsupported for channel peers by Telegram.
+internal fun supportsDeleteForMe(chatId: Long): Boolean = chatId > -1_000_000_000_000L
 
 /** Only a command-specific server result for this exact message may close its action UI. */
 internal fun matchesMutationTarget(

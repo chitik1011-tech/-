@@ -9,6 +9,14 @@ class MessageMutationSupportTest {
     fun editComposerRequiresServerMessageText() {
         assertTrue(canEditMessageText(message(text = "old text")))
         assertFalse(canEditMessageText(message(text = "  ")))
+        assertFalse(canEditMessageText(message(text = "incoming", outgoing = false)))
+    }
+
+    @Test
+    fun deleteForMeIsGatedForChannelPeerIds() {
+        assertTrue(supportsDeleteForMe(42L))
+        assertTrue(supportsDeleteForMe(-42L))
+        assertFalse(supportsDeleteForMe(-1_000_000_000_042L))
     }
 
     @Test
@@ -41,11 +49,11 @@ class MessageMutationSupportTest {
         assertTrue(idle.error == "Keep this error")
     }
 
-    private fun message(text: String) = ConversationMessageUi(
+    private fun message(text: String, outgoing: Boolean = true) = ConversationMessageUi(
         id = "12",
         chatId = "-1001",
         text = text,
         timestamp = "",
-        isOutgoing = true,
+        isOutgoing = outgoing,
     )
 }
