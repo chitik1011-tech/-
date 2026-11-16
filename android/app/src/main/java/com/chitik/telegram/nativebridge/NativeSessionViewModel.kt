@@ -763,7 +763,9 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                     java.io.File(media.path).delete()
                     false
                 } else {
-                    queueMediaSend(nextPositiveClientMessageId(), chatId, media, caption)
+                    val queued = queueMediaSend(nextPositiveClientMessageId(), chatId, media, caption)
+                    if (!queued) deletePickedMedia(getApplication(), media.path)
+                    queued
                 }
             }.onFailure { error ->
                 _state.update { it.copy(mediaImportInProgress = false) }
