@@ -117,6 +117,9 @@ private fun TelegramRustApp(
             onRefresh = { viewModel.loadChats() },
             onChatSelected = { chatId ->
                 selectedChatId = chatId
+                replyToMessageId = null
+                replyToPreview = null
+                jumpToMessageId = null
                 viewModel.loadMessages(chatId)
             },
         )
@@ -182,7 +185,7 @@ private fun TelegramRustApp(
                 },
                 onOpenReplyTarget = { targetId ->
                     jumpToMessageId = targetId
-                    if (messages.none { it.id == targetId }) {
+                    if (replyTargetIndex(messages, targetId) < 0) {
                         targetId.toLongOrNull()?.let { viewModel.loadMessagesBefore(selectedChatId, it + 1L) }
                         Toast.makeText(context, "Загружаю исходное сообщение", Toast.LENGTH_SHORT).show()
                     }

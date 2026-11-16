@@ -122,6 +122,9 @@ data class ConversationScreenState(
 internal fun selectedForwardMessageIds(messages: List<ConversationMessageUi>, selectedIds: Set<Long>): List<Long> =
     messages.mapNotNull { it.id.toLongOrNull() }.filter { it in selectedIds }.distinct()
 
+internal fun replyTargetIndex(messages: List<ConversationMessageUi>, messageId: String): Int =
+    messages.indexOfFirst { it.id == messageId }
+
 /**
  * Stateless conversation UI. Message history and poll results always come from the Rust-backed
  * state. Only an unsubmitted multiple-choice selection is kept locally.
@@ -169,7 +172,7 @@ fun ConversationScreen(
 
     LaunchedEffect(state.jumpToMessageId, state.messages) {
         val target = state.jumpToMessageId ?: return@LaunchedEffect
-        val index = state.messages.indexOfFirst { it.id == target }
+        val index = replyTargetIndex(state.messages, target)
         if (index >= 0) {
             listState.animateScrollToItem(index)
             onJumpComplete()
@@ -177,7 +180,7 @@ fun ConversationScreen(
     }
 
     LaunchedEffect(state.messages.size, latestMessageId, state.loading) {
-        if (state.messages.isNotEmpty()) {
+        if (state.messages.isNotEmpty() && state.jumpToMessageId == null) {
             listState.animateScrollToItem(state.messages.lastIndex)
         }
     }
