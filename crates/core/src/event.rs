@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    capabilities::ChatCapabilities,
     connection::ConnectionState,
     connection_machine::{ConnectionToken, LinkEvent},
     contacts::Contact,
@@ -43,6 +44,8 @@ pub enum CoreEvent {
     /// Legacy untagged state event. Runtime reducers ignore it; use `ConnectionLifecycle`.
     ConnectionStateChanged(ConnectionState),
     ChatsLoaded(Vec<ChatSummary>),
+    /// Replaces one chat's authoritative capability snapshot from Telegram.
+    ChatCapabilitiesUpdated(ChatCapabilities),
     /// Replaces the contact snapshot at offset zero and appends later pages.
     ContactsLoaded {
         offset: usize,
@@ -205,6 +208,7 @@ impl CoreEvent {
             Self::SessionUpdate { .. } => "session_update",
             Self::ConnectionStateChanged(_) => "connection_state_changed",
             Self::ChatsLoaded(_) => "chats_loaded",
+            Self::ChatCapabilitiesUpdated(_) => "chat_capabilities_updated",
             Self::ContactsLoaded { .. } => "contacts_loaded",
             Self::ContactsRefreshRequested => "contacts_refresh_requested",
             Self::MessagesLoaded { .. } => "messages_loaded",
@@ -249,7 +253,8 @@ impl CoreEvent {
     pub const fn is_transient(&self) -> bool {
         matches!(
             self,
-            Self::PollVoteSubmitted { .. }
+            Self::ChatCapabilitiesUpdated(_)
+                | Self::PollVoteSubmitted { .. }
                 | Self::PollVoteFailed { .. }
                 | Self::ContactsRefreshRequested
                 | Self::MessagesForwarded(_)

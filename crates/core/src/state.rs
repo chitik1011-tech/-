@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    capabilities::ChatCapabilities,
     connection::ConnectionState,
     connection_machine::{ConnectionMachine, LinkEvent, LinkPhase, Outcome},
     contacts::ContactBook,
@@ -27,6 +28,9 @@ pub struct CoreState {
     /// Server-provided contact names and stable IDs; phone numbers are never stored here.
     #[serde(default)]
     pub contacts: ContactBook,
+    /// Session-scoped permissions reported by Telegram, keyed by stable chat ID.
+    #[serde(default)]
+    pub chat_capabilities: BTreeMap<i64, ChatCapabilities>,
     /// Current Telegram transport state. Older persisted snapshots default to disconnected.
     #[serde(default)]
     pub connection_state: ConnectionState,
@@ -77,6 +81,7 @@ impl Default for CoreState {
             running: true,
             account: AccountState::default(),
             contacts: ContactBook::default(),
+            chat_capabilities: BTreeMap::new(),
             connection_state: ConnectionState::Disconnected,
             connection_machine: ConnectionMachine::default(),
             messages: BTreeMap::new(),
@@ -97,13 +102,14 @@ impl Default for CoreState {
 }
 
 impl CoreState {
-    /// Clone live state for persistence, omitting session-only contacts and
-    /// transient personal profile data while retaining both in live state.
+    /// Clone live state for persistence, omitting session-only contact and
+    /// capability data and transient personal profile data.
     pub fn persistence_snapshot(&self) -> Self {
         let mut snapshot = self.clone();
         snapshot.contacts = ContactBook::default();
         snapshot.profiles.clear();
         snapshot.profile_order.clear();
+        snapshot.chat_capabilities.clear();
         snapshot
     }
 
@@ -161,6 +167,16 @@ impl CoreState {
                 ));
             }
             draft.validate()?;
+        }
+        for (chat_id, capabilities) in &self.chat_capabilities {
+            if *chat_id != capabilities.chat_id {
+                return Err(CoreError::InvalidInput(
+                    "chat capability map key must match capability chat id".into(),
+                ));
+            }
+            capabilities
+                .validate()
+                .map_err(|message| CoreError::InvalidInput(message.into()))?;
         }
         Ok(())
     }
@@ -255,6 +271,7 @@ impl CoreState {
             CoreEvent::ConnectionSessionStarted => {
                 self.connection_machine.start_session();
                 self.connection_state = self.connection_machine.transport_state();
+                self.chat_capabilities.clear();
             }
             CoreEvent::ConnectionLifecycle { token, event } => {
                 if matches!(
@@ -262,6 +279,12 @@ impl CoreState {
                     Ok(Outcome::Changed { .. })
                 ) {
                     self.connection_state = self.connection_machine.transport_state();
+                    if matches!(
+                        *event,
+                        LinkEvent::TransportLost | LinkEvent::Logout | LinkEvent::Shutdown
+                    ) {
+                        self.chat_capabilities.clear();
+                    }
                 }
             }
             CoreEvent::SessionUpdate { token, event } => {
@@ -274,6 +297,9 @@ impl CoreState {
             }
             CoreEvent::ChatsLoaded(chats) => {
                 self.account.chats = chats.clone();
+                let chat_ids = chats.iter().map(|chat| chat.id).collect::<BTreeSet<_>>();
+                self.chat_capabilities
+                    .retain(|chat_id, _| chat_ids.contains(chat_id));
                 if self.connection_machine.phase() == LinkPhase::Synchronizing {
                     let token = self.connection_machine.token();
                     if matches!(
@@ -285,6 +311,12 @@ impl CoreState {
                     }
                 }
                 self.last_error = None;
+            }
+            CoreEvent::ChatCapabilitiesUpdated(capabilities) => {
+                if capabilities.validate().is_ok() {
+                    self.chat_capabilities
+                        .insert(capabilities.chat_id, capabilities.clone());
+                }
             }
             CoreEvent::ContactsLoaded {
                 offset, contacts, ..

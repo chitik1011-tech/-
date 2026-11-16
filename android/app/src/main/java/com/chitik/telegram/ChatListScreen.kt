@@ -39,6 +39,7 @@ data class ChatListEntry(
     val title: String,
     val unreadCount: Long,
     val lastMessage: ChatListPreview?,
+    val capabilities: ChatCapabilitiesUi = ChatCapabilitiesUi(),
 )
 
 data class ChatListPreview(

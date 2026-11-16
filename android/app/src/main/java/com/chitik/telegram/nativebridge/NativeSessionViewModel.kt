@@ -6,6 +6,8 @@ import androidx.lifecycle.viewModelScope
 import com.chitik.telegram.AuthorizationUiStep
 import com.chitik.telegram.ChatListEntry
 import com.chitik.telegram.ChatListPreview
+import com.chitik.telegram.ChatCapabilitiesUi
+import com.chitik.telegram.parseChatCapabilities
 import com.chitik.telegram.ConversationMessageUi
 import com.chitik.telegram.ConversationReactionUi
 import com.chitik.telegram.ReactionRevisionUi
@@ -49,6 +51,7 @@ data class NativeUiState(
     val contacts: List<ContactListEntry> = emptyList(),
     val contactTotal: Int = 0,
     val contactsLoading: Boolean = false,
+    val chatCapabilities: Map<Long, ChatCapabilitiesUi> = emptyMap(),
     val messages: Map<Long, List<ConversationMessageUi>> = emptyMap(),
     val pendingReactionKeys: Set<String> = emptySet(),
     val reactionConnectionToken: Pair<Long, Long>? = null,
@@ -64,6 +67,10 @@ data class NativeUiState(
     val messageMutationSuccessCount: Long = 0L,
     val messageMutationSuccessChatId: Long = 0L,
     val messageMutationSuccessMessageId: Long = 0L,
+    val selectionGeneration: Long = 0,
+    val lastConnectionSessionGeneration: Long? = null,
+    val deletingMessages: Boolean = false,
+    val deleteError: String? = null,
     val busy: Boolean = false,
     val lastEventType: String = "none",
     val lastEventPayload: String = "",
@@ -163,7 +170,31 @@ private data class ParsedNativeState(
     val messages: Map<Long, List<ConversationMessageUi>>,
     val contacts: List<ContactListEntry>,
     val profiles: Map<Long, PeerProfileUi>,
+    val chatCapabilities: Map<Long, ChatCapabilitiesUi>,
 )
+
+internal fun NativeUiState.advanceSelectionGeneration(): NativeUiState = copy(
+    selectionGeneration = selectionGeneration + 1,
+    deletingMessages = false,
+    deleteError = if (deletingMessages) {
+        "Удаление прервано; обновите сообщения и проверьте результат"
+    } else {
+        deleteError
+    },
+)
+
+internal fun NativeUiState.recordConnectionSessionGeneration(generation: Long): NativeUiState =
+    when (lastConnectionSessionGeneration) {
+        null -> copy(lastConnectionSessionGeneration = generation)
+        generation -> this
+        else -> copy(lastConnectionSessionGeneration = generation).advanceSelectionGeneration()
+    }
+
+internal fun connectionSessionGenerationFromEvent(payload: String): Long? = runCatching {
+    val eventPayload = JSONObject(payload).optJSONObject("payload") ?: return@runCatching null
+    val token = eventPayload.optJSONObject("token") ?: return@runCatching null
+    token.optLong("generation", -1L).takeIf { it >= 0L }
+}.getOrNull()
 
 class NativeSessionViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -474,7 +505,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
     }
 
     fun loadMessages(chatId: Long, limit: Int = 100) {
-        _state.update { it.copy(busy = true, error = null) }
+        _state.update { it.copy(busy = true, error = null, deleteError = null) }
         sendCommand(
             JSONObject()
                 .put("type", "load_messages")
@@ -653,6 +684,29 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 it.copy(
                     pendingReactionKeys = it.pendingReactionKeys - key,
                     reactionErrors = it.reactionErrors + (key to "Не удалось отправить реакцию"),
+                )
+            }
+        }
+    }
+
+    fun deleteMessages(chatId: Long, messageIds: List<Long>) {
+        if (chatId == 0L || messageIds.isEmpty() || messageIds.size > 100 ||
+            messageIds.any { it <= 0L } || messageIds.distinct().size != messageIds.size
+        ) return
+        _state.update { it.copy(deletingMessages = true, deleteError = null, busy = true, error = null) }
+        val ids = JSONArray().apply { messageIds.forEach { put(it) } }
+        val accepted = sendCommand(
+            JSONObject()
+                .put("type", "delete_messages")
+                .put("payload", JSONObject().put("chat_id", chatId).put("message_ids", ids))
+                .toString(),
+        )
+        if (!accepted) {
+            _state.update {
+                it.copy(
+                    deletingMessages = false,
+                    deleteError = "Не удалось отправить запрос удаления",
+                    busy = false,
                 )
             }
         }
@@ -963,6 +1017,27 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                     }
                 }
             }
+            "connection_lifecycle" -> {
+                val sessionGeneration = connectionSessionGenerationFromEvent(payload)
+                _state.update { current ->
+                    val updated = sessionGeneration?.let(current::recordConnectionSessionGeneration) ?: current
+                    updated.copy(
+                        lastEventType = type,
+                        lastEventPayload = payload,
+                    )
+                }
+            }
+            "messages_deleted" -> {
+                _state.update {
+                    it.copy(
+                        busy = false,
+                        deletingMessages = false,
+                        deleteError = null,
+                        lastEventType = type,
+                        lastEventPayload = payload,
+                    )
+                }
+            }
             "messages_forwarded" -> {
                 val (succeeded, failed, firstError) = runCatching {
                     val result = JSONObject(payload).optJSONObject("payload") ?: JSONObject()
@@ -1044,8 +1119,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                     } else it.copy(lastEventType = type, lastEventPayload = payload)
                 }
             }
-            "message_edited",
-            "messages_deleted" -> _state.update {
+            "message_edited" -> _state.update {
                 it.copy(lastEventType = type, lastEventPayload = payload)
             }
             "message_reactions_updated" -> {
@@ -1098,6 +1172,8 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                         profileLoadingPeerId = if (it.profileLoadingPeerId != null) null else it.profileLoadingPeerId,
                         profileError = if (it.profileLoadingPeerId != null) message else it.profileError,
                         contactsLoading = false,
+                        deletingMessages = false,
+                        deleteError = if (it.deletingMessages) message else it.deleteError,
                         lastEventType = type,
                         lastEventPayload = payload,
                         error = message,
@@ -1124,6 +1200,16 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         _state.update { current ->
             current.clearPendingReactionsAfterConnectionChange().copy(
                 authorization = authorization,
+                selectionGeneration = if (
+                    authorization != AuthorizationUiStep.Ready &&
+                    current.authorization == AuthorizationUiStep.Ready
+                ) {
+                    current.selectionGeneration + 1
+                } else {
+                    current.selectionGeneration
+                },
+                deletingMessages = false,
+                deleteError = null,
                 busy = false,
                 contactsLoading = false,
                 lastEventType = "authorization_changed",
@@ -1149,16 +1235,23 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
             val messages = parseMessages(root.optJSONObject("messages"), polls, readOutboxMaxIds)
             val profiles = parseProfiles(root.optJSONObject("profiles") ?: JSONObject())
             val contacts = parseContactListState(root.optJSONObject("contacts"))
-            ParsedNativeState(authorization, chats, messages, contacts, profiles)
+            val capabilities = parseChatCapabilities(root.optJSONObject("chat_capabilities"))
+            ParsedNativeState(authorization, chats, messages, contacts, profiles, capabilities)
         }.onSuccess { parsed ->
             _state.update {
                 it.copy(
                     authorization = parsed.authorization,
-                    chats = parsed.chats,
+                    chats = parsed.chats.map { chat ->
+                        chat.copy(
+                            capabilities = parsed.chatCapabilities[chat.id]
+                                ?: ChatCapabilitiesUi(),
+                        )
+                    },
                     contacts = parsed.contacts,
                     contactTotal = maxOf(it.contactTotal, parsed.contacts.size),
                     messages = parsed.messages,
                     profiles = parsed.profiles,
+                    chatCapabilities = parsed.chatCapabilities,
                     busy = false,
                     contactsLoading = false,
                     lastEventType = "state",

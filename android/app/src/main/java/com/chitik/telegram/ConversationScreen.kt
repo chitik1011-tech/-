@@ -26,12 +26,12 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
@@ -158,6 +158,10 @@ data class ConversationScreenState(
     val reactionErrors: Map<String, String> = emptyMap(),
     val forwardingError: String? = null,
     val forwardSuccessCount: Long = 0,
+    val selectionGeneration: Long = 0,
+    val deletingMessages: Boolean = false,
+    val deleteError: String? = null,
+    val capabilities: ChatCapabilitiesUi = ChatCapabilitiesUi(),
     val messageMutationPending: Boolean = false,
     val messageMutationError: String? = null,
     val messageMutationChatId: Long = 0L,
@@ -169,6 +173,31 @@ data class ConversationScreenState(
 
 internal fun selectedForwardMessageIds(messages: List<ConversationMessageUi>, selectedIds: Set<Long>): List<Long> =
     messages.mapNotNull { it.id.toLongOrNull() }.filter { it in selectedIds }.distinct()
+
+internal fun selectedMessageText(messages: List<ConversationMessageUi>, selectedIds: Set<Long>): String =
+    messages.filter { message -> message.id.toLongOrNull()?.let { it in selectedIds } == true }
+        .map { it.text.trim() }
+        .filter(String::isNotEmpty)
+        .joinToString("\n")
+
+internal fun toggleSelectedMessageId(selectedIds: Set<Long>, messageId: Long): Set<Long> =
+    if (messageId in selectedIds) selectedIds - messageId else selectedIds + messageId
+
+internal data class PrunedMessageSelection(
+    val selectedIds: Set<Long>,
+    val shouldExitSelectionMode: Boolean,
+)
+
+internal fun pruneSelectedMessageIds(
+    selectedIds: Set<Long>,
+    visibleMessageIds: Set<Long>,
+): PrunedMessageSelection {
+    val remaining = selectedIds.intersect(visibleMessageIds)
+    return PrunedMessageSelection(
+        selectedIds = remaining,
+        shouldExitSelectionMode = selectedIds.isNotEmpty() && remaining.isEmpty(),
+    )
+}
 
 /**
  * Stateless conversation UI. Message history and poll results always come from the Rust-backed
@@ -186,6 +215,8 @@ fun ConversationScreen(
     onSendLocation: (chatId: String) -> Unit,
     onOpenLocation: (ConversationLocationUi) -> Unit,
     onForward: (chatId: Long, messageIds: List<Long>) -> Unit,
+    onDelete: (chatId: Long, messageIds: List<Long>) -> Unit,
+    onCopy: (text: String) -> Unit,
     onEditMessage: (chatId: Long, messageId: Long, text: String) -> Unit,
     onDeleteMessageForEveryone: (chatId: Long, messageId: Long) -> Unit,
     onDeleteMessageForMe: (chatId: Long, messageId: Long) -> Unit,
@@ -198,14 +229,29 @@ fun ConversationScreen(
 ) {
     val listState = rememberLazyListState()
     var viewerKey by rememberSaveable { mutableStateOf<String?>(null) }
-    var actionTarget by remember(state.chatId) { mutableStateOf<ConversationMessageUi?>(null) }
-    var editingMessage by remember(state.chatId) { mutableStateOf<ConversationMessageUi?>(null) }
-    var editDraft by remember(state.chatId) { mutableStateOf("") }
-    var deletionTarget by remember(state.chatId) { mutableStateOf<ConversationMessageUi?>(null) }
-    var selectedMessageIds by remember(state.chatId) { mutableStateOf<Set<Long>>(emptySet()) }
+    var actionTarget by remember(state.chatId, state.selectionGeneration) { mutableStateOf<ConversationMessageUi?>(null) }
+    var editingMessage by remember(state.chatId, state.selectionGeneration) { mutableStateOf<ConversationMessageUi?>(null) }
+    var editDraft by remember(state.chatId, state.selectionGeneration) { mutableStateOf("") }
+    var deletionTarget by remember(state.chatId, state.selectionGeneration) { mutableStateOf<ConversationMessageUi?>(null) }
+    var selectedMessageIds by remember(state.chatId, state.selectionGeneration) { mutableStateOf<Set<Long>>(emptySet()) }
+    var isSelectingMessages by remember(state.chatId, state.selectionGeneration) { mutableStateOf(false) }
+    val selectionActive = isSelectingMessages || selectedMessageIds.isNotEmpty()
+    var selectionMenuOpen by remember(state.chatId, state.selectionGeneration) { mutableStateOf(false) }
+    var showDeleteConfirmation by remember(state.chatId, state.selectionGeneration) { mutableStateOf(false) }
+    LaunchedEffect(state.messages, state.selectionGeneration) {
+        if (selectedMessageIds.isNotEmpty()) {
+            val currentIds = state.messages.mapNotNull { it.id.toLongOrNull() }.toSet()
+            val pruned = pruneSelectedMessageIds(selectedMessageIds, currentIds)
+            selectedMessageIds = pruned.selectedIds
+            if (pruned.shouldExitSelectionMode) isSelectingMessages = false
+        }
+    }
     // Only a server-confirmed, fully successful forward ends selection mode.
     LaunchedEffect(state.forwardSuccessCount) {
-        if (state.forwardSuccessCount > 0L) selectedMessageIds = emptySet()
+        if (state.forwardSuccessCount > 0L) {
+            selectedMessageIds = emptySet()
+            isSelectingMessages = false
+        }
     }
     LaunchedEffect(state.messageMutationSuccessCount) {
         if (
@@ -224,10 +270,10 @@ fun ConversationScreen(
         hasError = state.error != null,
     )
     val latestMessageId = state.messages.lastOrNull()?.id
-    val submitMessage = remember(state.chatId, state.draft, state.sending, onSend) {
+    val submitMessage = remember(state.chatId, state.draft, state.sending, state.capabilities, onSend) {
         {
             val text = state.draft.trim()
-            if (text.isNotEmpty() && !state.sending) {
+            if (text.isNotEmpty() && !state.sending && state.capabilities.canSendNow == true) {
                 onSend(state.chatId, text)
             }
         }
@@ -246,7 +292,11 @@ fun ConversationScreen(
                 title = {
                     Column(modifier = Modifier.clickable(onClick = onOpenProfile)) {
                         Text(
-                            text = state.chatTitle.ifBlank { "Диалог" },
+                            text = if (selectionActive) {
+                                "${selectedMessageIds.size} выбрано"
+                            } else {
+                                state.chatTitle.ifBlank { "Диалог" }
+                            },
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             style = MaterialTheme.typography.titleMedium,
@@ -261,24 +311,78 @@ fun ConversationScreen(
                 },
                 navigationIcon = {
                     TextButton(onClick = {
-                        if (selectedMessageIds.isNotEmpty()) selectedMessageIds = emptySet() else onBack()
+                        if (selectionActive) {
+                            selectedMessageIds = emptySet()
+                            isSelectingMessages = false
+                        } else onBack()
                     }) {
                         Text("←", style = MaterialTheme.typography.titleLarge)
                     }
                 },
                 actions = {
-                    if (selectedMessageIds.isNotEmpty()) {
-                        TextButton(onClick = {
-                            val ordered = selectedForwardMessageIds(state.messages, selectedMessageIds)
-                            state.chatId.toLongOrNull()?.let { onForward(it, ordered) }
-                        }) { Text("Переслать (${selectedMessageIds.size})") }
+                    if (selectionActive) {
+                        Box {
+                            TextButton(onClick = { selectionMenuOpen = true }) { Text("⋮") }
+                            DropdownMenu(
+                                expanded = selectionMenuOpen,
+                                onDismissRequest = { selectionMenuOpen = false },
+                            ) {
+                                val ordered = selectedForwardMessageIds(state.messages, selectedMessageIds)
+                                val selectedMessages = state.messages.filter { message -> message.id.toLongOrNull()?.let { it in selectedMessageIds } == true }
+                                val canCopy = selectedMessages.isNotEmpty() && selectedMessages.all { it.text.isNotBlank() }
+                                val canDelete = selectedMessages.isNotEmpty() && selectedMessages.all { it.isOutgoing }
+                                DropdownMenuItem(
+                                    text = { Text("Копировать") },
+                                    enabled = canCopy,
+                                    onClick = {
+                                        onCopy(selectedMessageText(state.messages, selectedMessageIds))
+                                        selectedMessageIds = emptySet()
+                                        isSelectingMessages = false
+                                        selectionMenuOpen = false
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Переслать") },
+                                    enabled = ordered.isNotEmpty() && state.capabilities.canForwardMessages == true,
+                                    onClick = {
+                                        if (state.capabilities.canForwardMessages == true) {
+                                            state.chatId.toLongOrNull()?.let { onForward(it, ordered) }
+                                        }
+                                        selectionMenuOpen = false
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(if (state.deletingMessages) "Удаление…" else "Удалить") },
+                                    enabled = canDelete && !state.deletingMessages,
+                                    onClick = {
+                                        showDeleteConfirmation = true
+                                        selectionMenuOpen = false
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Снять выделение") },
+                                    onClick = {
+                                        selectedMessageIds = emptySet()
+                                        isSelectingMessages = false
+                                        selectionMenuOpen = false
+                                    },
+                                )
+                            }
+                        }
+                    } else {
+                        TextButton(onClick = { isSelectingMessages = true }) {
+                            Text("Выбрать")
+                        }
                     }
                 },
             )
         },
         bottomBar = {
-            if (selectedMessageIds.isNotEmpty()) {
-                TextButton(onClick = { selectedMessageIds = emptySet() }) { Text("Отменить выбор") }
+            if (selectionActive) {
+                TextButton(onClick = {
+                    selectedMessageIds = emptySet()
+                    isSelectingMessages = false
+                }) { Text("Отменить выбор") }
             } else if (editingMessage != null) {
                 val target = editingMessage
                 val matchingMutation = target != null &&
@@ -293,6 +397,8 @@ fun ConversationScreen(
                     ComposerBar(
                         draft = editDraft,
                         sending = matchingMutation && state.messageMutationPending,
+                        canSend = true,
+                        canSendMedia = false,
                         onDraftChange = { editDraft = it },
                         onSend = {
                             val chatId = target?.chatId?.toLongOrNull()
@@ -309,13 +415,32 @@ fun ConversationScreen(
                     )
                 }
             } else {
-                ComposerBar(
-                    draft = state.draft,
-                    sending = state.sending,
-                    onDraftChange = onDraftChange,
-                    onSend = submitMessage,
-                    onSendLocation = { onSendLocation(state.chatId) },
-                )
+                Column {
+                    if (state.capabilities.canSendNow != true) {
+                        val notice = when {
+                            state.capabilities.canSendNow == null -> "Права отправки пока неизвестны. Обновите список чатов."
+                            state.capabilities.slowModeEnabled == true &&
+                                (state.capabilities.slowModeRemainingSeconds ?: 0L) > 0L ->
+                                "Медленный режим: подождите ${state.capabilities.slowModeRemainingSeconds} с."
+                            else -> "Telegram сейчас запрещает отправку в этом чате."
+                        }
+                        Text(
+                            text = notice,
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    ComposerBar(
+                        draft = state.draft,
+                        sending = state.sending,
+                        canSend = state.capabilities.canSendNow == true,
+                        canSendMedia = state.capabilities.canSendMedia == true,
+                        onDraftChange = onDraftChange,
+                        onSend = submitMessage,
+                        onSendLocation = { onSendLocation(state.chatId) },
+                    )
+                }
             }
         },
     ) { innerPadding ->
@@ -324,7 +449,7 @@ fun ConversationScreen(
                 .fillMaxSize()
                 .padding(innerPadding),
         ) {
-            state.error?.takeIf { contentMode != AsyncContentMode.Loading }?.let { message ->
+            state.error?.takeIf { contentMode != AsyncContentMode.Loading && state.deleteError == null }?.let { message ->
                 ErrorRetryState(
                     title = "Не удалось загрузить сообщения",
                     message = message,
@@ -340,6 +465,17 @@ fun ConversationScreen(
                     color = MaterialTheme.colorScheme.error,
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                 )
+            }
+            state.deleteError?.let { message ->
+                Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
+                    Text(
+                        text = "Ошибка удаления: $message",
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    TextButton(onClick = onRetry, enabled = !state.loading) {
+                        Text("Обновить сообщения")
+                    }
+                }
             }
 
             when (contentMode) {
@@ -392,19 +528,15 @@ fun ConversationScreen(
                                 selected = message.id.toLongOrNull()?.let { it in selectedMessageIds } == true,
                                 onClick = {
                                     message.id.toLongOrNull()?.let { id ->
-                                        if (selectedMessageIds.isNotEmpty()) {
-                                            selectedMessageIds = if (id in selectedMessageIds) selectedMessageIds - id else selectedMessageIds + id
+                                        if (selectionActive) {
+                                            selectedMessageIds = toggleSelectedMessageId(selectedMessageIds, id)
                                         }
                                     }
                                 },
                                 onLongPress = {
                                     val messageId = message.id.toLongOrNull()
-                                    if (selectedMessageIds.isNotEmpty() && messageId != null) {
-                                        selectedMessageIds = if (messageId in selectedMessageIds) {
-                                            selectedMessageIds - messageId
-                                        } else {
-                                            selectedMessageIds + messageId
-                                        }
+                                    if (selectionActive && messageId != null) {
+                                        selectedMessageIds = toggleSelectedMessageId(selectedMessageIds, messageId)
                                     } else {
                                         actionTarget = message
                                     }
@@ -528,6 +660,27 @@ fun ConversationScreen(
             onRetry = {
                 onDownloadMedia(messageId, attachment.index, true)
                 viewerKey = null
+            },
+        )
+    }
+
+    if (showDeleteConfirmation) {
+        val selectedIds = selectedForwardMessageIds(state.messages, selectedMessageIds)
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirmation = false },
+            title = { Text("Удалить выбранные сообщения?") },
+            text = { Text("Будет удалено сообщений: ${selectedIds.size}") },
+            confirmButton = {
+                TextButton(
+                    enabled = selectedIds.isNotEmpty() && !state.deletingMessages,
+                    onClick = {
+                        state.chatId.toLongOrNull()?.let { onDelete(it, selectedIds) }
+                        showDeleteConfirmation = false
+                    },
+                ) { Text("Удалить") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirmation = false }) { Text("Отмена") }
             },
         )
     }
@@ -1266,6 +1419,8 @@ private fun formatCoordinates(point: ConversationGeoPointUi): String =
 private fun ComposerBar(
     draft: String,
     sending: Boolean,
+    canSend: Boolean,
+    canSendMedia: Boolean,
     onDraftChange: (String) -> Unit,
     onSend: () -> Unit,
     sendLabel: String = "Отправить",
@@ -1274,7 +1429,7 @@ private fun ComposerBar(
     onSendLocation: () -> Unit = {},
     showLocationAction: Boolean = true,
 ) {
-    val canSend = draft.isNotBlank() && !sending
+    val canSubmit = draft.isNotBlank() && !sending && canSend
 
     Surface(
         tonalElevation = 2.dp,
@@ -1295,7 +1450,7 @@ private fun ComposerBar(
                 if (showLocationAction) {
                     TextButton(
                         onClick = onSendLocation,
-                        enabled = !sending,
+                        enabled = !sending && canSend && canSendMedia,
                         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 12.dp),
                     ) {
                         Text("📍")
@@ -1313,13 +1468,13 @@ private fun ComposerBar(
                         imeAction = ImeAction.Send,
                     ),
                     keyboardActions = KeyboardActions(
-                        onSend = { if (canSend) onSend() },
+                        onSend = { if (canSubmit) onSend() },
                     ),
                 )
                 onCancel?.let { cancel -> TextButton(onClick = cancel, enabled = !sending) { Text("Отмена") } }
                 Button(
                     onClick = onSend,
-                    enabled = canSend,
+                    enabled = canSubmit,
                     contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
                 ) {
                     Text(if (sending) "…" else sendLabel)
