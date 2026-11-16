@@ -45,9 +45,12 @@ fn edit_validation_rejects_invalid_targets_empty_text_and_oversized_text() {
         }
         .validate()
         .is_err());
-        assert!(CoreCommand::DeleteMessageForEveryone { chat_id, message_id }
-            .validate()
-            .is_err());
+        assert!(CoreCommand::DeleteMessageForEveryone {
+            chat_id,
+            message_id
+        }
+        .validate()
+        .is_err());
     }
 
     assert!(CoreCommand::EditMessage {

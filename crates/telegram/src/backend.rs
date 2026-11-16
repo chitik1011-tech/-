@@ -877,7 +877,8 @@ impl GrammersBackend {
                 let telegram_message_id = i32::try_from(message_id).map_err(|_| {
                     CoreError::InvalidInput("message id exceeds Telegram range".into())
                 })?;
-                let _target = self.client
+                let _target = self
+                    .client
                     .get_messages_by_id(peer.clone(), &[telegram_message_id])
                     .await
                     .map_err(|error| crate::error::api_error("load message for editing", error))?
@@ -891,7 +892,8 @@ impl GrammersBackend {
                     .edit_message(peer.clone(), telegram_message_id, text.as_str())
                     .await
                     .map_err(|error| crate::error::api_error("edit message", error))?;
-                let updated = self.client
+                let updated = self
+                    .client
                     .get_messages_by_id(peer, &[telegram_message_id])
                     .await
                     .map_err(|error| crate::error::api_error("confirm edited message", error))?
@@ -928,23 +930,29 @@ impl GrammersBackend {
                 let telegram_message_id = i32::try_from(message_id).map_err(|_| {
                     CoreError::InvalidInput("message id exceeds Telegram range".into())
                 })?;
-                let _target = self.client
+                let _target = self
+                    .client
                     .get_messages_by_id(peer.clone(), &[telegram_message_id])
                     .await
-                    .map_err(|error| crate::error::api_error("load message before deletion", error))?
+                    .map_err(|error| {
+                        crate::error::api_error("load message before deletion", error)
+                    })?
                     .into_iter()
                     .next()
                     .flatten()
                     .ok_or_else(|| {
                         CoreError::InvalidInput("message no longer exists in this chat".into())
                     })?;
-                let _: tl::enums::messages::AffectedMessages = self.client
+                let _: tl::enums::messages::AffectedMessages = self
+                    .client
                     .invoke(&tl::functions::messages::DeleteMessages {
                         revoke: false,
                         id: vec![telegram_message_id],
                     })
                     .await
-                    .map_err(|error| crate::error::api_error("delete message for this account", error))?;
+                    .map_err(|error| {
+                        crate::error::api_error("delete message for this account", error)
+                    })?;
                 vec![
                     CoreEvent::MessagesDeleted {
                         chat_id: Some(chat_id),
@@ -968,10 +976,13 @@ impl GrammersBackend {
                 let telegram_message_id = i32::try_from(message_id).map_err(|_| {
                     CoreError::InvalidInput("message id exceeds Telegram range".into())
                 })?;
-                let _target = self.client
+                let _target = self
+                    .client
                     .get_messages_by_id(peer.clone(), &[telegram_message_id])
                     .await
-                    .map_err(|error| crate::error::api_error("load message before deletion", error))?
+                    .map_err(|error| {
+                        crate::error::api_error("load message before deletion", error)
+                    })?
                     .into_iter()
                     .next()
                     .flatten()
@@ -981,7 +992,9 @@ impl GrammersBackend {
                 self.client
                     .delete_messages(peer, &[telegram_message_id])
                     .await
-                    .map_err(|error| crate::error::api_error("delete message for everyone", error))?;
+                    .map_err(|error| {
+                        crate::error::api_error("delete message for everyone", error)
+                    })?;
                 vec![
                     CoreEvent::MessagesDeleted {
                         chat_id: Some(chat_id),
