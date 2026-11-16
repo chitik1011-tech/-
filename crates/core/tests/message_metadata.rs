@@ -57,6 +57,9 @@ fn message_metadata_round_trips_with_media_compatible_defaults() {
             sender_id: Some(10),
             sender_display_name: Some("Reply target".into()),
         }),
+
+        reactions: Vec::new(),
+        reaction_revision: None,
     };
 
     let encoded = serde_json::to_string(&message).expect("message should serialize");

@@ -108,6 +108,9 @@ fn message(id: i64, chat_id: i64, timestamp_unix: i64, text: &str) -> MessageSum
         service: None,
         media_caption: None,
         reply_to: None,
+
+        reactions: Vec::new(),
+        reaction_revision: None,
     }
 }
 

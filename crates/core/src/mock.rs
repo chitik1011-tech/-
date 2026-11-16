@@ -57,6 +57,8 @@ impl Default for MockTelegramBackend {
                         service: None,
                         media_caption: None,
                         reply_to: None,
+                        reactions: Vec::new(),
+                        reaction_revision: None,
                     }),
                 },
             ],
@@ -201,6 +203,8 @@ impl MockTelegramBackend {
                     service: None,
                     media_caption: None,
                     reply_to: None,
+                    reactions: Vec::new(),
+                    reaction_revision: None,
                 };
                 self.next_message_id += 1;
 
@@ -276,6 +280,8 @@ impl MockTelegramBackend {
                     service: None,
                     media_caption: None,
                     reply_to: None,
+                    reactions: Vec::new(),
+                    reaction_revision: None,
                 };
                 self.next_message_id += 1;
 
@@ -369,6 +375,11 @@ impl MockTelegramBackend {
                     unread: false,
                 },
             ),
+            CoreCommand::AddReaction { .. } | CoreCommand::RemoveReaction { .. } => {
+                Err(CoreError::Backend(
+                    "message reactions are not implemented by the mock backend".into(),
+                ))
+            }
             CoreCommand::Shutdown => Ok(Vec::new()),
             CoreCommand::ResolvePeer { .. } => Err(CoreError::Backend(
                 "peer resolution is unsupported by this backend".into(),

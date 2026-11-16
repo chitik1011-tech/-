@@ -6,7 +6,7 @@ use crate::{
     forwarding::ForwardMessagesResult,
     model::{
         AccountState, AttachmentDownloadState, AuthorizationState, ChatActivityKind, ChatSummary,
-        MessageSummary,
+        MessageReaction, MessageSummary, ReactionRevision,
     },
     peer::PeerResolution,
     poll::PollSummary,
@@ -114,6 +114,24 @@ pub enum CoreEvent {
         poll_id: i64,
         error: String,
     },
+    /// Authoritative Telegram reaction state for a cached message.
+    MessageReactionsUpdated {
+        chat_id: i64,
+        message_id: i64,
+        reactions: Vec<MessageReaction>,
+        revision: ReactionRevision,
+    },
+    /// Finishes the UI's pending indicator after the reaction RPC completes.
+    ReactionOperationSucceeded {
+        chat_id: i64,
+        message_id: i64,
+    },
+    /// Reports a reaction RPC failure without losing the last server snapshot.
+    ReactionOperationFailed {
+        chat_id: i64,
+        message_id: i64,
+        error: String,
+    },
     /// Forward results; successful messages also arrive as `MessageAdded`.
     MessagesForwarded(ForwardMessagesResult),
     MessageSendStateChanged(OutgoingSend),
@@ -177,6 +195,9 @@ impl CoreEvent {
             Self::PollUpdated(_) => "poll_updated",
             Self::PollVoteSubmitted { .. } => "poll_vote_submitted",
             Self::PollVoteFailed { .. } => "poll_vote_failed",
+            Self::MessageReactionsUpdated { .. } => "message_reactions_updated",
+            Self::ReactionOperationSucceeded { .. } => "reaction_operation_succeeded",
+            Self::ReactionOperationFailed { .. } => "reaction_operation_failed",
             Self::MessagesForwarded(_) => "messages_forwarded",
             Self::MessageSendStateChanged(_) => "message_send_state_changed",
             Self::ChatActivityChanged { .. } => "chat_activity_changed",
@@ -199,6 +220,8 @@ impl CoreEvent {
                 | Self::ChatActivityChanged { .. }
                 | Self::ChatActivityEnded { .. }
                 | Self::ChatActivityExpired { .. }
+                | Self::ReactionOperationSucceeded { .. }
+                | Self::ReactionOperationFailed { .. }
         )
     }
 

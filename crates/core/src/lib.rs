@@ -27,7 +27,7 @@ pub use backend::{
     backend_update_channel, BackendFuture, BackendUpdateReceiver, BackendUpdateSender,
     TelegramBackend, DEFAULT_BACKEND_UPDATE_CAPACITY,
 };
-pub use command::{CoreCommand, MAX_CHAT_LOAD_LIMIT, MAX_MESSAGE_LOAD_LIMIT};
+pub use command::{CoreCommand, MAX_CHAT_LOAD_LIMIT, MAX_MESSAGE_LOAD_LIMIT, MAX_REACTION_BYTES};
 pub use connection::ConnectionState;
 pub use connection_machine::{
     ConnectionEpoch, ConnectionMachine, ConnectionToken, LinkError, LinkEvent, LinkPhase,
@@ -42,7 +42,8 @@ pub use mock::MockTelegramBackend;
 pub use model::{
     AccountState, AttachmentDownloadState, AttachmentKind, AttachmentThumbnail, AuthorizationState,
     ChatActivityKind, ChatFolder, ChatFolderFacts, ChatSummary, Draft, ForwardedFrom,
-    MediaAttachment, MessageHistoryState, MessageSummary, ReadDirection, ReadReceipt,
+    MediaAttachment, MessageHistoryState, MessageSummary, MessageReaction, MessageReactionType,
+    ReactionRevision, ReadDirection, ReadReceipt,
     ReplyMetadata,
 };
 pub use peer::{
