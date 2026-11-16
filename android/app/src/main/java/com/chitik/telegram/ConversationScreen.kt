@@ -118,6 +118,7 @@ data class ConversationScreenState(
     val messageMutationMessageId: Long = 0L,
     val messageMutationSuccessCount: Long = 0L,
     val messageMutationSuccessChatId: Long = 0L,
+    val messageMutationSuccessMessageId: Long = 0L,
 )
 
 internal fun selectedForwardMessageIds(messages: List<ConversationMessageUi>, selectedIds: Set<Long>): List<Long> =
@@ -158,7 +159,8 @@ fun ConversationScreen(
     LaunchedEffect(state.messageMutationSuccessCount) {
         if (
             state.messageMutationSuccessCount > 0L &&
-            state.messageMutationSuccessChatId == state.chatId.toLongOrNull()
+            state.messageMutationSuccessChatId == state.chatId.toLongOrNull() &&
+            (editingMessage?.id?.toLongOrNull() ?: deletionTarget?.id?.toLongOrNull()) == state.messageMutationSuccessMessageId
         ) {
             editingMessage = null
             deletionTarget = null
