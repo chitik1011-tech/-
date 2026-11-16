@@ -66,7 +66,7 @@ class OutgoingTextSendSupportTest {
         assertEquals(1920, send?.media?.videoWidth)
         assertEquals(1080, send?.media?.videoHeight)
 
-        val incomplete = event.replace("\\"video_height\\":1080,", "")
+        val incomplete = event.replace("video_height", "ignored_video_height")
         val withoutDimensions = parseOutgoingTextSendEvent(incomplete)
         assertEquals(null, withoutDimensions?.media?.videoWidth)
         assertEquals(null, withoutDimensions?.media?.videoHeight)
