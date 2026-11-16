@@ -1,6 +1,8 @@
 package com.chitik.telegram
 
 import android.Manifest
+import android.content.Context
+import android.content.ContextWrapper
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.widget.Toast
@@ -84,7 +86,7 @@ private fun TelegramRustApp(
 ) {
     val state by viewModel.state.collectAsState()
     val context = LocalContext.current
-    val lifecycleOwner = context as? LifecycleOwner
+    val lifecycleOwner = remember(context) { context.findLifecycleOwner() }
     var selectedChatId by rememberSaveable { mutableLongStateOf(0L) }
     var showContacts by rememberSaveable { mutableStateOf(false) }
     var draft by rememberSaveable { mutableStateOf("") }
@@ -390,4 +392,14 @@ private fun StartupScreen(state: NativeUiState) {
             },
         )
     }
+}
+
+
+private tailrec fun Context.findLifecycleOwner(): LifecycleOwner? = when (this) {
+    is LifecycleOwner -> this
+    is ContextWrapper -> {
+        val base = baseContext
+        if (base === this) null else base.findLifecycleOwner()
+    }
+    else -> null
 }
