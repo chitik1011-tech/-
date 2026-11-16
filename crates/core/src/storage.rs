@@ -148,8 +148,6 @@ fn decode_stored_state(content: &str) -> Result<CoreState> {
         Ok(stored) if (1..=STATE_SCHEMA_VERSION).contains(&stored.schema_version) => {
             let mut state = stored.state;
             state.contacts = Default::default();
-            let mut state = state;
-            state.contacts = Default::default();
             state
                 .validate()
                 .map_err(|error| CoreError::Storage(error.to_string()))?;
