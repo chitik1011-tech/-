@@ -799,7 +799,14 @@ impl GrammersBackend {
                     .next()
                     .flatten()
                     .ok_or_else(|| CoreError::Backend("Telegram accepted the edit but returned no updated message".into()))?;
-                vec![CoreEvent::MessageEdited(message_to_summary(&updated))]
+                vec![
+                    CoreEvent::MessageEdited(message_to_summary(&updated)),
+                    CoreEvent::MessageMutationSucceeded {
+                        chat_id,
+                        message_id,
+                        action: tg_mobile_core::MessageMutationAction::Edit,
+                    },
+                ]
             }
             CoreCommand::DeleteMessageForEveryone { chat_id, message_id } => {
                 self.require_ready().await?;
@@ -821,10 +828,17 @@ impl GrammersBackend {
                     .delete_messages(peer, &[telegram_message_id])
                     .await
                     .map_err(|error| crate::error::api_error("delete message for everyone", error))?;
-                vec![CoreEvent::MessagesDeleted {
-                    chat_id: Some(chat_id),
-                    message_ids: vec![message_id],
-                }]
+                vec![
+                    CoreEvent::MessagesDeleted {
+                        chat_id: Some(chat_id),
+                        message_ids: vec![message_id],
+                    },
+                    CoreEvent::MessageMutationSucceeded {
+                        chat_id,
+                        message_id,
+                        action: tg_mobile_core::MessageMutationAction::DeleteForEveryone,
+                    },
+                ]
             }
             CoreCommand::SendTextReliable {
                 client_id,
