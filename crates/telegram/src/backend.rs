@@ -19,10 +19,10 @@ use tg_media_cache::{CacheConfig, MediaCache};
 use tg_mobile_core::{
     AttachmentDownloadState, AuthorizationState, BackendFuture, BackendUpdateReceiver,
     BackendUpdateSender, ConnectionToken, CoreCommand, CoreError, CoreEvent, DownloadState,
-    OutgoingMediaAttachment, OutgoingSend, UploadState, TransferToken,
     ForwardMessagesResult, ForwardOutcome, MessageLinkResolution, MessagePeer, MessageSummary,
-    PeerReference, PeerResolution, TelegramBackend, TransferDirection,
-    TransferManager, TransferState, backend_update_channel,
+    OutgoingMediaAttachment, OutgoingSend, PeerReference, PeerResolution, TelegramBackend,
+    TransferDirection, TransferManager, TransferState, TransferToken, UploadState,
+    backend_update_channel,
 };
 use tokio::{
     sync::{broadcast, mpsc, watch},
@@ -41,12 +41,12 @@ use crate::{
         message_to_summary, search_messages_page, send_location, send_reply, send_text,
         send_text_idempotent,
     },
-    uploads::spawn_media_send,
     polls::{
         PollRegistry, clear_poll_registry, new_poll_registry, poll_by_id, polls_from_updates,
         remember_poll,
     },
     updates::{TelegramUpdate, UpdateWorkerInput, run_update_worker},
+    uploads::spawn_media_send,
 };
 
 const MESSAGE_DEDUP_CAPACITY: usize = 4096;
@@ -372,15 +372,16 @@ impl GrammersBackend {
             .get_by_key(TransferDirection::Upload, &reference)
             .map_err(|error| CoreError::Backend(error.to_string()))?;
         let token = match snapshot {
-            None => self
-                .transfers
-                .request(
-                    TransferDirection::Upload,
-                    reference.clone(),
-                    Some(media.size_bytes),
-                )
-                .map_err(|error| CoreError::Backend(error.to_string()))?
-                .token,
+            None => {
+                self.transfers
+                    .request(
+                        TransferDirection::Upload,
+                        reference.clone(),
+                        Some(media.size_bytes),
+                    )
+                    .map_err(|error| CoreError::Backend(error.to_string()))?
+                    .token
+            }
             Some(snapshot) => match snapshot.state {
                 TransferState::Upload(UploadState::Pending) => snapshot.token,
                 TransferState::Upload(UploadState::Uploading) => {
@@ -476,7 +477,10 @@ impl GrammersBackend {
             active.caption,
             "Media upload cancelled",
             true,
-            active.transfer_generation.saturating_add(1).max(cancelled.generation),
+            active
+                .transfer_generation
+                .saturating_add(1)
+                .max(cancelled.generation),
         )
         .with_session_token(active.session_generation, active.session_epoch);
         Ok(vec![CoreEvent::MessageSendStateChanged(update)])
