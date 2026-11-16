@@ -572,8 +572,8 @@ private fun MessageActionDialog(
             Column {
                 TextButton(onClick = onSelectForForward) { Text("Выбрать для пересылки") }
                 TextButton(onClick = onEdit, enabled = canEditMessageText(message)) { Text("Изменить") }
-                TextButton(onClick = onDelete) { Text("Удалить у всех") }
-                Text("Удалить у меня" работает только в личных и обычных группах; каналы требуют удаления у всех.)
+                TextButton(onClick = onDelete) { Text("Удалить…") }
+                Text("«Удалить у меня» работает только в личных и обычных группах; каналы требуют удаления у всех.")
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Закрыть") } },
