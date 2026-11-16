@@ -10,6 +10,7 @@ mod chats;
 mod config;
 mod contacts;
 mod downloads;
+mod uploads;
 mod error;
 mod ids;
 mod messages;
