@@ -397,6 +397,7 @@ impl CoreCommand {
                 chat_id,
                 media,
                 caption,
+                ..
             } => {
                 if *client_id == 0 {
                     return Err(CoreError::InvalidInput(
@@ -414,7 +415,9 @@ impl CoreCommand {
             }
             Self::CancelMediaSend { client_id } => {
                 if *client_id == 0 {
-                    Err(CoreError::InvalidInput("client message id must be non-zero".into()))
+                    Err(CoreError::InvalidInput(
+                        "client message id must be non-zero".into(),
+                    ))
                 } else {
                     Ok(())
                 }
