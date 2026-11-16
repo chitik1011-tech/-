@@ -27,7 +27,7 @@ class MessageForwardSelectionTest {
             message("11").copy(text = "skip"),
             message("12").copy(text = "second"),
         )
-        assertEquals("first\\nsecond", selectedMessageText(messages, setOf(12L, 10L)))
+        assertEquals("first\nsecond", selectedMessageText(messages, setOf(12L, 10L)))
     }
 
     private fun message(id: String) = ConversationMessageUi(
