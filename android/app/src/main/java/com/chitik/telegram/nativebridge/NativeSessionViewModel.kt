@@ -36,6 +36,12 @@ data class NativeUiState(
     val pollVoteErrors: Map<Long, String> = emptyMap(),
     val forwardError: String? = null,
     val forwardSuccessCount: Long = 0,
+    val messageMutationPending: Boolean = false,
+    val messageMutationError: String? = null,
+    val messageMutationChatId: Long = 0L,
+    val messageMutationMessageId: Long = 0L,
+    val messageMutationSuccessCount: Long = 0L,
+    val messageMutationSuccessChatId: Long = 0L,
     val busy: Boolean = false,
     val lastEventType: String = "none",
     val lastEventPayload: String = "",
@@ -362,6 +368,58 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         )
     }
 
+    fun editMessage(chatId: Long, messageId: Long, text: String) {
+        submitMessageMutation(
+            chatId = chatId,
+            messageId = messageId,
+            commandType = "edit_message",
+            extra = JSONObject().put("text", text),
+        )
+    }
+
+    fun deleteMessageForEveryone(chatId: Long, messageId: Long) {
+        submitMessageMutation(
+            chatId = chatId,
+            messageId = messageId,
+            commandType = "delete_message_for_everyone",
+        )
+    }
+
+    private fun submitMessageMutation(
+        chatId: Long,
+        messageId: Long,
+        commandType: String,
+        extra: JSONObject = JSONObject(),
+    ) {
+        if (chatId == 0L || messageId <= 0L || _state.value.messageMutationPending) return
+        _state.update {
+            it.copy(
+                messageMutationPending = true,
+                messageMutationError = null,
+                messageMutationChatId = chatId,
+                messageMutationMessageId = messageId,
+            )
+        }
+        val payload = JSONObject()
+            .put("chat_id", chatId)
+            .put("message_id", messageId)
+        extra.keys().forEach { key -> payload.put(key, extra.get(key)) }
+        val accepted = sendCommand(
+            JSONObject()
+                .put("type", commandType)
+                .put("payload", payload)
+                .toString(),
+        )
+        if (!accepted) {
+            _state.update {
+                it.copy(
+                    messageMutationPending = false,
+                    messageMutationError = "Не удалось отправить запрос в Telegram",
+                )
+            }
+        }
+    }
+
     fun forwardMessages(sourceChatId: Long, messageIds: List<Long>, destinationChatId: Long) {
         if (sourceChatId == 0L || destinationChatId == 0L || messageIds.isEmpty()) return
         val ids = JSONArray().apply { messageIds.forEach { id -> put(id) } }
@@ -623,6 +681,52 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                         lastEventPayload = payload,
                         forwardError = if (failed == 0 && succeeded > 0) null else "Переслано $succeeded, не удалось: $failed${firstError?.let { detail -> " — $detail" }.orEmpty()}",
                         forwardSuccessCount = if (failed == 0 && succeeded > 0) it.forwardSuccessCount + 1 else it.forwardSuccessCount,
+                    )
+                }
+            }
+            "message_mutation_failed" -> {
+                val failure = runCatching {
+                    val payloadObject = JSONObject(payload).optJSONObject("payload") ?: JSONObject()
+                    val chatId = payloadObject.optLong("chat_id")
+                    val messageId = payloadObject.optLong("message_id")
+                    val error = payloadObject.optString("error").ifBlank { "Telegram отклонил действие" }
+                    Triple(chatId, messageId, error)
+                }.getOrNull()
+                _state.update {
+                    if (failure == null) {
+                        it.copy(messageMutationPending = false, messageMutationError = "Telegram отклонил действие")
+                    } else {
+                        it.copy(
+                            messageMutationPending = false,
+                            messageMutationChatId = failure.first,
+                            messageMutationMessageId = failure.second,
+                            messageMutationError = failure.third,
+                            lastEventType = type,
+                            lastEventPayload = payload,
+                        )
+                    }
+                }
+            }
+            "message_edited",
+            "messages_deleted",
+            -> {
+                val target = runCatching {
+                    val body = JSONObject(payload).optJSONObject("payload") ?: JSONObject()
+                    val chatId = if (type == "message_edited") {
+                        body.optLong("chat_id")
+                    } else {
+                        body.optLong("chat_id")
+                    }
+                    chatId
+                }.getOrDefault(0L)
+                _state.update {
+                    it.copy(
+                        messageMutationPending = false,
+                        messageMutationError = null,
+                        messageMutationSuccessCount = it.messageMutationSuccessCount + 1,
+                        messageMutationSuccessChatId = target,
+                        lastEventType = type,
+                        lastEventPayload = payload,
                     )
                 }
             }
