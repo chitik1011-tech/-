@@ -888,8 +888,9 @@ mod capability_tests {
             chat_id: 8,
             text: "hello".into(),
         };
-        assert!(command_capability_error(&command, &CoreState::default()).is_some());
         let mut state = CoreState::default();
+        state.account.authorization = crate::model::AuthorizationState::Ready;
+        assert!(command_capability_error(&command, &state).is_some());
         state.chat_capabilities.insert(8, allowed(8));
         assert_eq!(command_capability_error(&command, &state), None);
     }
@@ -903,6 +904,7 @@ mod capability_tests {
             destination_chat_id: 3,
         });
         let mut state = CoreState::default();
+        state.account.authorization = crate::model::AuthorizationState::Ready;
         state.chat_capabilities.insert(2, allowed(2));
         assert!(command_capability_error(&command, &state).is_some());
         state.chat_capabilities.insert(3, allowed(3));
