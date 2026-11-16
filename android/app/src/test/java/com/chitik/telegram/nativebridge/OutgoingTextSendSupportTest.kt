@@ -56,6 +56,11 @@ class OutgoingTextSendSupportTest {
         )
         assertTrue(failed?.canRetry == true)
         assertFalse(failed?.canCancel == true)
+
+        val awaitingConfirmation = parseOutgoingTextSendEvent(
+            """{"type":"message_send_state_changed","payload":{"client_id":41,"chat_id":99,"text":"caption","media":{"kind":"photo","path":"/private/photo.jpg","file_name":"photo.jpg","mime_type":"image/jpeg","size_bytes":2048},"state":{"status":"awaiting_confirmation","reason":"server acknowledgement was lost"}}}""",
+        )
+        assertTrue(awaitingConfirmation?.canRetry == true)
     }
 
     @Test
