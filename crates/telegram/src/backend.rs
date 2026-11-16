@@ -37,7 +37,10 @@ use crate::{
         message_to_summary, search_messages_page, send_location, send_reply, send_text,
         send_text_idempotent,
     },
-    polls::{PollRegistry, clear_poll_registry, new_poll_registry, poll_by_id, polls_from_updates, remember_poll},
+    polls::{
+        PollRegistry, clear_poll_registry, new_poll_registry, poll_by_id, polls_from_updates,
+        remember_poll,
+    },
     updates::{TelegramUpdate, UpdateWorkerInput, run_update_worker},
 };
 

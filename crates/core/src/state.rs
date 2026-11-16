@@ -309,17 +309,11 @@ impl CoreState {
             }
             CoreEvent::ConnectionLifecycle { token, event } => {
                 let outcome = self.connection_machine.apply(*token, *event);
-                if matches!(
-                    outcome,
-                    Ok(Outcome::Changed { .. } | Outcome::Duplicate)
-                ) {
+                if matches!(outcome, Ok(Outcome::Changed { .. } | Outcome::Duplicate)) {
                     self.connection_state = self.connection_machine.transport_state();
                     if matches!(*event, LinkEvent::Logout) {
                         self.clear_authenticated_session();
-                    } else if matches!(
-                        *event,
-                        LinkEvent::TransportLost | LinkEvent::Shutdown
-                    ) {
+                    } else if matches!(*event, LinkEvent::TransportLost | LinkEvent::Shutdown) {
                         self.chat_capabilities.clear();
                     }
                 }
@@ -1365,15 +1359,18 @@ mod message_ordering_tests {
         );
     }
 
-
     #[test]
     fn logout_invalidates_generation_and_clears_account_scoped_caches() {
         let mut state = CoreState::default();
         seed_chat(&mut state, 0);
         state.reduce(&CoreEvent::MessageAdded(message(7, 1, false)));
         state.pinned_messages.insert(42, vec![7]);
-        state.outbox.insert(1, OutgoingSend::sending(1, 42, "pending"));
-        state.send_ledger.insert(1, OutgoingSend::sending(1, 42, "pending"));
+        state
+            .outbox
+            .insert(1, OutgoingSend::sending(1, 42, "pending"));
+        state
+            .send_ledger
+            .insert(1, OutgoingSend::sending(1, 42, "pending"));
         state.last_error = Some("old session error".into());
 
         state.reduce(&CoreEvent::ConnectionSessionStarted);
