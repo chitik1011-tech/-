@@ -56,6 +56,7 @@ class MessageReactionLifecycleTest {
 
         val updated = state.removeDeletedMessages(chatId = 5L, messageIds = setOf(12L, 13L))
 
+        // Deletion is chat scoped: an identical ID in another chat remains untouched.
         assertEquals(listOf("12"), updated.messages[8L]?.map { it.id })
         assertTrue(updated.messages[5L].isNullOrEmpty())
         assertEquals(setOf("8:12"), updated.pendingReactionKeys)
