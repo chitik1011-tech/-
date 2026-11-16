@@ -91,6 +91,13 @@ pub enum CoreEvent {
         unread: bool,
     },
     MessageEdited(MessageSummary),
+    /// A user requested message mutation failed at the backend; this is an ephemeral UI error.
+    MessageMutationFailed {
+        chat_id: i64,
+        message_id: i64,
+        action: MessageMutationAction,
+        error: String,
+    },
     MediaTransferUpdated {
         chat_id: i64,
         message_id: i64,
@@ -172,6 +179,7 @@ impl CoreEvent {
             Self::ChatPinned { .. } => "chat_pinned",
             Self::ChatUnreadChanged { .. } => "chat_unread_changed",
             Self::MessageEdited(_) => "message_edited",
+            Self::MessageMutationFailed { .. } => "message_mutation_failed",
             Self::MediaTransferUpdated { .. } => "media_transfer_updated",
             Self::MessagesDeleted { .. } => "messages_deleted",
             Self::PollUpdated(_) => "poll_updated",
