@@ -191,6 +191,13 @@ private data class ParsedNativeState(
 internal fun NativeUiState.advanceSelectionGeneration(): NativeUiState = copy(
     selectionGeneration = selectionGeneration + 1,
     deletingMessages = false,
+    pinnedMessages = emptyMap(),
+    pendingPinnedMessageIds = emptySet(),
+    pinnedError = null,
+    pinnedFailureKey = null,
+    loadingHistoryBefore = emptyMap(),
+    completedHistoryBefore = emptyMap(),
+    historyPageErrors = emptyMap(),
     deleteError = if (deletingMessages) {
         "Удаление прервано; обновите сообщения и проверьте результат"
     } else {
@@ -545,7 +552,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
     }
 
     fun loadMessagesBefore(chatId: Long, beforeMessageId: Long) {
-        if (beforeMessageId <= 0L) return
+        if (chatId == 0L || beforeMessageId <= 0L) return
         _state.update { current ->
             current.copy(
                 loadingHistoryBefore = current.loadingHistoryBefore + (chatId to beforeMessageId),
@@ -1377,6 +1384,10 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 },
                 deletingMessages = false,
                 deleteError = null,
+                pendingPinnedMessageIds = if (authorization != AuthorizationUiStep.Ready) emptySet() else current.pendingPinnedMessageIds,
+                pinnedMessages = if (authorization != AuthorizationUiStep.Ready) emptyMap() else current.pinnedMessages,
+                pinnedError = if (authorization != AuthorizationUiStep.Ready) null else current.pinnedError,
+                pinnedFailureKey = if (authorization != AuthorizationUiStep.Ready) null else current.pinnedFailureKey,
                 busy = false,
                 contactsLoading = false,
                 lastEventType = "authorization_changed",
