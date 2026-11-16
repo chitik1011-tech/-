@@ -763,8 +763,8 @@ impl CoreState {
                 let mut update = update.clone();
                 if update.media.is_some() {
                     let token = self.connection_machine.token();
-                    if update.session_generation != token.generation
-                        || update.session_epoch != token.epoch
+                    if update.session_generation != token.generation().as_u64()
+                        || update.session_epoch != token.epoch().as_u64()
                     {
                         return;
                     }
