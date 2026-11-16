@@ -641,6 +641,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                         busy = false,
                         deletingMessages = false,
                         deleteError = null,
+                        selectionGeneration = it.selectionGeneration + 1,
                         lastEventType = type,
                         lastEventPayload = payload,
                     )
