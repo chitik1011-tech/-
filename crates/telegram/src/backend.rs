@@ -772,21 +772,28 @@ impl GrammersBackend {
                     Vec::new()
                 }
             }
-            CoreCommand::EditMessage { chat_id, message_id, text } => {
+            CoreCommand::EditMessage {
+                chat_id,
+                message_id,
+                text,
+            } => {
                 self.require_ready().await?;
                 let peer = find_peer(&self.peers, chat_id)
                     .await
                     .ok_or(TelegramBackendError::UnknownChat(chat_id))?;
-                let telegram_message_id = i32::try_from(message_id)
-                    .map_err(|_| CoreError::InvalidInput("message id exceeds Telegram range".into()))?;
-                let target = self.client
+                let telegram_message_id = i32::try_from(message_id).map_err(|_| {
+                    CoreError::InvalidInput("message id exceeds Telegram range".into())
+                })?;
+                let _target = self.client
                     .get_messages_by_id(peer.clone(), &[telegram_message_id])
                     .await
                     .map_err(|error| crate::error::api_error("load message for editing", error))?
                     .into_iter()
                     .next()
                     .flatten()
-                    .ok_or_else(|| CoreError::InvalidInput("message no longer exists in this chat".into()))?;
+                    .ok_or_else(|| {
+                        CoreError::InvalidInput("message no longer exists in this chat".into())
+                    })?;
                 self.client
                     .edit_message(peer.clone(), telegram_message_id, text.as_str())
                     .await
@@ -798,7 +805,11 @@ impl GrammersBackend {
                     .into_iter()
                     .next()
                     .flatten()
-                    .ok_or_else(|| CoreError::Backend("Telegram accepted the edit but returned no updated message".into()))?;
+                    .ok_or_else(|| {
+                        CoreError::Backend(
+                            "Telegram accepted the edit but returned no updated message".into(),
+                        )
+                    })?;
                 vec![
                     CoreEvent::MessageEdited(message_to_summary(&updated)),
                     CoreEvent::MessageMutationSucceeded {
@@ -808,14 +819,18 @@ impl GrammersBackend {
                     },
                 ]
             }
-            CoreCommand::DeleteMessageForEveryone { chat_id, message_id } => {
+            CoreCommand::DeleteMessageForEveryone {
+                chat_id,
+                message_id,
+            } => {
                 self.require_ready().await?;
                 let peer = find_peer(&self.peers, chat_id)
                     .await
                     .ok_or(TelegramBackendError::UnknownChat(chat_id))?;
-                let telegram_message_id = i32::try_from(message_id)
-                    .map_err(|_| CoreError::InvalidInput("message id exceeds Telegram range".into()))?;
-                let target = self.client
+                let telegram_message_id = i32::try_from(message_id).map_err(|_| {
+                    CoreError::InvalidInput("message id exceeds Telegram range".into())
+                })?;
+                let _target = self.client
                     .get_messages_by_id(peer.clone(), &[telegram_message_id])
                     .await
                     .map_err(|error| crate::error::api_error("load message before deletion", error))?
@@ -823,7 +838,6 @@ impl GrammersBackend {
                     .next()
                     .flatten()
                     .ok_or_else(|| CoreError::InvalidInput("message no longer exists in this chat".into()))?;
-                let _ = target;
                 self.client
                     .delete_messages(peer, &[telegram_message_id])
                     .await
