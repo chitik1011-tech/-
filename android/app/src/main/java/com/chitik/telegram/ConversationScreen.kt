@@ -529,12 +529,15 @@ fun ConversationScreen(
                                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
                             )
                         }
-                        mediaSend.reason?.takeIf { mediaSend.isFailure }?.let { reason ->
+                        mediaSend.reason?.takeIf {
+                            mediaSend.isFailure || mediaSend.status == "awaiting_confirmation"
+                        }?.let { reason ->
                             Text(
                                 text = reason,
                                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp),
                                 style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.error,
+                                color = if (mediaSend.isFailure) MaterialTheme.colorScheme.error
+                                else MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                         if (mediaSend.canRetry || mediaSend.canCancel) {
