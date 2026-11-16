@@ -42,6 +42,29 @@ class OutgoingTextSendSupportTest {
     }
 
     @Test
+    fun mediaOutboxParsesProgressRetryAndCancelState() {
+        val uploading = parseOutgoingTextSendEvent(
+            """{"type":"message_send_state_changed","payload":{"client_id":41,"chat_id":99,"text":"caption","media":{"kind":"photo","path":"/private/photo.jpg","file_name":"photo.jpg","mime_type":"image/jpeg","size_bytes":2048},"state":{"status":"uploading","bytes_transferred":1024,"total_bytes":2048}}}""",
+        )
+        assertNotNull(uploading)
+        assertEquals(50, uploading?.progressPercent)
+        assertTrue(uploading?.canCancel == true)
+        assertFalse(uploading?.canRetry == true)
+
+        val failed = parseOutgoingTextSendEvent(
+            """{"type":"message_send_state_changed","payload":{"client_id":41,"chat_id":99,"text":"caption","media":{"kind":"photo","path":"/private/photo.jpg","file_name":"photo.jpg","mime_type":"image/jpeg","size_bytes":2048},"state":{"status":"failed","reason":"offline","retryable":true}}}""",
+        )
+        assertTrue(failed?.canRetry == true)
+        assertFalse(failed?.canCancel == true)
+    }
+
+    @Test
+    fun mediaImportBlocksComposerUntilQueued() {
+        assertTrue(NativeUiState(mediaImportInProgress = true).sendingText)
+        assertFalse(NativeUiState(mediaImportInProgress = false).sendingText)
+    }
+
+    @Test
     fun pendingSendingConfirmedReleasesComposer() {
         val id = 31L
         val pending = NativeUiState(activeTextSendId = id, activeTextSendChatId = 99L, activeTextSendText = "hello")
