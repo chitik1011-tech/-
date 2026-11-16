@@ -71,3 +71,20 @@ fn mutation_failure_is_ephemeral_and_does_not_change_server_message_cache() {
     assert_eq!(state.messages, before);
     assert_eq!(state.last_error, None);
 }
+
+#[test]
+fn mutation_failure_event_has_a_stable_wire_kind_and_does_not_persist_failure_state() {
+    let event = CoreEvent::MessageMutationFailed {
+        chat_id: -100123,
+        message_id: 42,
+        action: MessageMutationAction::Edit,
+        error: "permission denied".into(),
+    };
+    let value = serde_json::to_value(&event).unwrap();
+    assert_eq!(value["type"], "message_mutation_failed");
+    assert_eq!(value["payload"]["action"], "edit");
+
+    let mut state = CoreState::default();
+    state.reduce(&event);
+    assert_eq!(state.last_error, None);
+}
