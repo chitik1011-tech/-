@@ -24,6 +24,7 @@ fn message_with_photo() -> MessageSummary {
             width: Some(640),
             height: Some(480),
             duration_ms: None,
+            voice_waveform: None,
             filename: None,
             thumbnail: None,
             download_generation: 0,

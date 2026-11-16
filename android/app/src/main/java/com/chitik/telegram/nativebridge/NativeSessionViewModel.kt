@@ -19,6 +19,7 @@ import com.chitik.telegram.parseContactPage
 import com.chitik.telegram.ConversationPollOptionUi
 import com.chitik.telegram.ConversationPollUi
 import com.chitik.telegram.PeerProfileUi
+import com.chitik.telegram.VoicePlaybackCoordinator
 import com.chitik.telegram.MediaAttachmentUi
 import com.chitik.telegram.matchesMutationTarget
 import com.chitik.telegram.mutationEventAcknowledges
@@ -224,6 +225,18 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
     val state: StateFlow<NativeUiState> = _state.asStateFlow()
 
     private val lifecycle = NativeSessionLifecycle()
+    private val voicePlayback = VoicePlaybackCoordinator(application, viewModelScope)
+    val voicePlaybackState = voicePlayback.state
+
+    fun stopVoicePlayback() {
+        voicePlayback.reset()
+    }
+
+    fun toggleVoicePlayback(mediaId: String, attachment: MediaAttachmentUi) {
+        val path = (attachment.downloadState as? com.chitik.telegram.MediaDownloadUiState.Downloaded)
+            ?.localPath ?: return
+        voicePlayback.toggle(mediaId, java.io.File(path))
+    }
 
     init {
         initializeNativeSession()
@@ -324,6 +337,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
     }
 
     fun clearTelegramConfig() {
+        voicePlayback.reset()
         _state.update { it.copy(busy = true, error = null) }
 
         viewModelScope.launch(Dispatchers.IO) {
@@ -365,6 +379,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
 
     private fun replaceNativeHandle(config: TelegramRuntimeConfig?): Long {
         markMessageMutationUnconfirmed("Сессия изменилась; проверьте сообщение в Telegram перед повтором")
+        viewModelScope.launch(Dispatchers.Main.immediate) { voicePlayback.reset() }
         val creation = lifecycle.beginReplacement()
             ?: throw IllegalStateException("Native session replacement is already in progress")
 
@@ -1723,6 +1738,11 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                         .takeIf { it.has("duration_ms") && !it.isNull("duration_ms") }
                         ?.optLong("duration_ms")
                         ?.takeIf { it >= 0L },
+                    voiceWaveform = attachment.optJSONArray("voice_waveform")?.let { waveform ->
+                        if (waveform.length() !in 1..4096) null
+                        else (0 until waveform.length()).map { index -> waveform.optInt(index, -1) }
+                            .takeIf { samples -> samples.all { it in 0..255 } }
+                    },
                     filename = attachment
                         .optString("filename")
                         .takeIf { it.isNotBlank() },
@@ -1930,6 +1950,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
     override fun onCleared() {
         val currentHandle = lifecycle.close()
         _state.update { it.copy(nativeHandle = 0L) }
+        voicePlayback.reset()
         if (currentHandle != null && NativeLibrary.isLoaded) {
             runCatching { NativeBridge.destroyHandle(currentHandle) }
         }

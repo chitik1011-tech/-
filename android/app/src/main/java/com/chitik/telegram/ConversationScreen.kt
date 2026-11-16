@@ -258,6 +258,8 @@ fun ConversationScreen(
     onDownloadMedia: (messageId: Long, attachmentIndex: Int, retry: Boolean) -> Unit,
     onCancelMedia: (messageId: Long, attachmentIndex: Int) -> Unit,
     onOpenDocument: (MediaAttachmentUi) -> Unit,
+    voicePlayback: VoicePlaybackCoordinator.VoicePlaybackState = VoicePlaybackCoordinator.VoicePlaybackState(),
+    onVoiceToggle: (String, MediaAttachmentUi) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier,
 ) {
     val listState = rememberLazyListState()
@@ -643,6 +645,8 @@ fun ConversationScreen(
                                     viewerKey = "${message.id}:${attachment.index}"
                                 },
                                 onOpenDocument = onOpenDocument,
+                                voicePlayback = voicePlayback,
+                                onVoiceToggle = { mediaId, attachment -> onVoiceToggle(mediaId, attachment) },
                                 onReplyMessage = { onReplyMessage(message) },
                                 onOpenReplyTarget = onOpenReplyTarget,
                                 reactionPending = "${message.chatId}:${message.id}" in state.pendingReactionKeys,
@@ -823,6 +827,8 @@ private fun MessageBubble(
     onCancelMedia: (attachmentIndex: Int) -> Unit,
     onOpenViewer: (MediaAttachmentUi) -> Unit,
     onOpenDocument: (MediaAttachmentUi) -> Unit,
+    voicePlayback: VoicePlaybackCoordinator.VoicePlaybackState,
+    onVoiceToggle: (String, MediaAttachmentUi) -> Unit,
     onReplyMessage: () -> Unit,
     onOpenReplyTarget: (String) -> Unit,
     reactionPending: Boolean,
@@ -892,6 +898,9 @@ private fun MessageBubble(
                         onCancel = { onCancelMedia(attachment.index) },
                         onOpenViewer = { onOpenViewer(attachment) },
                         onOpenDocument = { onOpenDocument(attachment) },
+                        mediaId = "${message.chatId}:${message.id}:${attachment.index}",
+                        voicePlayback = voicePlayback,
+                        onVoiceToggle = { onVoiceToggle("${message.chatId}:${message.id}:${attachment.index}", attachment) },
                     )
                     Spacer(Modifier.height(8.dp))
                 }
@@ -1208,8 +1217,20 @@ private fun MediaAttachmentCard(
     onCancel: () -> Unit,
     onOpenViewer: () -> Unit,
     onOpenDocument: () -> Unit,
+    mediaId: String,
+    voicePlayback: VoicePlaybackCoordinator.VoicePlaybackState,
+    onVoiceToggle: () -> Unit,
 ) {
     when (attachment.kind) {
+        MediaKindUi.Voice -> VoiceAttachmentCard(
+            attachment = attachment,
+            mediaId = mediaId,
+            playback = voicePlayback,
+            onTogglePlayback = onVoiceToggle,
+            onDownload = onDownload,
+            onCancel = onCancel,
+        )
+
         MediaKindUi.Photo -> PhotoAttachmentCard(
             attachment = attachment,
             onDownload = onDownload,
