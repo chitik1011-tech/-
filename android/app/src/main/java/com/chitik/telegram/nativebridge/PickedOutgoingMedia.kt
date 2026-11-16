@@ -47,11 +47,17 @@ internal fun importPickedMedia(context: Context, uri: Uri): PickedOutgoingMedia 
         .ifBlank { "attachment" }
     val suppliedExtension = suppliedFileName.substringAfterLast('.', "")
         .takeIf { it.isNotBlank() && it.length <= 12 && it.all(Char::isLetterOrDigit) }
-    val mimeType = resolver.getType(uri)
-        ?.takeIf(String::isNotBlank)
-        ?: suppliedExtension?.let {
-            MimeTypeMap.getSingleton().getMimeTypeFromExtension(it.lowercase())
+    val extensionMimeType = suppliedExtension?.let {
+        MimeTypeMap.getSingleton().getMimeTypeFromExtension(it.lowercase())
+    }
+    val resolvedMimeType = resolver.getType(uri)?.takeIf(String::isNotBlank)
+    val mimeType = resolvedMimeType
+        ?.takeUnless {
+            it.equals("application/octet-stream", ignoreCase = true) ||
+                it.equals("binary/octet-stream", ignoreCase = true)
         }
+        ?: extensionMimeType
+        ?: resolvedMimeType
         ?: "application/octet-stream"
     val mimeExtension = MimeTypeMap.getSingleton()
         .getExtensionFromMimeType(mimeType)
