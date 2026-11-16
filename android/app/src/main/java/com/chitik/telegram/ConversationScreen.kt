@@ -123,7 +123,7 @@ internal fun selectedForwardMessageIds(messages: List<ConversationMessageUi>, se
     messages.mapNotNull { it.id.toLongOrNull() }.filter { it in selectedIds }.distinct()
 
 internal fun selectedMessageText(messages: List<ConversationMessageUi>, selectedIds: Set<Long>): String =
-    messages.filter { it.id.toLongOrNull() in selectedIds }
+    messages.filter { message -> message.id.toLongOrNull()?.let { it in selectedIds } == true }
         .map { it.text.trim() }
         .filter(String::isNotEmpty)
         .joinToString("\n")
@@ -223,7 +223,7 @@ fun ConversationScreen(
                                 onDismissRequest = { selectionMenuOpen = false },
                             ) {
                                 val ordered = selectedForwardMessageIds(state.messages, selectedMessageIds)
-                                val selectedMessages = state.messages.filter { it.id.toLongOrNull() in selectedMessageIds }
+                                val selectedMessages = state.messages.filter { message -> message.id.toLongOrNull()?.let { it in selectedMessageIds } == true }
                                 val canCopy = selectedMessages.isNotEmpty() && selectedMessages.all { it.text.isNotBlank() }
                                 val canDelete = selectedMessages.isNotEmpty() && selectedMessages.all { it.isOutgoing }
                                 DropdownMenuItem(
