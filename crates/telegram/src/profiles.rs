@@ -50,7 +50,7 @@ pub(crate) fn profile_from_peer(peer_id: i64, peer: &Peer) -> PeerProfile {
         Peer::Group(group) => {
             profile.kind = PeerKind::BasicGroup;
             if let tl::enums::Chat::Chat(raw) = &group.raw {
-                set_member_count(profile, Some(raw.participants_count));
+                set_member_count(&mut profile, Some(raw.participants_count));
             }
         }
         Peer::Channel(channel) => {
@@ -59,7 +59,7 @@ pub(crate) fn profile_from_peer(peer_id: i64, peer: &Peer) -> PeerProfile {
                 channel.raw.megagroup,
                 channel.raw.gigagroup,
             );
-            set_member_count(profile, channel.raw.participants_count);
+            set_member_count(&mut profile, channel.raw.participants_count);
             profile.is_verified = Some(channel.raw.verified);
             profile.is_scam = Some(channel.raw.scam);
             profile.is_fake = Some(channel.raw.fake);
@@ -147,7 +147,11 @@ pub(crate) async fn hydrate_profile(
                     if let Ok(tl::enums::users::UserFull::Full(full)) =
                         client.invoke(&request).await
                     {
-                        set_profile_about(&mut profile, &full.full_user.about);
+                        if let tl::enums::UserFull::Full(full_user) = full.full_user {
+                            if let Some(about) = full_user.about.as_deref() {
+                                set_profile_about(&mut profile, about);
+                            }
+                        }
                     }
                 }
             }
