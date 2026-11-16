@@ -6,13 +6,16 @@ import org.junit.Test
 
 class MessageMutationSupportTest {
     @Test
-    fun editAndDeleteStayUnavailableUntilBackendCommandsExist() {
-        val edit = messageMutationAvailability(MessageMutationAction.Edit)
-        val delete = messageMutationAvailability(MessageMutationAction.Delete)
-
-        assertFalse(edit.enabled)
-        assertFalse(delete.enabled)
-        assertTrue(edit.explanation.contains("не поддерживается"))
-        assertTrue(delete.explanation.contains("не поддерживается"))
+    fun editComposerRequiresServerMessageText() {
+        assertTrue(canEditMessageText(message(text = "old text")))
+        assertFalse(canEditMessageText(message(text = "  ")))
     }
+
+    private fun message(text: String) = ConversationMessageUi(
+        id = "12",
+        chatId = "-1001",
+        text = text,
+        timestamp = "",
+        isOutgoing = true,
+    )
 }
