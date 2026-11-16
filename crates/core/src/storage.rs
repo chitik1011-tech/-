@@ -186,6 +186,7 @@ mod tests {
         let state = decode_stored_state(&stored).unwrap();
         assert!(state.folders.is_empty());
         assert!(state.drafts.is_empty());
+        assert!(state.contacts.is_empty());
     }
 
     #[test]
