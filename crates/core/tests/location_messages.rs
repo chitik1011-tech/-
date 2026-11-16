@@ -26,6 +26,8 @@ fn location_message() -> MessageSummary {
         service_message: false,
         media_caption: None,
         reply_to: None,
+        reactions: Vec::new(),
+        reaction_revision: None,
     }
 }
 
