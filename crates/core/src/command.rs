@@ -303,9 +303,7 @@ impl CoreCommand {
             Self::DeleteMessageForEveryone {
                 chat_id,
                 message_id,
-            } => {
-                validate_message_target(*chat_id, *message_id)
-            }
+            } => validate_message_target(*chat_id, *message_id),
             Self::DeleteMessageForMe {
                 chat_id,
                 message_id,
@@ -417,7 +415,9 @@ fn validate_media_target(chat_id: i64, message_id: i64, attachment_index: usize)
 fn validate_message_target(chat_id: i64, message_id: i64) -> Result<()> {
     validate_chat_id(chat_id)?;
     if message_id <= 0 {
-        return Err(CoreError::InvalidInput("message id must be positive".into()));
+        return Err(CoreError::InvalidInput(
+            "message id must be positive".into(),
+        ));
     }
     Ok(())
 }
