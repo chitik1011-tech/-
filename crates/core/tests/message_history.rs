@@ -27,7 +27,7 @@ fn message(id: i64, timestamp_unix: i64) -> MessageSummary {
 fn loaded_history_merges_without_incrementing_unread() {
     let mut state = CoreState::default();
     state.account.chats.push(ChatSummary {
-            kind: None,
+        kind: None,
         id: 77,
         title: "history".into(),
         unread_count: 5,
@@ -76,7 +76,7 @@ fn history_ignores_messages_for_the_wrong_chat() {
 fn live_message_deduplicates_against_loaded_history() {
     let mut state = CoreState::default();
     state.account.chats.push(ChatSummary {
-            kind: None,
+        kind: None,
         id: 77,
         title: "history".into(),
         unread_count: 0,
