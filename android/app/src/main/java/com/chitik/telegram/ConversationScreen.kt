@@ -152,7 +152,7 @@ fun ConversationScreen(
     val listState = rememberLazyListState()
     var viewerKey by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedMessageIds by remember(state.chatId, state.selectionGeneration) { mutableStateOf<Set<Long>>(emptySet()) }
-    var selectionMenuOpen by remember { mutableStateOf(false) }
+    var selectionMenuOpen by remember(state.chatId, state.selectionGeneration) { mutableStateOf(false) }
     var showDeleteConfirmation by remember(state.chatId, state.selectionGeneration) { mutableStateOf(false) }
     LaunchedEffect(state.messages, state.selectionGeneration) {
         val currentIds = state.messages.mapNotNull { it.id.toLongOrNull() }.toSet()
