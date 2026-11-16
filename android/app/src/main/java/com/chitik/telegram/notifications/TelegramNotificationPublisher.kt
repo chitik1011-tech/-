@@ -40,6 +40,16 @@ class TelegramNotificationPublisher(context: Context) {
         val timestampMillis: Long = System.currentTimeMillis(),
     )
 
+    /** Dismisses notices for one chat after a read, delete, or navigation event. */
+    fun cancelChat(chatId: Long) {
+        if (chatId != 0L) notificationManager?.cancel(notificationTag(chatId), NOTIFICATION_ID)
+    }
+
+    /** Only clears this application's message notification tags, not other channels. */
+    fun cancelAll() {
+        notificationManager?.cancelAll()
+    }
+
     /** Marks the currently visible chat; its incoming events are not shown as notifications. */
     fun setVisibleChat(chatId: Long?) {
         visibleChatId.set(chatId)
