@@ -1,6 +1,13 @@
 package com.chitik.telegram
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
@@ -49,43 +56,75 @@ fun PeerProfileDialog(
     val title = profile?.displayName?.takeIf(String::isNotBlank) ?: "Profile"
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(title) },
+        title = {
+            Text(
+                text = "Info",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+            )
+        },
         text = {
-            Column {
-                if (loading && profile == null) Text("Loading profile…")
+            Column(
+                modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                if (loading && profile == null) {
+                    CircularProgressIndicator(modifier = Modifier.align(Alignment.CenterHorizontally))
+                }
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                profile?.let {
-                    it.avatarLocalPath?.let { path ->
+                profile?.let { peer ->
+                    if (!peer.avatarLocalPath.isNullOrBlank()) {
                         AsyncImage(
-                            model = File(path),
+                            model = File(peer.avatarLocalPath),
                             contentDescription = "Profile photo",
-                            modifier = Modifier.size(80.dp).clip(CircleShape).align(Alignment.CenterHorizontally),
+                            modifier = Modifier.size(92.dp).clip(CircleShape).align(Alignment.CenterHorizontally),
+                        )
+                    } else {
+                        AvatarPlaceholder(
+                            displayName = title,
+                            size = 92.dp,
+                            modifier = Modifier.align(Alignment.CenterHorizontally),
                         )
                     }
-                    Text("Type: ${it.kind}")
-                    it.username?.let { value -> Text("@${value}") }
-                    it.bio?.takeIf(String::isNotBlank)?.let { value ->
-                        Spacer(Modifier.height(8.dp))
-                        Text(value)
-                    }
-                    it.memberCount?.let { value -> Text("Members: ${value}") }
-                    it.presence?.let { value -> Text("Presence: ${value}") }
-                    it.isBot?.let { value -> Text(if (value) "Bot account" else "User account") }
-                    if (it.isVerified == true) Text("Verified")
-                    if (it.isPremium == true) Text("Premium")
-                    val permissions = listOfNotNull(
-                        it.canSendMessages?.let { allowed -> "Send messages: ${if (allowed) "yes" else "no"}" },
-                        it.canInviteUsers?.let { allowed -> "Invite users: ${if (allowed) "yes" else "no"}" },
-                        it.canChangeInfo?.let { allowed -> "Change info: ${if (allowed) "yes" else "no"}" },
-                        it.canPostMessages?.let { allowed -> "Post messages: ${if (allowed) "yes" else "no"}" },
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.titleLarge,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth(),
                     )
-                    if (permissions.isNotEmpty()) {
-                        Spacer(Modifier.height(8.dp))
-                        permissions.forEach { Text(it) }
+                    peer.presence?.takeIf(String::isNotBlank)?.let { presence ->
+                        Text(
+                            presence,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
                     }
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    peer.username?.takeIf(String::isNotBlank)?.let {
+                        ProfileInfoRow(label = "Username", value = "@$it")
+                    }
+                    peer.bio?.takeIf(String::isNotBlank)?.let {
+                        ProfileInfoRow(label = "Bio", value = it)
+                    }
+                    peer.memberCount?.let {
+                        ProfileInfoRow(label = "Members", value = it.toString())
+                    }
+                    if (peer.isVerified == true) ProfileInfoRow("Account", "Verified")
+                    if (peer.isBot == true) ProfileInfoRow("Type", "Bot")
+                    if (peer.isPremium == true) ProfileInfoRow("Telegram", "Premium")
                 }
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
     )
+}
+
+@Composable
+private fun ProfileInfoRow(label: String, value: String) {
+    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Text(value, style = MaterialTheme.typography.bodyLarge)
+        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
 }

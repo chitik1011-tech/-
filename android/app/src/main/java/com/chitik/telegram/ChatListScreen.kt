@@ -1,5 +1,7 @@
 package com.chitik.telegram
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -7,33 +9,41 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.People
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
-/**
- * UI projection of a Rust ChatSummary and its optional last MessageSummary.
- *
- * The parent should construct these values from CoreState/ChatsLoaded; this
- * component deliberately has no built-in sample or placeholder chats.
- */
+/** Data projected exclusively from Rust CoreState; never inject sample chats. */
 data class ChatListEntry(
     val id: Long,
     val title: String,
@@ -48,12 +58,8 @@ data class ChatListPreview(
     val outgoing: Boolean,
 )
 
-/**
- * Displays real chats supplied by the Rust-backed state layer.
- *
- * Loading, errors, and empty results are explicit inputs so that transport and
- * authorization behavior remain owned by the caller.
- */
+/** Telegram-density conversation list retaining the existing Rust-backed callbacks. */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatListScreen(
     chats: List<ChatListEntry>,
@@ -66,96 +72,82 @@ fun ChatListScreen(
     modifier: Modifier = Modifier,
 ) {
     val contentMode = resolveAsyncContentMode(isLoading, chats.isEmpty(), error != null)
-
-    Column(
-        modifier = modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "Chats",
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                Text(
-                    text = when {
-                        isLoading && chats.isEmpty() -> "Loading conversations…"
-                        chats.isEmpty() -> "Your conversations"
-                        chats.size == 1 -> "1 conversation"
-                        else -> "${chats.size} conversations"
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Spacer(Modifier.width(8.dp))
-            TextButton(onClick = onOpenContacts) { Text("Contacts") }
-            Spacer(Modifier.width(4.dp))
-            OutlinedButton(
-                onClick = onRefresh,
-                enabled = !isLoading,
-            ) {
-                if (isLoading) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(16.dp),
-                        strokeWidth = 2.dp,
-                    )
-                    Spacer(Modifier.width(8.dp))
+    var searching by rememberSaveable { mutableStateOf(false) }
+    var query by rememberSaveable { mutableStateOf("") }
+    val visibleChats = filterLoadedChats(chats, query)
+    Column(modifier = modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
+        TopAppBar(
+            title = { Text("Telegram", fontWeight = FontWeight.SemiBold) },
+            navigationIcon = {
+                IconButton(onClick = onOpenContacts) {
+                    Icon(Icons.Default.Menu, contentDescription = "Open contacts")
                 }
-                Text(if (isLoading) "Loading" else "Refresh")
-            }
-        }
-
-        if (error != null && contentMode != AsyncContentMode.Loading) {
-            ErrorRetryState(
-                title = "Couldn’t load chats",
-                message = error,
-                retryLabel = "Try again",
-                retryEnabled = !isLoading,
-                onRetry = onRefresh,
+            },
+            actions = {
+                IconButton(onClick = { searching = !searching; if (!searching) query = "" }) {
+                    Icon(if (searching) Icons.Default.Close else Icons.Default.Search, contentDescription = if (searching) "Close chat search" else "Search loaded chats")
+                }
+                IconButton(onClick = onRefresh, enabled = !isLoading) {
+                    if (isLoading) CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                    else Icon(Icons.Default.Refresh, contentDescription = "Refresh conversations")
+                }
+                IconButton(onClick = onOpenContacts) {
+                    Icon(Icons.Default.People, contentDescription = "Contacts")
+                }
+            },
+        )
+        if (searching) {
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                placeholder = { Text("Search loaded chats") },
+                singleLine = true,
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
             )
         }
-
+        if (error != null && contentMode != AsyncContentMode.Loading) {
+            ErrorRetryState(
+                title = "Couldn’t load chats", message = error,
+                retryLabel = "Try again", retryEnabled = !isLoading, onRetry = onRefresh,
+            )
+        }
         when (contentMode) {
-            AsyncContentMode.Loading -> {
-                LoadingState(
-                    message = "Loading chats…",
-                    modifier = Modifier.weight(1f).fillMaxWidth().padding(24.dp),
-                )
-            }
-
-            AsyncContentMode.Empty -> {
-                EmptyState(
-                    title = "No conversations yet",
-                    description = "When Telegram returns your chats, they’ll appear here.",
-                    actionLabel = "Refresh chats",
-                    onAction = onRefresh,
-                    modifier = Modifier.weight(1f).fillMaxWidth().padding(24.dp),
-                )
-            }
-
+            AsyncContentMode.Loading -> LoadingState(
+                message = "Loading chats…",
+                modifier = Modifier.weight(1f).fillMaxWidth().padding(24.dp),
+            )
+            AsyncContentMode.Empty -> EmptyState(
+                title = "No conversations yet",
+                description = "Your Telegram conversations will appear here.",
+                actionLabel = "Refresh chats",
+                onAction = onRefresh,
+                modifier = Modifier.weight(1f).fillMaxWidth().padding(24.dp),
+            )
             AsyncContentMode.Error -> Unit
-
-            AsyncContentMode.Content -> {
-                LazyColumn(
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    items(chats, key = ChatListEntry::id) { chat ->
-                        ChatListRow(
-                            chat = chat,
-                            selected = chat.id == selectedChatId,
-                            onClick = { onChatSelected(chat.id) },
-                            modifier = Modifier.padding(horizontal = 12.dp),
+            AsyncContentMode.Content -> LazyColumn(
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+            ) {
+                if (visibleChats.isEmpty()) {
+                    item(key = "search_empty") {
+                        Text(
+                            "No matching loaded chats",
+                            modifier = Modifier.padding(24.dp),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
+                }
+                items(visibleChats, key = ChatListEntry::id) { chat ->
+                    ChatListRow(
+                        chat = chat,
+                        selected = chat.id == selectedChatId,
+                        onClick = { onChatSelected(chat.id) },
+                    )
+                    HorizontalDivider(
+                        modifier = Modifier.padding(start = TelegramUiTokens.dividerInset),
+                        thickness = 0.5.dp,
+                        color = MaterialTheme.colorScheme.outlineVariant,
+                    )
                 }
             }
         }
@@ -163,87 +155,71 @@ fun ChatListScreen(
 }
 
 @Composable
-private fun ChatListRow(
-    chat: ChatListEntry,
-    selected: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Card(
-        onClick = onClick,
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (selected) {
-                MaterialTheme.colorScheme.secondaryContainer
-            } else {
-                MaterialTheme.colorScheme.surfaceContainerLow
-            },
-        ),
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 13.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            AvatarPlaceholder(
-                displayName = chat.title,
-                selected = selected,
-                modifier = Modifier.size(48.dp),
+private fun ChatListRow(chat: ChatListEntry, selected: Boolean, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(
+                if (selected) MaterialTheme.colorScheme.secondaryContainer
+                else MaterialTheme.colorScheme.surface
             )
-
-            Spacer(Modifier.width(14.dp))
-
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
+            .clickable(onClick = onClick)
+            .heightIn(min = TelegramUiTokens.chatRowHeight)
+            .padding(horizontal = TelegramUiTokens.horizontalInset, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        AvatarPlaceholder(chat.title, size = TelegramUiTokens.avatar, selected = selected)
+        Spacer(Modifier.width(TelegramUiTokens.rowGap))
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = chat.title,
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                chat.lastMessage?.let { preview ->
+                    Spacer(Modifier.width(8.dp))
                     Text(
-                        text = chat.title,
-                        modifier = Modifier.weight(1f),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = if (chat.unreadCount > 0) FontWeight.SemiBold else FontWeight.Medium,
+                        text = MessageTimestampFormatter.format(preview.timestampUnix),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (chat.unreadCount > 0) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
                     )
-                    chat.lastMessage?.let { preview ->
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            text = MessageTimestampFormatter.format(preview.timestampUnix),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
                 }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    val preview = chat.lastMessage
-                    Text(
-                        text = when {
-                            preview == null -> ""
-                            preview.outgoing -> "You: ${preview.text}"
-                            else -> preview.text
-                        },
-                        modifier = Modifier.weight(1f),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    if (chat.unreadCount > 0) {
-                        Spacer(Modifier.width(8.dp))
-                        UnreadCounterBadge(count = chat.unreadCount)
-                    }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                val preview = chat.lastMessage
+                Text(
+                    text = when {
+                        preview == null -> ""
+                        preview.outgoing -> "You: ${preview.text}"
+                        else -> preview.text
+                    },
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (chat.unreadCount > 0) {
+                    Spacer(Modifier.width(8.dp))
+                    UnreadCounterBadge(count = chat.unreadCount)
                 }
             }
         }
+    }
+}
+
+/** Search only currently loaded, real Rust-backed chats; no server query is implied. */
+internal fun filterLoadedChats(chats: List<ChatListEntry>, query: String): List<ChatListEntry> {
+    val needle = query.trim()
+    if (needle.isEmpty()) return chats
+    return chats.filter { chat ->
+        chat.title.contains(needle, ignoreCase = true) ||
+            chat.lastMessage?.text?.contains(needle, ignoreCase = true) == true
     }
 }

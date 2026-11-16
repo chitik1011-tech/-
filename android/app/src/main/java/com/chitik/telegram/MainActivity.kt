@@ -62,7 +62,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         pendingTelegramLink = TelegramDeepLinkRouter.parseIntent(intent?.action, intent?.dataString)
         setContent {
-            MaterialTheme(colorScheme = darkColorScheme()) {
+            TelegramAppTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     TelegramRustApp(
                         incomingLink = pendingTelegramLink,

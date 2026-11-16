@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.combinedClickable
@@ -23,6 +24,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -349,23 +351,35 @@ fun ConversationScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Column(modifier = Modifier.clickable(onClick = onOpenProfile)) {
-                        Text(
-                            text = if (selectionActive) {
-                                "${selectedMessageIds.size} выбрано"
-                            } else {
-                                state.chatTitle.ifBlank { "Диалог" }
-                            },
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold,
+                    Row(
+                        modifier = Modifier.clickable(onClick = onOpenProfile),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        if (!selectionActive) AvatarPlaceholder(
+                            state.chatTitle.ifBlank { "Диалог" },
+                            size = 40.dp,
                         )
-                        Text(
-                            text = if (state.loading) "Обновление…" else " ",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                        Column {
+                            Text(
+                                text = if (selectionActive) {
+                                    "${selectedMessageIds.size} выбрано"
+                                } else {
+                                    state.chatTitle.ifBlank { "Диалог" }
+                                },
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            if (state.loading) {
+                                Text(
+                                    text = "Обновление…",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
                     }
                 },
                 navigationIcon = {
@@ -652,7 +666,6 @@ fun ConversationScreen(
                                     viewerKey = "${message.id}:${attachment.index}"
                                 },
                                 onOpenDocument = onOpenDocument,
-                                onReplyMessage = { onReplyMessage(message) },
                                 onOpenReplyTarget = onOpenReplyTarget,
                                 reactionPending = "${message.chatId}:${message.id}" in state.pendingReactionKeys,
                                 reactionError = state.reactionErrors["${message.chatId}:${message.id}"],
@@ -715,6 +728,10 @@ fun ConversationScreen(
             message = message,
             mutationPending = state.messageMutationPending,
             onDismiss = { actionTarget = null },
+            onReply = {
+                onReplyMessage(message)
+                actionTarget = null
+            },
             onSelectForForward = {
                 message.id.toLongOrNull()?.let { selectedMessageIds = selectedMessageIds + it }
                 actionTarget = null
@@ -832,7 +849,6 @@ private fun MessageBubble(
     onCancelMedia: (attachmentIndex: Int) -> Unit,
     onOpenViewer: (MediaAttachmentUi) -> Unit,
     onOpenDocument: (MediaAttachmentUi) -> Unit,
-    onReplyMessage: () -> Unit,
     onOpenReplyTarget: (String) -> Unit,
     reactionPending: Boolean,
     reactionError: String?,
@@ -863,18 +879,18 @@ private fun MessageBubble(
     ) {
         Surface(
             modifier = Modifier
-                .fillMaxWidth(0.84f)
+                .fillMaxWidth(0.86f)
                 .combinedClickable(onClick = onClick, onLongClick = onLongPress),
             shape = RoundedCornerShape(
-                topStart = 18.dp,
-                topEnd = 18.dp,
-                bottomEnd = if (message.isOutgoing) 6.dp else 18.dp,
-                bottomStart = if (message.isOutgoing) 18.dp else 6.dp,
+                topStart = TelegramUiTokens.messageCorner,
+                topEnd = TelegramUiTokens.messageCorner,
+                bottomEnd = if (message.isOutgoing) TelegramUiTokens.messageTailCorner else TelegramUiTokens.messageCorner,
+                bottomStart = if (message.isOutgoing) TelegramUiTokens.messageCorner else TelegramUiTokens.messageTailCorner,
             ),
             color = if (selected) MaterialTheme.colorScheme.secondaryContainer else if (message.isOutgoing) {
                 MaterialTheme.colorScheme.primaryContainer
             } else {
-                MaterialTheme.colorScheme.surfaceVariant
+                MaterialTheme.colorScheme.surface
             },
             contentColor = if (message.isOutgoing) {
                 MaterialTheme.colorScheme.onPrimaryContainer
@@ -882,7 +898,7 @@ private fun MessageBubble(
                 MaterialTheme.colorScheme.onSurfaceVariant
             },
         ) {
-            Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+            Column(modifier = Modifier.padding(horizontal = 11.dp, vertical = 7.dp)) {
                 message.replyToMessageId?.let { targetId ->
                     TextButton(onClick = { onOpenReplyTarget(targetId) }, contentPadding = PaddingValues(0.dp)) {
                         Text(message.replyToSummary ?: "Сообщение $targetId недоступно",
@@ -929,9 +945,7 @@ private fun MessageBubble(
                     )
                 }
                 ReactionRow(message.reactions, reactionPending, reactionError, onReaction)
-                TextButton(onClick = onReplyMessage, contentPadding = PaddingValues(0.dp)) {
-                    Text("Ответить", style = MaterialTheme.typography.labelSmall)
-                }
+                
                 if (pending) {
                     CircularProgressIndicator(modifier = Modifier.width(16.dp), strokeWidth = 2.dp)
                 } else if (canTogglePin) {
@@ -940,7 +954,7 @@ private fun MessageBubble(
                     }
                 }
                 if (message.timestamp.isNotBlank()) {
-                    Spacer(Modifier.height(5.dp))
+                    Spacer(Modifier.height(2.dp))
                     Row(
                         modifier = Modifier.align(Alignment.End),
                         verticalAlignment = Alignment.CenterVertically,
@@ -971,6 +985,7 @@ private fun MessageActionDialog(
     message: ConversationMessageUi,
     mutationPending: Boolean,
     onDismiss: () -> Unit,
+    onReply: () -> Unit,
     onSelectForForward: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
@@ -980,6 +995,7 @@ private fun MessageActionDialog(
         title = { Text("Действия с сообщением") },
         text = {
             Column {
+                TextButton(onClick = onReply, enabled = !mutationPending) { Text("Ответить") }
                 TextButton(onClick = onSelectForForward, enabled = !mutationPending) { Text("Выбрать для пересылки") }
                 TextButton(onClick = onEdit, enabled = !mutationPending && canEditMessageText(message)) { Text("Изменить") }
                 TextButton(onClick = onDelete, enabled = !mutationPending) { Text("Удалить…") }
@@ -1610,7 +1626,7 @@ private fun ComposerBar(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.Bottom,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
@@ -1629,7 +1645,8 @@ private fun ComposerBar(
                     modifier = Modifier.weight(1f),
                     placeholder = { Text(placeholder) },
                     enabled = !sending,
-                    maxLines = 5,
+                    maxLines = 6,
+                    shape = RoundedCornerShape(TelegramUiTokens.composerCorner),
                     keyboardOptions = KeyboardOptions(
                         keyboardType = KeyboardType.Text,
                         imeAction = ImeAction.Send,
@@ -1642,9 +1659,11 @@ private fun ComposerBar(
                 Button(
                     onClick = onSend,
                     enabled = canSubmit,
-                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
+                    modifier = if (sendLabel == "Отправить") Modifier.size(48.dp) else Modifier,
+                    shape = CircleShape,
+                    contentPadding = PaddingValues(0.dp),
                 ) {
-                    Text(if (sending) "…" else sendLabel)
+                    Text(if (sending) "…" else if (sendLabel == "Отправить") "➤" else sendLabel)
                 }
             }
         }
