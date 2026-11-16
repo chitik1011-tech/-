@@ -224,7 +224,7 @@ fun ConversationScreen(
                             ) {
                                 val ordered = selectedForwardMessageIds(state.messages, selectedMessageIds)
                                 val selectedMessages = state.messages.filter { it.id.toLongOrNull() in selectedMessageIds }
-                                val canCopy = selectedMessages.isNotEmpty() && selectedMessages.any { it.text.isNotBlank() }
+                                val canCopy = selectedMessages.isNotEmpty() && selectedMessages.all { it.text.isNotBlank() }
                                 val canDelete = selectedMessages.isNotEmpty() && selectedMessages.all { it.isOutgoing }
                                 DropdownMenuItem(
                                     text = { Text("Копировать") },
