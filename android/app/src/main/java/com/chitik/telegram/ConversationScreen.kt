@@ -139,6 +139,7 @@ fun ConversationScreen(
     onForward: (chatId: Long, messageIds: List<Long>) -> Unit,
     onEditMessage: (chatId: Long, messageId: Long, text: String) -> Unit,
     onDeleteMessageForEveryone: (chatId: Long, messageId: Long) -> Unit,
+    onDeleteMessageForMe: (chatId: Long, messageId: Long) -> Unit,
     onRetry: () -> Unit,
     onDownloadMedia: (messageId: Long, attachmentIndex: Int, retry: Boolean) -> Unit,
     onCancelMedia: (messageId: Long, attachmentIndex: Int) -> Unit,
@@ -410,7 +411,7 @@ fun ConversationScreen(
             title = { Text("Удалить сообщение у всех?") },
             text = {
                 Column {
-                    Text("Telegram удалит это сообщение для всех участников. Удаление только на этом устройстве не поддерживается.")
+                    Text("Выберите область удаления. Удаление только для вас доступно в личных и обычных групповых чатах; в каналах Telegram его не поддерживает.")
                     if (matchingMutation) {
                         state.messageMutationError?.let { error ->
                             Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp))
@@ -419,14 +420,24 @@ fun ConversationScreen(
                 }
             },
             confirmButton = {
-                TextButton(
-                    enabled = !pending && targetChatId != null && targetMessageId != null,
-                    onClick = {
-                        if (targetChatId != null && targetMessageId != null) {
-                            onDeleteMessageForEveryone(targetChatId, targetMessageId)
-                        }
-                    },
-                ) { Text(if (pending) "Удаляем…" else "Удалить у всех") }
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(
+                        enabled = !pending && targetChatId != null && targetMessageId != null,
+                        onClick = {
+                            if (targetChatId != null && targetMessageId != null) {
+                                onDeleteMessageForMe(targetChatId, targetMessageId)
+                            }
+                        },
+                    ) { Text(if (pending) "Удаляем…" else "Удалить у меня") }
+                    TextButton(
+                        enabled = !pending && targetChatId != null && targetMessageId != null,
+                        onClick = {
+                            if (targetChatId != null && targetMessageId != null) {
+                                onDeleteMessageForEveryone(targetChatId, targetMessageId)
+                            }
+                        },
+                    ) { Text(if (pending) "Удаляем…" else "Удалить у всех") }
+                }
             },
             dismissButton = {
                 TextButton(enabled = !pending, onClick = { deletionTarget = null }) { Text("Отмена") }
@@ -562,7 +573,7 @@ private fun MessageActionDialog(
                 TextButton(onClick = onSelectForForward) { Text("Выбрать для пересылки") }
                 TextButton(onClick = onEdit, enabled = canEditMessageText(message)) { Text("Изменить") }
                 TextButton(onClick = onDelete) { Text("Удалить у всех") }
-                Text("Удаление только на этом устройстве не поддерживается.")
+                Text("Удалить у меня" работает только в личных и обычных группах; каналы требуют удаления у всех.)
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Закрыть") } },
