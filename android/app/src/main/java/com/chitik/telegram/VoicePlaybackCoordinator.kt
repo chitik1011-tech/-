@@ -91,7 +91,14 @@ class VoicePlaybackCoordinator(
             }
             override fun onPlayerError(error: PlaybackException) {
                 if (epoch != expectedEpoch) return
-                mutableState.value = mutableState.value.copy(playing = false, error = "Audio playback failed")
+                scope.launch {
+                    if (epoch != expectedEpoch) return@launch
+                    reset()
+                    mutableState.value = VoicePlaybackState(
+                        mediaId = mediaId,
+                        error = "Audio playback failed",
+                    )
+                }
             }
         })
         try {
