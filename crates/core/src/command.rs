@@ -8,6 +8,7 @@ use crate::{
 
 pub const MAX_CHAT_LOAD_LIMIT: usize = 500;
 pub const MAX_MESSAGE_LOAD_LIMIT: usize = 200;
+pub const MAX_EDIT_MESSAGE_TEXT_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
@@ -44,6 +45,17 @@ pub enum CoreCommand {
         client_id: i64,
         chat_id: i64,
         text: String,
+    },
+    /// Edit the text of an existing Telegram message.
+    EditMessage {
+        chat_id: i64,
+        message_id: i64,
+        text: String,
+    },
+    /// Delete a message for everyone. This backend does not expose a local-only delete.
+    DeleteMessageForEveryone {
+        chat_id: i64,
+        message_id: i64,
     },
     /// Submit one or more opaque Telegram option identifiers for an existing poll.
     VotePoll {
@@ -121,6 +133,8 @@ impl CoreCommand {
             Self::ForwardMessages(_) => "forward_messages",
             Self::SendText { .. } => "send_text",
             Self::SendTextReliable { .. } => "send_text_reliable",
+            Self::EditMessage { .. } => "edit_message",
+            Self::DeleteMessageForEveryone { .. } => "delete_message_for_everyone",
             Self::VotePoll { .. } => "vote_poll",
             Self::ArchiveChat { .. } => "archive_chat",
             Self::UnarchiveChat { .. } => "unarchive_chat",
@@ -221,6 +235,18 @@ impl CoreCommand {
                 validate_chat_id(*chat_id)?;
                 require_non_blank("message text", text)
             }
+            Self::EditMessage { chat_id, message_id, text } => {
+                validate_message_target(*chat_id, *message_id)?;
+                require_non_blank("message text", text)?;
+                if text.len() > MAX_EDIT_MESSAGE_TEXT_BYTES {
+                    Err(CoreError::InvalidInput(format!("message text exceeds {MAX_EDIT_MESSAGE_TEXT_BYTES} UTF-8 bytes")))
+                } else {
+                    Ok(())
+                }
+            }
+            Self::DeleteMessageForEveryone { chat_id, message_id } => {
+                validate_message_target(*chat_id, *message_id)
+            }
             Self::VotePoll {
                 poll_id,
                 chat_id,
@@ -304,16 +330,19 @@ impl CoreCommand {
 }
 
 fn validate_media_target(chat_id: i64, message_id: i64, attachment_index: usize) -> Result<()> {
-    validate_chat_id(chat_id)?;
-    if message_id <= 0 {
-        return Err(CoreError::InvalidInput(
-            "message id must be positive".into(),
-        ));
-    }
+    validate_message_target(chat_id, message_id)?
     if attachment_index > 31 {
         return Err(CoreError::InvalidInput(
             "attachment index must be in 0..=31".into(),
         ));
+    }
+    Ok(())
+}
+
+fn validate_message_target(chat_id: i64, message_id: i64) -> Result<()> {
+    validate_chat_id(chat_id)?;
+    if message_id <= 0 {
+        return Err(CoreError::InvalidInput("message id must be positive".into()));
     }
     Ok(())
 }
