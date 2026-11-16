@@ -20,6 +20,16 @@ class MessageForwardSelectionTest {
         assertEquals(listOf(5L), selectedForwardMessageIds(messages, setOf(5L)))
     }
 
+    @Test
+    fun selectedTextFollowsConversationOrderAndSkipsUnselectedRows() {
+        val messages = listOf(
+            message("10").copy(text = "first"),
+            message("11").copy(text = "skip"),
+            message("12").copy(text = "second"),
+        )
+        assertEquals("first\\nsecond", selectedMessageText(messages, setOf(12L, 10L)))
+    }
+
     private fun message(id: String) = ConversationMessageUi(
         id = id,
         chatId = "1",
