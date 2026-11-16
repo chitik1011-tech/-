@@ -15,6 +15,13 @@ fn edit_and_delete_for_everyone_commands_validate_and_round_trip() {
         edit,
     );
 
+    let delete_for_me = CoreCommand::DeleteMessageForMe {
+        chat_id: -100123,
+        message_id: 42,
+    };
+    assert!(delete_for_me.validate().is_ok());
+    assert_eq!(delete_for_me.kind(), "delete_message_for_me");
+
     let delete = CoreCommand::DeleteMessageForEveryone {
         chat_id: -100123,
         message_id: 42,
