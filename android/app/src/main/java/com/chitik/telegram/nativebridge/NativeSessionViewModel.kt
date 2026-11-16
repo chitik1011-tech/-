@@ -10,6 +10,7 @@ import com.chitik.telegram.ConversationMessageUi
 import com.chitik.telegram.ConversationPollOptionUi
 import com.chitik.telegram.ConversationPollUi
 import com.chitik.telegram.MediaAttachmentUi
+import com.chitik.telegram.matchesMutationTarget
 import com.chitik.telegram.mediaDownloadStateFromWire
 import com.chitik.telegram.mediaKindFromWire
 import java.time.Instant
@@ -198,6 +199,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         replaceNativeHandle(config)
 
     private fun replaceNativeHandle(config: TelegramRuntimeConfig?): Long {
+        markMessageMutationUnconfirmed("Сессия изменилась; проверьте сообщение в Telegram перед повтором")
         val creation = lifecycle.beginReplacement()
             ?: throw IllegalStateException("Native session replacement is already in progress")
 
@@ -582,6 +584,16 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         }
     }
 
+    private fun markMessageMutationUnconfirmed(message: String) {
+        _state.update {
+            if (it.messageMutationPending) {
+                it.copy(messageMutationPending = false, messageMutationError = message)
+            } else {
+                it
+            }
+        }
+    }
+
     private fun onNativeEvent(generation: Long, type: String, payload: String) {
         if (!lifecycle.onNativeEvent(generation, type)) return
         lifecycle.runIfCurrent(generation) {
@@ -685,6 +697,10 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                     )
                 }
             }
+            "connection_session_started" -> {
+                markMessageMutationUnconfirmed("Сессия Telegram обновилась; результат действия не подтверждён")
+                _state.update { it.copy(lastEventType = type, lastEventPayload = payload) }
+            }
             "message_mutation_failed" -> {
                 val failure = runCatching {
                     val payloadObject = JSONObject(payload).optJSONObject("payload") ?: JSONObject()
@@ -694,17 +710,24 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                     Triple(chatId, messageId, error)
                 }.getOrNull()
                 _state.update {
-                    if (failure == null) {
-                        it.copy(messageMutationPending = false, messageMutationError = "Telegram отклонил действие")
-                    } else {
+                    if (
+                        failure != null &&
+                        it.messageMutationPending &&
+                        matchesMutationTarget(
+                            it.messageMutationChatId,
+                            it.messageMutationMessageId,
+                            failure.first,
+                            failure.second,
+                        )
+                    ) {
                         it.copy(
                             messageMutationPending = false,
-                            messageMutationChatId = failure.first,
-                            messageMutationMessageId = failure.second,
                             messageMutationError = failure.third,
                             lastEventType = type,
                             lastEventPayload = payload,
                         )
+                    } else {
+                        it.copy(lastEventType = type, lastEventPayload = payload)
                     }
                 }
             }
@@ -716,8 +739,12 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 _state.update {
                     if (
                         it.messageMutationPending &&
-                        it.messageMutationChatId == target.first &&
-                        it.messageMutationMessageId == target.second
+                        matchesMutationTarget(
+                            it.messageMutationChatId,
+                            it.messageMutationMessageId,
+                            target.first,
+                            target.second,
+                        )
                     ) {
                         it.copy(
                             messageMutationPending = false,
