@@ -330,7 +330,7 @@ impl CoreCommand {
 }
 
 fn validate_media_target(chat_id: i64, message_id: i64, attachment_index: usize) -> Result<()> {
-    validate_message_target(chat_id, message_id)?
+    validate_message_target(chat_id, message_id)?;
     if attachment_index > 31 {
         return Err(CoreError::InvalidInput(
             "attachment index must be in 0..=31".into(),
