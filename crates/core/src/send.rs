@@ -64,6 +64,10 @@ pub struct OutgoingSend {
     #[serde(default)]
     pub transfer_generation: u64,
     #[serde(default)]
+    pub session_generation: u64,
+    #[serde(default)]
+    pub session_epoch: u64,
+    #[serde(default)]
     pub bytes_transferred: u64,
     pub state: OutgoingSendState,
 }
@@ -160,6 +164,8 @@ impl OutgoingSend {
             text: caption.into(),
             media: Some(media.clone()),
             transfer_generation,
+            session_generation: 0,
+            session_epoch: 0,
             bytes_transferred,
             state: OutgoingSendState::Uploading {
                 bytes_transferred,
@@ -181,6 +187,8 @@ impl OutgoingSend {
             text: caption.into(),
             media: Some(media),
             transfer_generation,
+            session_generation: 0,
+            session_epoch: 0,
             bytes_transferred: 0,
             state: OutgoingSendState::Sending,
         }
@@ -200,6 +208,8 @@ impl OutgoingSend {
             text: caption.into(),
             media: Some(media),
             transfer_generation,
+            session_generation: 0,
+            session_epoch: 0,
             bytes_transferred: 0,
             state: OutgoingSendState::Sent { message_id },
         }
@@ -220,6 +230,8 @@ impl OutgoingSend {
             text: caption.into(),
             media: Some(media),
             transfer_generation,
+            session_generation: 0,
+            session_epoch: 0,
             bytes_transferred: 0,
             state: OutgoingSendState::Failed {
                 reason: reason.into(),
@@ -242,6 +254,8 @@ impl OutgoingSend {
             text: caption.into(),
             media: Some(media),
             transfer_generation,
+            session_generation: 0,
+            session_epoch: 0,
             bytes_transferred: 0,
             state: OutgoingSendState::AwaitingConfirmation {
                 reason: reason.into(),
@@ -261,9 +275,17 @@ impl OutgoingSend {
             text: text.into(),
             media: None,
             transfer_generation: 0,
+            session_generation: 0,
+            session_epoch: 0,
             bytes_transferred: 0,
             state,
         }
+    }
+
+    pub fn with_session_token(mut self, generation: u64, epoch: u64) -> Self {
+        self.session_generation = generation;
+        self.session_epoch = epoch;
+        self
     }
 
     pub fn same_request(&self, chat_id: i64, text: &str) -> bool {
