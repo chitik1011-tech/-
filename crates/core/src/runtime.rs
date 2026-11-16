@@ -466,8 +466,8 @@ where
                             .get(client_id)
                             .map_or(1, |send| send.transfer_generation.saturating_add(1));
                         let token = reduced_state.connection_machine.token();
-                        *session_generation = token.generation();
-                        *session_epoch = token.epoch();
+                        *session_generation = token.generation().as_u64();
+                        *session_epoch = token.epoch().as_u64();
                     }
 
                     // Keep the permission boundary in Rust: Compose can make a
