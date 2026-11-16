@@ -769,12 +769,7 @@ impl CoreState {
                         return;
                     }
                     if update.transfer_generation < existing.transfer_generation {
-                        // Lower-generation upload progress is stale. Non-progress
-                        // outcomes from the current runtime retain the newest generation.
-                        if matches!(&update.state, OutgoingSendState::Uploading { .. }) {
-                            return;
-                        }
-                        update.transfer_generation = existing.transfer_generation;
+                        return;
                     }
                     if matches!(&update.state, OutgoingSendState::Uploading { .. })
                         && update.transfer_generation == existing.transfer_generation
