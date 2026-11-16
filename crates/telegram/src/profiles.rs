@@ -155,7 +155,8 @@ pub(crate) async fn hydrate_profile(
         Peer::Group(group) => {
             if let tl::enums::Chat::Chat(raw) = &group.raw {
                 let request = tl::functions::messages::GetFullChat { chat_id: raw.id };
-                if let Ok(tl::enums::messages::ChatFull::Full(full)) = client.invoke(&request).await {
+                if let Ok(tl::enums::messages::ChatFull::Full(full)) = client.invoke(&request).await
+                {
                     set_profile_about(&mut profile, &full.full_chat.about());
                 }
             }
@@ -168,7 +169,8 @@ pub(crate) async fn hydrate_profile(
                         access_hash,
                     }),
                 };
-                if let Ok(tl::enums::messages::ChatFull::Full(full)) = client.invoke(&request).await {
+                if let Ok(tl::enums::messages::ChatFull::Full(full)) = client.invoke(&request).await
+                {
                     set_profile_about(&mut profile, &full.full_chat.about());
                     if let tl::enums::ChatFull::ChannelFull(channel_full) = &full.full_chat {
                         set_member_count(&mut profile, channel_full.participants_count);
