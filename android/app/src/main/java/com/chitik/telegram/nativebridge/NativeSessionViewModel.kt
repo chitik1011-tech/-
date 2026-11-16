@@ -12,6 +12,7 @@ import com.chitik.telegram.ConversationPollUi
 import com.chitik.telegram.MediaAttachmentUi
 import com.chitik.telegram.matchesMutationTarget
 import com.chitik.telegram.mutationEventAcknowledges
+import com.chitik.telegram.messageMutationStateAfterSessionChange
 import com.chitik.telegram.mediaDownloadStateFromWire
 import com.chitik.telegram.mediaKindFromWire
 import java.time.Instant
@@ -587,11 +588,15 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
 
     private fun markMessageMutationUnconfirmed(message: String) {
         _state.update {
-            if (it.messageMutationPending) {
-                it.copy(messageMutationPending = false, messageMutationError = message)
-            } else {
-                it
-            }
+            val mutation = messageMutationStateAfterSessionChange(
+                pending = it.messageMutationPending,
+                currentError = it.messageMutationError,
+                reason = message,
+            )
+            it.copy(
+                messageMutationPending = mutation.pending,
+                messageMutationError = mutation.error,
+            )
         }
     }
 
