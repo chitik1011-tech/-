@@ -19,6 +19,8 @@ import com.chitik.telegram.parseContactPage
 import com.chitik.telegram.ConversationPollOptionUi
 import com.chitik.telegram.ConversationPollUi
 import com.chitik.telegram.PeerProfileUi
+import com.chitik.telegram.notifications.NotificationDecisionPlanner
+import com.chitik.telegram.notifications.TelegramNotificationPublisher
 import com.chitik.telegram.MediaAttachmentUi
 import com.chitik.telegram.matchesMutationTarget
 import com.chitik.telegram.mutationEventAcknowledges
@@ -202,6 +204,14 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
     val state: StateFlow<NativeUiState> = _state.asStateFlow()
 
     private val lifecycle = NativeSessionLifecycle()
+    private val notifications = TelegramNotificationPublisher(application)
+    private val notificationPlanner = NotificationDecisionPlanner()
+
+    /** UI visibility is an input, not derived from cached message history. */
+    fun setNotificationVisibility(foreground: Boolean, chatId: Long?) {
+        notificationPlanner.updateVisibility(foreground, chatId)
+        notifications.setVisibleChat(if (foreground) chatId else null)
+    }
 
     init {
         initializeNativeSession()
@@ -343,8 +353,11 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
 
     private fun replaceNativeHandle(config: TelegramRuntimeConfig?): Long {
         markMessageMutationUnconfirmed("Сессия изменилась; проверьте сообщение в Telegram перед повтором")
+        notificationPlanner.reset(null)
+        notifications.cancelAll()
         val creation = lifecycle.beginReplacement()
             ?: throw IllegalStateException("Native session replacement is already in progress")
+        notificationPlanner.reset(creation.generation)
 
         var createdHandle = 0L
         try {
@@ -900,7 +913,68 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
     private fun onNativeEvent(generation: Long, type: String, payload: String) {
         if (!lifecycle.onNativeEvent(generation, type)) return
         lifecycle.runIfCurrent(generation) {
+            handleNotificationEvent(generation, type, payload)
             handleNativeEvent(type, payload)
+        }
+    }
+
+    /** Only live, generation-validated JNI events reach this path. Never notify from snapshots. */
+    private fun handleNotificationEvent(generation: Long, type: String, payload: String) {
+        if (type == "authorization_changed") {
+            if (_state.value.authorization == AuthorizationUiStep.Ready &&
+                !payload.contains("ready", ignoreCase = true)) {
+                notifications.cancelAll()
+                notificationPlanner.reset(null)
+            }
+            return
+        }
+        if (type == "message_added") {
+            val message = runCatching {
+                JSONObject(payload).optJSONObject("payload")
+            }.getOrNull() ?: return
+            val chatId = message.optLong("chat_id", 0L)
+            val messageId = message.optLong("id", 0L)
+            val outgoing = message.optBoolean("outgoing", false)
+            if (_state.value.authorization != AuthorizationUiStep.Ready) return
+            val identity = NotificationDecisionPlanner.Identity(generation, chatId, messageId)
+            if (!notificationPlanner.shouldNotify(identity, outgoing, liveUpdate = true)) return
+            val chat = _state.value.chats.firstOrNull { it.id == chatId }
+            val attachment = message.optJSONArray("attachments")?.optJSONObject(0)
+            val kind = attachment?.optString("kind")
+            val fallback = when (kind) {
+                "photo" -> "Photo"
+                "video" -> "Video"
+                "voice" -> "Voice message"
+                "document" -> "Document"
+                "sticker" -> "Sticker"
+                else -> if (message.has("location")) "Location" else "New message"
+            }
+            val preview = message.optString("text").ifBlank {
+                message.optString("media_caption").ifBlank { fallback }
+            }
+            notifications.publish(
+                TelegramNotificationPublisher.IncomingMessage(
+                    chatId = chatId,
+                    chatTitle = chat?.title ?: "Telegram",
+                    body = preview,
+                    isGroup = false,
+                ),
+            )
+        }
+        if (type == "chat_read" || type == "read_receipt_updated") {
+            val info = runCatching { JSONObject(payload).optJSONObject("payload") }.getOrNull()
+                ?: return
+            val chatId = info.optLong("chat_id", 0L)
+            if (chatId != 0L && (type == "chat_read" ||
+                    info.optString("direction") == "inbox")) {
+                notifications.cancelChat(chatId)
+            }
+        }
+        if (type == "messages_deleted" || type == "message_edited") {
+            // Never leave stale previews on screen; the next new message supplies a fresh preview.
+            val info = runCatching { JSONObject(payload).optJSONObject("payload") }.getOrNull()
+            val chatId = info?.optLong("chat_id", 0L) ?: 0L
+            if (chatId != 0L) notifications.cancelChat(chatId)
         }
     }
 
@@ -1757,6 +1831,8 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
     override fun onCleared() {
         val currentHandle = lifecycle.close()
         _state.update { it.copy(nativeHandle = 0L) }
+        notificationPlanner.reset(null)
+        notifications.cancelAll()
         if (currentHandle != null && NativeLibrary.isLoaded) {
             runCatching { NativeBridge.destroyHandle(currentHandle) }
         }
