@@ -1555,6 +1555,11 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         }.getOrDefault(AuthorizationUiStep.Closed)
 
         val loggedOut = authorization == AuthorizationUiStep.Closed
+        val mediaPathsToDeleteOnLogout = if (loggedOut) {
+            _state.value.outbox.values.mapNotNull { it.media?.path }.distinct()
+        } else {
+            emptyList()
+        }
         _state.update { current ->
             current.clearPendingReactionsAfterConnectionChange().copy(
                 chats = if (loggedOut) emptyList() else current.chats,
@@ -1604,6 +1609,14 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 lastEventPayload = payload,
                 error = null,
             )
+        }
+
+        if (mediaPathsToDeleteOnLogout.isNotEmpty()) {
+            viewModelScope.launch(Dispatchers.IO) {
+                mediaPathsToDeleteOnLogout.forEach { path ->
+                    deletePickedMedia(getApplication(), path)
+                }
+            }
         }
 
         if (loggedOut && restartHandleAfterLogout) {
