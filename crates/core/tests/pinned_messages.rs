@@ -220,7 +220,20 @@ fn chats_loaded_prunes_pinned_bookkeeping_outside_the_bounded_chat_cache() {
         last_message: None,
     }]));
 
-    assert_eq!(state.pinned_message_pts.keys().copied().collect::<Vec<_>>(), vec![2_000]);
-    assert_eq!(state.pinned_message_revision.keys().copied().collect::<Vec<_>>(), vec![2_000]);
-    assert_eq!(state.pinned_messages.keys().copied().collect::<Vec<_>>(), vec![2_000]);
+    assert_eq!(
+        state.pinned_message_pts.keys().copied().collect::<Vec<_>>(),
+        vec![2_000]
+    );
+    assert_eq!(
+        state
+            .pinned_message_revision
+            .keys()
+            .copied()
+            .collect::<Vec<_>>(),
+        vec![2_000]
+    );
+    assert_eq!(
+        state.pinned_messages.keys().copied().collect::<Vec<_>>(),
+        vec![2_000]
+    );
 }
