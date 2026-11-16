@@ -36,7 +36,7 @@ class OneShotLocationCallbackTest {
     @Test
     fun cancellationSuppressesLateLocationResult() {
         val delivered = mutableListOf<String>()
-        val callback = OneShotLocationCallback<String>(delivered::add)
+        val callback = OneShotLocationCallback<String> { result -> delivered.add(result) }
 
         assertTrue(callback.cancel())
         callback.deliver("location")
