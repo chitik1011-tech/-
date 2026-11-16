@@ -18,6 +18,7 @@ internal fun parseContactListState(root: JSONObject?): List<ContactListEntry> {
             username = contact.optString("username").takeIf(String::isNotEmpty),
             isMutual = contact.optBoolean("is_mutual"),
             isBot = contact.optBoolean("is_bot"),
+            avatarPhotoId = contact.optLong("avatar_photo_id").takeIf { it > 0L },
         )
     }
 }
@@ -48,6 +49,8 @@ internal fun parseContactPage(payload: String): ContactPage? = runCatching {
                     displayName = displayName,
                     username = contact.optString("username").takeIf(String::isNotEmpty),
                     isMutual = contact.optBoolean("is_mutual"),
+                    isBot = contact.optBoolean("is_bot"),
+                    avatarPhotoId = contact.optLong("avatar_photo_id").takeIf { it > 0L },
                 ),
             )
         }

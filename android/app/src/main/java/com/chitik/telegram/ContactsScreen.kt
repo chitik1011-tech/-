@@ -28,6 +28,7 @@ data class ContactListEntry(
     val username: String?,
     val isMutual: Boolean,
     val isBot: Boolean = false,
+    val avatarPhotoId: Long? = null,
 )
 
 @Composable

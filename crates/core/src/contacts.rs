@@ -20,6 +20,9 @@ pub struct Contact {
     pub is_mutual: bool,
     #[serde(default)]
     pub is_bot: bool,
+    /// Opaque Telegram profile-photo identifier; photo bytes are resolved separately.
+    #[serde(default)]
+    pub avatar_photo_id: Option<i64>,
 }
 
 impl Contact {
@@ -152,6 +155,7 @@ mod tests {
             username: username.map(str::to_owned),
             is_mutual: false,
             is_bot: false,
+            avatar_photo_id: None,
         }
     }
 

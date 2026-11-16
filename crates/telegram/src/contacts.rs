@@ -70,6 +70,7 @@ pub(crate) async fn load_contacts(
             peer.username(),
             is_mutual,
             peer.is_bot(),
+            peer.photo().map(|photo| photo.photo_id),
         )?;
         contacts.upsert(contact)?;
     }
@@ -85,6 +86,7 @@ fn contact_summary(
     username: Option<&str>,
     is_mutual: bool,
     is_bot: bool,
+    avatar_photo_id: Option<i64>,
 ) -> tg_mobile_core::Result<Contact> {
     let display_name = [first_name.trim(), last_name.trim()]
         .into_iter()
@@ -102,6 +104,7 @@ fn contact_summary(
         username: username.map(str::to_owned),
         is_mutual,
         is_bot,
+        avatar_photo_id,
     }
     .normalized()
 }
@@ -114,18 +117,28 @@ mod tests {
 
     #[test]
     fn maps_contact_identity_without_phone_data() {
-        let contact = contact_summary(42, "Ada", "Lovelace", Some("Ada_L"), true, false).unwrap();
+        let contact = contact_summary(
+            42,
+            "Ada",
+            "Lovelace",
+            Some("Ada_L"),
+            true,
+            false,
+            Some(9001),
+        )
+        .unwrap();
         assert_eq!(contact.user_id, 42);
         assert_eq!(contact.display_name, "Ada Lovelace");
         assert_eq!(contact.username.as_deref(), Some("ada_l"));
         assert!(contact.is_mutual);
+        assert_eq!(contact.avatar_photo_id, Some(9001));
         let json = serde_json::to_value(contact).unwrap();
         assert!(json.get("phone").is_none());
     }
 
     #[test]
     fn missing_server_names_use_a_non_sensitive_fallback() {
-        let contact = contact_summary(8, " ", "", None, false, true).unwrap();
+        let contact = contact_summary(8, " ", "", None, false, true, None).unwrap();
         assert_eq!(contact.display_name, "Telegram user");
         assert_eq!(contact.user_id, 8);
         assert!(contact.is_bot);

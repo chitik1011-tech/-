@@ -10,6 +10,7 @@ fn contact(user_id: i64, display_name: &str) -> Contact {
         username: None,
         is_mutual: false,
         is_bot: false,
+        avatar_photo_id: None,
     }
 }
 
