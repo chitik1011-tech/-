@@ -1,0 +1,234 @@
+use std::io::Write;
+
+use grammers_client::{peer::Peer, tl};
+use tg_media_cache::MediaCache;
+use tg_mobile_core::{AvatarReference, PeerKind, PeerPresence, PeerProfile};
+
+/// Convert the profile fields available in Grammers' resolved peer snapshot.
+/// Full details remain optional when Telegram did not include them in the peer.
+pub(crate) fn profile_from_peer(peer_id: i64, peer: &Peer) -> PeerProfile {
+    let mut profile = PeerProfile::unknown(peer_id);
+    profile.display_name = peer.name().map(str::to_owned);
+    profile.username = peer.username().map(str::to_owned);
+
+    match peer {
+        Peer::User(user) => {
+            profile.display_name = Some(user.full_name());
+            profile.kind = if user.is_bot() {
+                PeerKind::Bot
+            } else {
+                PeerKind::User
+            };
+            profile.first_name = user.first_name().map(str::to_owned);
+            profile.last_name = user.last_name().map(str::to_owned);
+            profile.is_bot = Some(user.is_bot());
+            profile.is_verified = Some(user.verified());
+            profile.is_scam = Some(user.scam());
+            profile.presence = match user.status() {
+                tl::enums::UserStatus::Online(_) => PeerPresence::Online,
+                tl::enums::UserStatus::Offline(status) => PeerPresence::Offline {
+                    last_seen_unix: i64::from(status.was_online),
+                },
+                _ => PeerPresence::Unknown,
+            };
+            if let tl::enums::User::User(raw) = &user.raw {
+                profile.is_premium = Some(raw.premium);
+                profile.is_fake = Some(raw.fake);
+                if let Some(photo) = user.photo() {
+                    profile.avatar = Some(AvatarReference {
+                        file_id: photo.photo_id.to_string(),
+                        access_hash: None,
+                        file_reference: None,
+                        data_center_id: Some(photo.dc_id),
+                        size_bytes: None,
+                        mime_type: Some("image/jpeg".into()),
+                        local_path: None,
+                    });
+                }
+            }
+        }
+        Peer::Group(group) => {
+            profile.kind = PeerKind::BasicGroup;
+            if let tl::enums::Chat::Chat(raw) = &group.raw {
+                profile.member_count = u32::try_from(raw.participants_count).ok();
+            }
+        }
+        Peer::Channel(channel) => {
+            profile.kind = channel_profile_kind(
+                channel.raw.broadcast,
+                channel.raw.megagroup,
+                channel.raw.gigagroup,
+            );
+            profile.member_count = channel
+                .raw
+                .participants_count
+                .and_then(|count| u32::try_from(count).ok());
+            profile.is_verified = Some(channel.raw.verified);
+            profile.is_scam = Some(channel.raw.scam);
+            profile.is_fake = Some(channel.raw.fake);
+            profile.can_send_messages = channel
+                .admin_rights()
+                .map(|rights| rights.post_messages)
+                .or_else(|| match channel.raw.default_banned_rights.as_ref() {
+                    Some(tl::enums::ChatBannedRights::Rights(rights)) => Some(!rights.send_plain),
+                    None => None,
+                });
+            if let Some(rights) = channel.admin_rights() {
+                profile.can_invite_users = Some(rights.invite_users);
+                profile.can_change_info = Some(rights.change_info);
+                profile.can_post_messages = Some(rights.post_messages);
+            }
+        }
+        Peer::Community(_) => {
+            profile.kind = PeerKind::Supergroup;
+        }
+    }
+    profile
+}
+
+pub(crate) async fn hydrate_profile(
+    client: &grammers_client::Client,
+    peer: &Peer,
+    profile: &mut PeerProfile,
+    cache: &MediaCache,
+) {
+    if let Ok(Some(photo)) = peer.photo(true).await {
+        let file_id = profile
+            .avatar
+            .as_ref()
+            .map(|avatar| avatar.file_id.clone())
+            .unwrap_or_else(|| format!("peer:{}", profile.peer_id));
+        let mut avatar = tg_mobile_core::AvatarReference {
+            file_id,
+            access_hash: None,
+            file_reference: None,
+            data_center_id: None,
+            size_bytes: None,
+            mime_type: Some("image/jpeg".into()),
+            local_path: None,
+        };
+        let cache_key = format!("peer-avatar:{}:{}", profile.peer_id, avatar.file_id);
+        if let Ok(Some(lease)) = cache.get(&cache_key) {
+            avatar.local_path = Some(lease.path().to_path_buf());
+        } else if let Ok(mut writer) = cache.begin_write(&cache_key) {
+            let mut download = client.iter_download(&photo);
+            let mut succeeded = true;
+            loop {
+                match download.next().await {
+                    Ok(Some(chunk)) => {
+                        if writer.write_all(&chunk).is_err() {
+                            succeeded = false;
+                            break;
+                        }
+                    }
+                    Err(_) => {
+                        succeeded = false;
+                        break;
+                    }
+                    Ok(None) => break,
+                }
+            }
+            if succeeded {
+                if let Ok(lease) = writer.commit() {
+                    avatar.local_path = Some(lease.path().to_path_buf());
+                }
+            }
+        }
+        profile.avatar = Some(avatar);
+    }
+
+    match peer {
+        Peer::User(user) => {
+            if let tl::enums::User::User(raw) = &user.raw {
+                if let Some(access_hash) = raw.access_hash {
+                    let request = tl::functions::users::GetFullUser {
+                        id: tl::enums::InputUser::User(tl::types::InputUser {
+                            user_id: raw.id,
+                            access_hash,
+                        }),
+                    };
+                    if let Ok(tl::enums::users::UserFull::Full(full)) =
+                        client.invoke(&request).await
+                    {
+                        profile.bio = non_empty(full.full_user.about);
+                    }
+                }
+            }
+        }
+        Peer::Group(group) => {
+            if let tl::enums::Chat::Chat(raw) = &group.raw {
+                let request = tl::functions::messages::GetFullChat { chat_id: raw.id };
+                if let Ok(tl::enums::messages::ChatFull::Full(full)) =
+                    client.invoke(&request).await
+                {
+                    profile.bio = non_empty(full.full_chat.about());
+                }
+            }
+        }
+        Peer::Channel(channel) => {
+            if let Some(access_hash) = channel.raw.access_hash {
+                let request = tl::functions::channels::GetFullChannel {
+                    channel: tl::enums::InputChannel::Channel(tl::types::InputChannel {
+                        channel_id: channel.raw.id,
+                        access_hash,
+                    }),
+                };
+                if let Ok(tl::enums::messages::ChatFull::Full(full)) =
+                    client.invoke(&request).await
+                {
+                    profile.bio = non_empty(full.full_chat.about());
+                    if let tl::enums::ChatFull::ChannelFull(channel_full) = &full.full_chat {
+                        if let Some(count) = channel_full.participants_count {
+                            profile.member_count = u32::try_from(count).ok();
+                        }
+                    }
+                }
+            }
+        }
+        Peer::Community(_) => {}
+    }
+}
+
+fn non_empty(value: String) -> Option<String> {
+    let value = value.trim();
+    (!value.is_empty()).then(|| value.to_owned())
+}
+
+fn channel_profile_kind(broadcast: bool, megagroup: bool, gigagroup: bool) -> PeerKind {
+    if megagroup || gigagroup {
+        PeerKind::Supergroup
+    } else if broadcast {
+        PeerKind::Channel
+    } else {
+        PeerKind::Unknown
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn unknown_profile_never_invents_personal_fields() {
+        let profile = PeerProfile::unknown(-42);
+        assert_eq!(profile.peer_id, -42);
+        assert_eq!(profile.display_name, None);
+        assert_eq!(profile.username, None);
+        assert_eq!(profile.is_bot, None);
+        assert_eq!(profile.is_premium, None);
+        assert_eq!(profile.presence, PeerPresence::Unknown);
+    }
+
+    #[test]
+    fn channel_type_is_mapped_without_inventing_group_type() {
+        assert_eq!(channel_profile_kind(true, false, false), PeerKind::Channel);
+        assert_eq!(
+            channel_profile_kind(false, true, false),
+            PeerKind::Supergroup
+        );
+        assert_eq!(
+            channel_profile_kind(false, false, true),
+            PeerKind::Supergroup
+        );
+        assert_eq!(channel_profile_kind(false, false, false), PeerKind::Unknown);
+    }
+}

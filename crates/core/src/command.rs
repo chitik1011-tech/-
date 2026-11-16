@@ -20,6 +20,9 @@ pub enum CoreCommand {
     LoadChats {
         limit: usize,
     },
+    LoadProfile {
+        peer_id: i64,
+    },
     /// Load one page from the authenticated account's Telegram contacts.
     LoadContacts {
         offset: usize,
@@ -120,6 +123,7 @@ impl CoreCommand {
             Self::SubmitCode(_) => "submit_code",
             Self::SubmitPassword(_) => "submit_password",
             Self::LoadChats { .. } => "load_chats",
+            Self::LoadProfile { .. } => "load_profile",
             Self::LoadContacts { .. } => "load_contacts",
             Self::LoadMessages { .. } => "load_messages",
             Self::LoadMessagesPage { .. } => "load_messages_page",
@@ -178,6 +182,13 @@ impl CoreCommand {
                 }
             }
             Self::LoadChats { limit } => validate_limit("chat load", *limit, MAX_CHAT_LOAD_LIMIT),
+            Self::LoadProfile { peer_id } => {
+                if *peer_id == 0 {
+                    Err(CoreError::InvalidInput("peer id must be non-zero".into()))
+                } else {
+                    Ok(())
+                }
+            }
             Self::LoadContacts { limit, .. } => validate_contact_page(*limit),
             Self::LoadMessages { chat_id, limit } => {
                 validate_chat_id(*chat_id)?;

@@ -43,9 +43,9 @@ pub use forwarding::{
 pub use mock::MockTelegramBackend;
 pub use model::{
     AccountState, AttachmentDownloadState, AttachmentKind, AttachmentThumbnail, AuthorizationState,
-    ChatActivityKind, ChatFolder, ChatFolderFacts, ChatSummary, Draft, ForwardedFrom,
-    MediaAttachment, MessageHistoryState, MessageSummary, ReadDirection, ReadReceipt,
-    ReplyMetadata,
+    AvatarReference, ChatActivityKind, ChatFolder, ChatFolderFacts, ChatSummary, Draft,
+    ForwardedFrom, MediaAttachment, MessageHistoryState, MessageSummary, PeerKind, PeerPresence,
+    PeerProfile, ReadDirection, ReadReceipt, ReplyMetadata,
 };
 pub use peer::{
     parse_peer_reference, MessageLink, MessageLinkMetadata, MessageLinkResolution, MessagePeer,
@@ -62,7 +62,9 @@ pub use send::{ClientMessageId, OutgoingSend, OutgoingSendState};
 pub use service_message::{
     ServiceAction, ServiceIcon, ServiceMessage, ServicePresentation, ServiceTone,
 };
-pub use state::{CoreState, FolderAction, MAX_CACHED_MESSAGES_PER_CHAT, MAX_CACHED_POLLS};
+pub use state::{
+    CoreState, FolderAction, MAX_CACHED_MESSAGES_PER_CHAT, MAX_CACHED_POLLS, MAX_CACHED_PROFILES,
+};
 pub use storage::{JsonFileStateStore, MemoryStateStore, NoopStateStore, StateStore};
 pub use transfer::{
     DownloadState, TransferDirection, TransferError, TransferKey, TransferManager,

@@ -950,6 +950,11 @@ async fn restore_state<S: StateStore>(
 ) -> CoreState {
     match store.load().await {
         Ok(Some(mut state)) => {
+            // Profiles contain personal data and are fetched on demand. Drop
+            // profile fields from previously persisted snapshots.
+            state.contacts = Default::default();
+            state.profiles.clear();
+            state.profile_order.clear();
             state.running = true;
             state.connection_machine.reset_disconnected();
             state.connection_state = crate::connection::ConnectionState::Disconnected;
@@ -983,7 +988,7 @@ async fn restore_state<S: StateStore>(
                 }
             }
             if recovered_any {
-                if let Err(error) = store.save(&state).await {
+                if let Err(error) = store.save(&state_for_persistence(&state)).await {
                     state.last_error = Some(error.to_string());
                 }
             }
@@ -1024,7 +1029,7 @@ async fn persist_send_intent<S: StateStore>(
     state_tx: &watch::Sender<CoreState>,
     event_tx: &broadcast::Sender<CoreEvent>,
 ) -> bool {
-    match store.save(state).await {
+    match store.save(&state_for_persistence(state)).await {
         Ok(()) => true,
         Err(error) => {
             let message = error.to_string();
@@ -1087,10 +1092,14 @@ async fn persist_state<S: StateStore>(
     state_tx: &watch::Sender<CoreState>,
     event_tx: &broadcast::Sender<CoreEvent>,
 ) {
-    if let Err(error) = store.save(state).await {
+    if let Err(error) = store.save(&state_for_persistence(state)).await {
         let message = error.to_string();
         state.last_error = Some(message.clone());
         let _ = state_tx.send(state.clone());
         let _ = event_tx.send(CoreEvent::Error(message));
     }
+}
+
+fn state_for_persistence(state: &CoreState) -> CoreState {
+    state.persistence_snapshot()
 }

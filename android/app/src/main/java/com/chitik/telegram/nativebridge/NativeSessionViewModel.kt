@@ -12,6 +12,7 @@ import com.chitik.telegram.parseContactListState
 import com.chitik.telegram.parseContactPage
 import com.chitik.telegram.ConversationPollOptionUi
 import com.chitik.telegram.ConversationPollUi
+import com.chitik.telegram.PeerProfileUi
 import com.chitik.telegram.MediaAttachmentUi
 import com.chitik.telegram.mediaDownloadStateFromWire
 import com.chitik.telegram.mediaKindFromWire
@@ -35,6 +36,9 @@ data class NativeUiState(
     val telegramConfigured: Boolean = false,
     val authorization: AuthorizationUiStep = AuthorizationUiStep.Closed,
     val chats: List<ChatListEntry> = emptyList(),
+    val profiles: Map<Long, PeerProfileUi> = emptyMap(),
+    val profileLoadingPeerId: Long? = null,
+    val profileError: String? = null,
     val contacts: List<ContactListEntry> = emptyList(),
     val contactTotal: Int = 0,
     val contactsLoading: Boolean = false,
@@ -57,6 +61,7 @@ private data class ParsedNativeState(
     val chats: List<ChatListEntry>,
     val messages: Map<Long, List<ConversationMessageUi>>,
     val contacts: List<ContactListEntry>,
+    val profiles: Map<Long, PeerProfileUi>,
 )
 
 class NativeSessionViewModel(application: Application) : AndroidViewModel(application) {
@@ -347,6 +352,25 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         reportDispatchResult(result, "Rust rejected the chat request")
     }
 
+    fun loadProfile(peerId: Long) {
+        if (peerId == 0L) return
+        _state.update { it.copy(profileLoadingPeerId = peerId, profileError = null) }
+        val accepted = sendCommand(
+            JSONObject()
+                .put("type", "load_profile")
+                .put("payload", JSONObject().put("peer_id", peerId))
+                .toString(),
+        )
+        if (!accepted) {
+            _state.update {
+                it.copy(
+                    profileLoadingPeerId = null,
+                    profileError = it.error ?: "Rust rejected the profile request",
+                )
+            }
+        }
+    }
+
     fun loadMessages(chatId: Long, limit: Int = 100) {
         _state.update { it.copy(busy = true, error = null) }
         sendCommand(
@@ -579,6 +603,26 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                     )
                 }
             }
+            "profile_updated" -> {
+                val profile = runCatching {
+                    val root = JSONObject(payload).optJSONObject("payload") ?: JSONObject()
+                    parsePeerProfile(root)
+                }.getOrNull()
+                _state.update { current ->
+                    if (profile == null) current.copy(
+                        profileLoadingPeerId = null,
+                        profileError = "Could not read peer profile",
+                        lastEventType = type,
+                        lastEventPayload = "",
+                    ) else current.copy(
+                        profiles = boundedProfiles(current.profiles, profile),
+                        profileLoadingPeerId = null,
+                        profileError = null,
+                        lastEventType = type,
+                        lastEventPayload = "{\"peer_id\":${profile.peerId}}",
+                    )
+                }
+            }
             "contacts_loaded" -> {
                 val page = parseContactPage(payload)
                 if (page == null) {
@@ -710,6 +754,8 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 _state.update {
                     it.copy(
                         busy = false,
+                        profileLoadingPeerId = if (it.profileLoadingPeerId != null) null else it.profileLoadingPeerId,
+                        profileError = if (it.profileLoadingPeerId != null) message else it.profileError,
                         contactsLoading = false,
                         lastEventType = type,
                         lastEventPayload = payload,
@@ -760,20 +806,22 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
             val polls = parsePolls(root.optJSONObject("polls"))
             val readOutboxMaxIds = parseReadOutboxMaxIds(root.optJSONObject("read_receipts"))
             val messages = parseMessages(root.optJSONObject("messages"), polls, readOutboxMaxIds)
+            val profiles = parseProfiles(root.optJSONObject("profiles") ?: JSONObject())
             val contacts = parseContactListState(root.optJSONObject("contacts"))
-            ParsedNativeState(authorization, chats, messages, contacts)
-        }.onSuccess { (authorization, chats, messages, contacts) ->
+            ParsedNativeState(authorization, chats, messages, contacts, profiles)
+        }.onSuccess { parsed ->
             _state.update {
                 it.copy(
-                    authorization = authorization,
-                    chats = chats,
-                    contacts = contacts,
-                    contactTotal = maxOf(it.contactTotal, contacts.size),
-                    messages = messages,
+                    authorization = parsed.authorization,
+                    chats = parsed.chats,
+                    contacts = parsed.contacts,
+                    contactTotal = maxOf(it.contactTotal, parsed.contacts.size),
+                    messages = parsed.messages,
+                    profiles = parsed.profiles,
                     busy = false,
                     contactsLoading = false,
                     lastEventType = "state",
-                    lastEventPayload = payloadWithoutContacts(payload),
+                    lastEventPayload = payloadWithoutPrivateState(payload),
                     error = null,
                 )
             }
@@ -788,8 +836,63 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         }
     }
 
-    private fun payloadWithoutContacts(payload: String): String = runCatching {
-        JSONObject(payload).apply { remove("contacts") }.toString()
+    private fun parseProfiles(root: JSONObject): Map<Long, PeerProfileUi> = buildMap {
+        val keys = root.keys()
+        while (keys.hasNext()) {
+            val key = keys.next()
+            val profile = root.optJSONObject(key) ?: continue
+            val parsed = runCatching { parsePeerProfile(profile) }.getOrNull() ?: continue
+            put(parsed.peerId, parsed)
+        }
+    }
+
+    private fun boundedProfiles(
+        current: Map<Long, PeerProfileUi>,
+        profile: PeerProfileUi,
+    ): Map<Long, PeerProfileUi> = (current + (profile.peerId to profile))
+        .entries
+        .takeLast(128)
+        .associate { it.toPair() }
+
+    private fun parsePeerProfile(root: JSONObject): PeerProfileUi {
+        val presenceObject = root.optJSONObject("presence")
+        val presence = presenceObject?.optString("status")?.takeIf { it.isNotBlank() && it != "unknown" }
+            ?.let { status ->
+                if (status == "offline") {
+                    presenceObject.optLong("last_seen_unix").takeIf { it > 0L }?.let { "Offline since $it" } ?: "Offline"
+                } else status.replaceFirstChar(Char::uppercase)
+            }
+        val avatar = root.optJSONObject("avatar")
+        return PeerProfileUi(
+            peerId = root.getLong("peer_id"),
+            kind = root.optString("kind", "unknown"),
+            displayName = root.optString("display_name").takeIf(String::isNotBlank),
+            firstName = root.optString("first_name").takeIf(String::isNotBlank),
+            lastName = root.optString("last_name").takeIf(String::isNotBlank),
+            username = root.optString("username").takeIf(String::isNotBlank),
+            bio = root.optString("bio").takeIf(String::isNotBlank),
+            memberCount = root.optInt("member_count").takeIf { root.has("member_count") && !root.isNull("member_count") },
+            presence = presence,
+            isBot = root.optionalBoolean("is_bot"),
+            isVerified = root.optionalBoolean("is_verified"),
+            isPremium = root.optionalBoolean("is_premium"),
+            canSendMessages = root.optionalBoolean("can_send_messages"),
+            canInviteUsers = root.optionalBoolean("can_invite_users"),
+            canChangeInfo = root.optionalBoolean("can_change_info"),
+            canPostMessages = root.optionalBoolean("can_post_messages"),
+            avatarFileId = avatar?.optString("file_id")?.takeIf(String::isNotBlank),
+            avatarLocalPath = avatar?.optString("local_path")?.takeIf(String::isNotBlank),
+        )
+    }
+
+    private fun JSONObject.optionalBoolean(name: String): Boolean? =
+        if (has(name) && !isNull(name)) optBoolean(name) else null
+
+    private fun payloadWithoutPrivateState(payload: String): String = runCatching {
+        JSONObject(payload).apply {
+            remove("contacts")
+            remove("profiles")
+        }.toString()
     }.getOrDefault("")
 
     private fun parseChats(array: JSONArray): List<ChatListEntry> = buildList {
