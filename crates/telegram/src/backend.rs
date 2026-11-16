@@ -17,8 +17,9 @@ use tg_mobile_core::{
     AttachmentDownloadState, AuthorizationState, BackendFuture, BackendUpdateReceiver,
     BackendUpdateSender, ConnectionToken, CoreCommand, CoreError, CoreEvent, DownloadState,
     ForwardMessagesResult, ForwardOutcome, MessageLinkResolution, MessagePeer, MessageSummary,
-    OutgoingSend, PeerReference, PeerResolution, TelegramBackend, TransferDirection,
-    TransferManager, TransferState, backend_update_channel,
+    OutgoingMediaAttachment, OutgoingSend, PeerReference, PeerResolution, TelegramBackend,
+    TransferDirection, TransferManager, TransferState, TransferToken, UploadState,
+    backend_update_channel,
 };
 use tokio::{
     sync::{broadcast, mpsc, watch},
@@ -42,6 +43,7 @@ use crate::{
         remember_poll,
     },
     updates::{TelegramUpdate, UpdateWorkerInput, run_update_worker},
+    uploads::{MediaSendStage, spawn_media_send},
 };
 
 const MESSAGE_DEDUP_CAPACITY: usize = 4096;
@@ -57,6 +59,19 @@ struct ReliableSendRecord {
 
 struct ActiveMediaTask {
     reference: String,
+    handle: JoinHandle<()>,
+}
+
+struct ActiveMediaSendTask {
+    reference: String,
+    transfer_token: TransferToken,
+    transfer_generation: u64,
+    session_generation: u64,
+    session_epoch: u64,
+    chat_id: i64,
+    media: OutgoingMediaAttachment,
+    caption: String,
+    send_stage: Arc<MediaSendStage>,
     handle: JoinHandle<()>,
 }
 
@@ -86,6 +101,7 @@ pub struct GrammersBackend {
     media_cache: MediaCache,
     transfers: Arc<TransferManager>,
     media_tasks: HashMap<(i64, i64, usize), ActiveMediaTask>,
+    media_send_tasks: HashMap<i64, ActiveMediaSendTask>,
     stopped: bool,
 }
 
@@ -143,6 +159,7 @@ impl GrammersBackend {
             media_cache,
             transfers: Arc::new(TransferManager::new()),
             media_tasks: HashMap::new(),
+            media_send_tasks: HashMap::new(),
             stopped: false,
         })
     }
@@ -318,6 +335,147 @@ impl GrammersBackend {
                 vec![sending, CoreEvent::MessageSendStateChanged(state)]
             }
         }
+    }
+
+    async fn handle_media_send(
+        &mut self,
+        client_id: i64,
+        chat_id: i64,
+        media: OutgoingMediaAttachment,
+        caption: String,
+        transfer_generation: u64,
+        session_generation: u64,
+        session_epoch: u64,
+    ) -> tg_mobile_core::Result<Vec<CoreEvent>> {
+        self.require_ready().await?;
+        media.validate().map_err(CoreError::InvalidInput)?;
+        self.media_send_tasks
+            .retain(|_, task| !task.handle.is_finished());
+        if self
+            .media_send_tasks
+            .get(&client_id)
+            .is_some_and(|task| !task.handle.is_finished())
+        {
+            return Ok(Vec::new());
+        }
+        self.media_send_tasks.remove(&client_id);
+
+        let peer = find_peer(&self.peers, chat_id)
+            .await
+            .ok_or(TelegramBackendError::UnknownChat(chat_id))?;
+        let reference = format!("outgoing:{client_id}");
+        let snapshot = self
+            .transfers
+            .get_by_key(TransferDirection::Upload, &reference)
+            .map_err(|error| CoreError::Backend(error.to_string()))?;
+        let token = match snapshot {
+            None => {
+                self.transfers
+                    .request(
+                        TransferDirection::Upload,
+                        reference.clone(),
+                        Some(media.size_bytes),
+                    )
+                    .map_err(|error| CoreError::Backend(error.to_string()))?
+                    .token
+            }
+            Some(snapshot) => match snapshot.state {
+                TransferState::Upload(UploadState::Pending) => snapshot.token,
+                TransferState::Upload(UploadState::Uploading) => {
+                    let failed = self
+                        .transfers
+                        .fail(snapshot.token)
+                        .map_err(|error| CoreError::Backend(error.to_string()))?;
+                    self.transfers
+                        .retry(failed)
+                        .map_err(|error| CoreError::Backend(error.to_string()))?
+                }
+                TransferState::Upload(UploadState::Failed | UploadState::Cancelled) => self
+                    .transfers
+                    .retry(snapshot.token)
+                    .map_err(|error| CoreError::Backend(error.to_string()))?,
+                TransferState::Upload(UploadState::Uploaded) => {
+                    return Err(CoreError::Backend(
+                        "media upload already completed without a pending send".into(),
+                    ));
+                }
+                TransferState::Download(_) => {
+                    return Err(CoreError::Backend(
+                        "media send resolved to a download transfer".into(),
+                    ));
+                }
+            },
+        };
+
+        let send_stage = Arc::new(MediaSendStage::default());
+        let handle = spawn_media_send(
+            self.client.clone(),
+            peer,
+            media.clone(),
+            caption.clone(),
+            client_id,
+            chat_id,
+            token,
+            transfer_generation,
+            session_generation,
+            session_epoch,
+            Arc::clone(&self.transfers),
+            self.core_update_tx.clone(),
+            Arc::clone(&self.dedup),
+            Arc::clone(&send_stage),
+        );
+        self.media_send_tasks.insert(
+            client_id,
+            ActiveMediaSendTask {
+                reference,
+                transfer_token: token,
+                transfer_generation,
+                session_generation,
+                session_epoch,
+                chat_id,
+                media,
+                caption,
+                send_stage,
+                handle,
+            },
+        );
+        Ok(Vec::new())
+    }
+
+    fn cancel_media_send(&mut self, client_id: i64) -> tg_mobile_core::Result<Vec<CoreEvent>> {
+        let Some(active) = self.media_send_tasks.get(&client_id) else {
+            return Ok(Vec::new());
+        };
+        if !active.send_stage.try_cancel() {
+            return Ok(Vec::new());
+        }
+        let fallback_generation = active.transfer_generation.saturating_add(1);
+        let cancelled_generation = self
+            .transfers
+            .get_by_key(TransferDirection::Upload, &active.reference)
+            .ok()
+            .flatten()
+            .filter(|snapshot| snapshot.token == active.transfer_token)
+            .and_then(|snapshot| self.transfers.cancel(snapshot.token).ok())
+            .map_or(fallback_generation, |token| token.generation);
+        let Some(active) = self.media_send_tasks.remove(&client_id) else {
+            return Ok(Vec::new());
+        };
+        active.handle.abort();
+        let update = OutgoingSend::failed_media(
+            client_id,
+            active.chat_id,
+            active.media,
+            active.caption,
+            "Media upload cancelled",
+            true,
+            active
+                .transfer_generation
+                .saturating_add(1)
+                .max(cancelled_generation),
+        )
+        .with_session_token(active.session_generation, active.session_epoch);
+        Ok(vec![CoreEvent::MessageSendStateChanged(update)])
     }
 
     fn cleanup_media_tasks(&mut self) {
@@ -613,6 +771,9 @@ impl GrammersBackend {
         for (_, task) in self.media_tasks.drain() {
             task.handle.abort();
         }
+        for (_, task) in self.media_send_tasks.drain() {
+            task.handle.abort();
+        }
         self.transfers = Arc::new(TransferManager::new());
         clear_peer_registry(&self.peers).await;
         clear_poll_registry(&self.polls).await;
@@ -632,6 +793,9 @@ impl GrammersBackend {
         }
 
         for (_, task) in self.media_tasks.drain() {
+            task.handle.abort();
+        }
+        for (_, task) in self.media_send_tasks.drain() {
             task.handle.abort();
         }
 
@@ -1144,6 +1308,27 @@ impl GrammersBackend {
                 chat_id,
                 text,
             } => self.handle_reliable_send(client_id, chat_id, text).await,
+            CoreCommand::SendMediaReliable {
+                client_id,
+                chat_id,
+                media,
+                caption,
+                transfer_generation,
+                session_generation,
+                session_epoch,
+            } => {
+                self.handle_media_send(
+                    client_id,
+                    chat_id,
+                    media,
+                    caption,
+                    transfer_generation,
+                    session_generation,
+                    session_epoch,
+                )
+                .await?
+            }
+            CoreCommand::CancelMediaSend { client_id } => self.cancel_media_send(client_id)?,
             CoreCommand::DownloadMedia {
                 chat_id,
                 message_id,
@@ -1536,6 +1721,9 @@ impl TelegramBackend for GrammersBackend {
 impl Drop for GrammersBackend {
     fn drop(&mut self) {
         for (_, task) in self.media_tasks.drain() {
+            task.handle.abort();
+        }
+        for (_, task) in self.media_send_tasks.drain() {
             task.handle.abort();
         }
         if let Some(shutdown) = self.update_shutdown.take() {

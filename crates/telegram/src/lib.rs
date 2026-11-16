@@ -16,6 +16,7 @@ mod messages;
 mod polls;
 mod profiles;
 mod updates;
+mod uploads;
 
 pub use backend::GrammersBackend;
 pub use config::TelegramConfig;

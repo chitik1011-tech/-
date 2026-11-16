@@ -5,6 +5,7 @@ use crate::{
     error::{CoreError, Result},
     peer::parse_peer_reference,
     search::SearchMessagesRequest,
+    send::OutgoingMediaAttachment,
 };
 
 pub const MAX_CHAT_LOAD_LIMIT: usize = 500;
@@ -12,6 +13,7 @@ pub const MAX_MESSAGE_LOAD_LIMIT: usize = 200;
 pub const MAX_EDIT_MESSAGE_TEXT_BYTES: usize = 64 * 1024;
 pub const MAX_REACTION_BYTES: usize = 128;
 pub const MAX_BULK_MESSAGE_IDS: usize = 100;
+pub const MAX_MEDIA_CAPTION_UTF16_UNITS: usize = 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
@@ -89,6 +91,25 @@ pub enum CoreCommand {
         client_id: i64,
         chat_id: i64,
         text: String,
+    },
+    /// Upload and send one photo, video or document through the durable send outbox.
+    SendMediaReliable {
+        client_id: i64,
+        chat_id: i64,
+        media: OutgoingMediaAttachment,
+        caption: String,
+        /// Runtime-assigned monotonically increasing upload attempt generation.
+        #[serde(default)]
+        transfer_generation: u64,
+        /// Connection token attached by the core runtime to reject stale callbacks.
+        #[serde(default)]
+        session_generation: u64,
+        #[serde(default)]
+        session_epoch: u64,
+    },
+    /// Cancel an active outgoing upload while retaining its retryable outbox entry.
+    CancelMediaSend {
+        client_id: i64,
     },
     /// Edit the text of an existing Telegram message.
     EditMessage {
@@ -202,6 +223,8 @@ impl CoreCommand {
             Self::ReplyMessage { .. } => "reply_message",
             Self::SendLocation { .. } => "send_location",
             Self::SendTextReliable { .. } => "send_text_reliable",
+            Self::SendMediaReliable { .. } => "send_media_reliable",
+            Self::CancelMediaSend { .. } => "cancel_media_send",
             Self::EditMessage { .. } => "edit_message",
             Self::DeleteMessageForMe { .. } => "delete_message_for_me",
             Self::DeleteMessageForEveryone { .. } => "delete_message_for_everyone",
@@ -361,13 +384,43 @@ impl CoreCommand {
                 chat_id,
                 text,
             } => {
-                if *client_id == 0 {
+                if *client_id <= 0 {
                     return Err(CoreError::InvalidInput(
-                        "client message id must be non-zero".into(),
+                        "client message id must be positive".into(),
                     ));
                 }
                 validate_chat_id(*chat_id)?;
                 require_non_blank("message text", text)
+            }
+            Self::SendMediaReliable {
+                client_id,
+                chat_id,
+                media,
+                caption,
+                ..
+            } => {
+                if *client_id <= 0 {
+                    return Err(CoreError::InvalidInput(
+                        "client message id must be positive".into(),
+                    ));
+                }
+                validate_chat_id(*chat_id)?;
+                media.validate().map_err(CoreError::InvalidInput)?;
+                if caption.encode_utf16().count() > MAX_MEDIA_CAPTION_UTF16_UNITS {
+                    return Err(CoreError::InvalidInput(format!(
+                        "media caption exceeds {MAX_MEDIA_CAPTION_UTF16_UNITS} UTF-16 code units"
+                    )));
+                }
+                Ok(())
+            }
+            Self::CancelMediaSend { client_id } => {
+                if *client_id <= 0 {
+                    Err(CoreError::InvalidInput(
+                        "client message id must be positive".into(),
+                    ))
+                } else {
+                    Ok(())
+                }
             }
             Self::EditMessage {
                 chat_id,

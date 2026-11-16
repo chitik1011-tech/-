@@ -1,8 +1,11 @@
-use std::collections::{HashSet, VecDeque};
+use std::{
+    collections::{HashSet, VecDeque},
+    time::Duration,
+};
 
 use grammers_client::{
     Client,
-    media::{Document, Geo, Media, Photo, PhotoSize},
+    media::{Attribute, Document, Geo, Media, Photo, PhotoSize, Uploaded},
     message::{InputMessage, Message},
     sender::InvocationError,
     session::types::{PeerKind, PeerRef},
@@ -11,7 +14,8 @@ use grammers_client::{
 use tg_mobile_core::{
     AttachmentDownloadState, AttachmentKind, AttachmentThumbnail, CoreError, ForwardedFrom,
     GeoPoint, MediaAttachment, MessageLocation, MessageReaction, MessageReactionType,
-    MessageSummary, PollSummary, ReplyMetadata, ServiceAction, ServiceMessage, Venue,
+    MessageSummary, OutgoingMediaAttachment, OutgoingMediaKind, PollSummary, ReplyMetadata,
+    ServiceAction, ServiceMessage, Venue,
 };
 use tokio::sync::Mutex;
 
@@ -652,6 +656,131 @@ pub(crate) async fn send_reply(
         .await
         .map_err(|error| api_error("send reply", error))?;
     Ok(message_to_summary(&message))
+}
+
+pub(crate) async fn send_media_idempotent(
+    client: &Client,
+    peer: PeerRef,
+    uploaded: Uploaded,
+    attachment: &OutgoingMediaAttachment,
+    caption: String,
+    random_id: i64,
+) -> tg_mobile_core::Result<MessageSummary> {
+    if random_id == 0 {
+        return Err(CoreError::InvalidInput(
+            "client message id must be non-zero".into(),
+        ));
+    }
+
+    let uploaded_media: tl::enums::InputMedia = match attachment.kind {
+        OutgoingMediaKind::Photo => tl::types::InputMediaUploadedPhoto {
+            spoiler: false,
+            live_photo: false,
+            file: uploaded.raw,
+            stickers: None,
+            ttl_seconds: None,
+            video: None,
+        }
+        .into(),
+        OutgoingMediaKind::Video => tl::types::InputMediaUploadedDocument {
+            nosound_video: false,
+            force_file: false,
+            spoiler: false,
+            file: uploaded.raw,
+            thumb: None,
+            mime_type: attachment.mime_type.clone(),
+            attributes: vec![
+                Attribute::Video {
+                    round_message: false,
+                    supports_streaming: true,
+                    duration: Duration::from_millis(
+                        attachment.video_duration_ms.unwrap_or_default(),
+                    ),
+                    w: attachment.video_width.unwrap_or_default() as i32,
+                    h: attachment.video_height.unwrap_or_default() as i32,
+                }
+                .into(),
+                Attribute::FileName(attachment.file_name.clone()).into(),
+            ],
+            stickers: None,
+            video_cover: None,
+            video_timestamp: None,
+            ttl_seconds: None,
+        }
+        .into(),
+        OutgoingMediaKind::Document => tl::types::InputMediaUploadedDocument {
+            nosound_video: false,
+            force_file: false,
+            spoiler: false,
+            file: uploaded.raw,
+            thumb: None,
+            mime_type: attachment.mime_type.clone(),
+            attributes: vec![Attribute::FileName(attachment.file_name.clone()).into()],
+            stickers: None,
+            video_cover: None,
+            video_timestamp: None,
+            ttl_seconds: None,
+        }
+        .into(),
+    };
+
+    let uploaded_media = client
+        .upload_media(peer, uploaded_media)
+        .await
+        .map_err(classify_send_error)?
+        .and_then(|media| media.to_raw_input_media())
+        .ok_or_else(|| {
+            CoreError::TransientSend("Telegram could not prepare the uploaded media".into())
+        })?;
+
+    let updates = client
+        .invoke(&tl::functions::messages::SendMedia {
+            silent: false,
+            background: false,
+            clear_draft: false,
+            peer: peer.into(),
+            reply_to: None,
+            media: uploaded_media,
+            message: caption,
+            random_id,
+            reply_markup: None,
+            entities: None,
+            schedule_date: None,
+            schedule_repeat_period: None,
+            send_as: None,
+            noforwards: false,
+            update_stickersets_order: false,
+            invert_media: false,
+            quick_reply_shortcut: None,
+            effect: None,
+            allow_paid_floodskip: false,
+            allow_paid_stars: None,
+            suggested_post: None,
+        })
+        .await
+        .map_err(classify_send_error)?;
+
+    let message_id = sent_message_id(&updates, random_id).ok_or_else(|| {
+        CoreError::SendOutcomeUnknown(
+            "Telegram accepted the media send but returned no resolvable message id".into(),
+        )
+    })?;
+    let messages = client
+        .get_messages_by_id(peer, &[message_id])
+        .await
+        .map_err(classify_send_error)?;
+    let message = messages.into_iter().flatten().next().ok_or_else(|| {
+        CoreError::SendOutcomeUnknown(
+            "Telegram accepted the media send but its server message could not be fetched".into(),
+        )
+    })?;
+    let summary = message_to_summary(&message);
+    if summary.id != i64::from(message_id) {
+        return Err(CoreError::SendOutcomeUnknown(
+            "Telegram returned a different server message after media send".into(),
+        ));
+    }
+    Ok(summary)
 }
 
 pub(crate) async fn send_text_idempotent(

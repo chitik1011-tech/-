@@ -437,6 +437,26 @@ impl MockTelegramBackend {
                     )),
                 ])
             }
+            CoreCommand::SendMediaReliable {
+                client_id,
+                chat_id,
+                media,
+                caption,
+                ..
+            } => Ok(vec![CoreEvent::MessageSendStateChanged(
+                OutgoingSend::failed_media(
+                    client_id,
+                    chat_id,
+                    media,
+                    caption,
+                    "media send is unavailable in the mock backend",
+                    false,
+                    0,
+                ),
+            )]),
+            CoreCommand::CancelMediaSend { .. } => Err(CoreError::Backend(
+                "media upload cancellation is unavailable in the mock backend".into(),
+            )),
             CoreCommand::VotePoll { .. } => Err(CoreError::Backend(
                 "poll voting is not implemented by the mock backend".into(),
             )),

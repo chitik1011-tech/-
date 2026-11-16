@@ -42,14 +42,59 @@ class OutgoingTextSendSupportTest {
     }
 
     @Test
-    fun pendingSendingConfirmedReleasesComposer() {
+    fun mediaOutboxParsesProgressRetryAndCancelState() {
+        val uploading = parseOutgoingTextSendEvent(
+            """{"type":"message_send_state_changed","payload":{"client_id":41,"chat_id":99,"text":"caption","media":{"kind":"photo","path":"/private/photo.jpg","file_name":"photo.jpg","mime_type":"image/jpeg","size_bytes":2048},"state":{"status":"uploading","bytes_transferred":1024,"total_bytes":2048}}}""",
+        )
+        assertNotNull(uploading)
+        assertEquals(50, uploading?.progressPercent)
+        assertTrue(uploading?.canCancel == true)
+        assertFalse(uploading?.canRetry == true)
+
+        val failed = parseOutgoingTextSendEvent(
+            """{"type":"message_send_state_changed","payload":{"client_id":41,"chat_id":99,"text":"caption","media":{"kind":"photo","path":"/private/photo.jpg","file_name":"photo.jpg","mime_type":"image/jpeg","size_bytes":2048},"state":{"status":"failed","reason":"offline","retryable":true}}}""",
+        )
+        assertTrue(failed?.canRetry == true)
+        assertFalse(failed?.canCancel == true)
+
+        val awaitingConfirmation = parseOutgoingTextSendEvent(
+            """{"type":"message_send_state_changed","payload":{"client_id":41,"chat_id":99,"text":"caption","media":{"kind":"photo","path":"/private/photo.jpg","file_name":"photo.jpg","mime_type":"image/jpeg","size_bytes":2048},"state":{"status":"awaiting_confirmation","reason":"server acknowledgement was lost"}}}""",
+        )
+        assertTrue(awaitingConfirmation?.canRetry == true)
+    }
+
+    @Test
+    fun videoOutboxPreservesValidMetadataAndDropsInvalidDimensions() {
+        val event = """{"type":"message_send_state_changed","payload":{"client_id":42,"chat_id":99,"text":"clip","media":{"kind":"video","path":"/private/clip.mp4","file_name":"clip.mp4","mime_type":"video/mp4","size_bytes":4096,"video_duration_ms":12345,"video_width":1920,"video_height":1080},"state":{"status":"failed","retryable":true}}}"""
+        val send = parseOutgoingTextSendEvent(event)
+        assertEquals(12_345L, send?.media?.videoDurationMs)
+        assertEquals(1920, send?.media?.videoWidth)
+        assertEquals(1080, send?.media?.videoHeight)
+
+        val incomplete = event.replace("video_height", "ignored_video_height")
+        val withoutDimensions = parseOutgoingTextSendEvent(incomplete)
+        assertEquals(null, withoutDimensions?.media?.videoWidth)
+        assertEquals(null, withoutDimensions?.media?.videoHeight)
+        assertEquals(12_345L, withoutDimensions?.media?.videoDurationMs)
+    }
+
+    @Test
+    fun mediaImportBlocksComposerUntilQueued() {
+        assertTrue(NativeUiState(mediaImportInProgress = true).sendingText)
+        assertFalse(NativeUiState(mediaImportInProgress = false).sendingText)
+    }
+
+    @Test
+    fun unknownSendOutcomeReleasesComposerWithoutMakingTheSendRetryable() {
         val id = 31L
         val pending = NativeUiState(activeTextSendId = id, activeTextSendChatId = 99L, activeTextSendText = "hello")
         assertTrue(pending.sendingText)
         val sending = pending.applyOutgoingTextSend(send(id, "sending"))
         assertTrue(sending.sendingText)
         val waiting = sending.applyOutgoingTextSend(send(id, "awaiting_confirmation"))
-        assertTrue(waiting.sendingText)
+        assertFalse(waiting.sendingText)
+        assertEquals("awaiting_confirmation", waiting.outbox[id]?.status)
+        assertFalse(waiting.outbox[id]?.canRetry == true)
         val confirmed = waiting.applyOutgoingTextSend(send(id, "sent"))
         assertFalse(confirmed.sendingText)
         assertNull(confirmed.failedTextSendText)

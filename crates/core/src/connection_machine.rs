@@ -152,12 +152,20 @@ fn step(phase: LinkPhase, event: LinkEvent) -> Step {
 }
 
 impl SessionGeneration {
+    pub const fn as_u64(self) -> u64 {
+        self.0
+    }
+
     fn next(self) -> Self {
         Self(self.0.saturating_add(1))
     }
 }
 
 impl ConnectionEpoch {
+    pub const fn as_u64(self) -> u64 {
+        self.0
+    }
+
     fn next(self) -> Self {
         Self(self.0.saturating_add(1))
     }

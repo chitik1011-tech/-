@@ -1,6 +1,7 @@
 package com.chitik.telegram.nativebridge
 
 import android.app.Application
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.chitik.telegram.AuthorizationUiStep
@@ -35,6 +36,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -85,6 +87,7 @@ data class NativeUiState(
     val failedTextSendId: Long? = null,
     val failedTextSendText: String? = null,
     val textSendError: String? = null,
+    val mediaImportInProgress: Boolean = false,
     val deleteError: String? = null,
     val busy: Boolean = false,
     val lastEventType: String = "none",
@@ -92,8 +95,8 @@ data class NativeUiState(
     val error: String? = null,
 ) {
     val sendingText: Boolean
-        get() = activeTextSendId != null &&
-            (outbox[activeTextSendId]?.isInFlight ?: true)
+        get() = mediaImportInProgress || (activeTextSendId != null &&
+            (outbox[activeTextSendId]?.isInFlight ?: true))
 
     val coreReady: Boolean
         get() = libraryLoaded && nativeHandle != 0L && error == null
@@ -736,6 +739,113 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         return accepted
     }
 
+    /**
+     * Copies a Photo Picker / SAF URI to app-private storage before queuing it
+     * in Rust's durable reliable-send outbox.
+     */
+    fun sendMediaFromUri(
+        chatId: Long,
+        uri: Uri,
+        caption: String,
+        onQueued: (Boolean) -> Unit = {},
+    ) {
+        if (chatId == 0L || _state.value.authorization != AuthorizationUiStep.Ready ||
+            _state.value.sendingText
+        ) {
+            onQueued(false)
+            return
+        }
+        _state.update { it.copy(mediaImportInProgress = true, textSendError = null, error = null) }
+        viewModelScope.launch(Dispatchers.IO) {
+            val accepted = runCatching {
+                val media = importPickedMedia(getApplication(), uri)
+                if (_state.value.authorization != AuthorizationUiStep.Ready) {
+                    java.io.File(media.path).delete()
+                    false
+                } else {
+                    val queued = queueMediaSend(nextPositiveClientMessageId(), chatId, media, caption)
+                    if (!queued) deletePickedMedia(getApplication(), media.path)
+                    queued
+                }
+            }.onFailure { error ->
+                _state.update { it.copy(mediaImportInProgress = false) }
+                setErrorIfOpen(error.message ?: "Could not import selected media")
+            }.getOrDefault(false)
+            if (!accepted) _state.update { it.copy(mediaImportInProgress = false) }
+            withContext(Dispatchers.Main) { onQueued(accepted) }
+        }
+    }
+
+    fun retryMediaSend(clientId: Long): Boolean {
+        val send = _state.value.outbox[clientId] ?: return false
+        val media = send.media ?: return false
+        if (!send.canRetry || _state.value.sendingText) return false
+        return queueMediaSend(clientId, send.chatId, media.toPickedMedia(), send.text)
+    }
+
+    fun cancelMediaSend(clientId: Long) {
+        sendCommand(
+            JSONObject()
+                .put("type", "cancel_media_send")
+                .put("payload", JSONObject().put("client_id", clientId))
+                .toString(),
+        )
+    }
+
+    private fun queueMediaSend(
+        clientId: Long,
+        chatId: Long,
+        media: PickedOutgoingMedia,
+        caption: String,
+    ): Boolean {
+        if (clientId <= 0L || chatId == 0L ||
+            (_state.value.sendingText && !_state.value.mediaImportInProgress)
+        ) return false
+        _state.update {
+            it.copy(
+                activeTextSendId = clientId,
+                lastTextSendId = clientId,
+                activeTextSendChatId = chatId,
+                activeTextSendText = caption,
+                failedTextSendId = null,
+                failedTextSendText = null,
+                textSendError = null,
+                mediaImportInProgress = false,
+            )
+        }
+        val mediaPayload = JSONObject()
+            .put("kind", media.kind)
+            .put("path", media.path)
+            .put("file_name", media.fileName)
+            .put("mime_type", media.mimeType)
+            .put("size_bytes", media.sizeBytes)
+        media.videoDurationMs?.let { mediaPayload.put("video_duration_ms", it) }
+        media.videoWidth?.let { mediaPayload.put("video_width", it) }
+        media.videoHeight?.let { mediaPayload.put("video_height", it) }
+        val command = JSONObject()
+            .put("type", "send_media_reliable")
+            .put(
+                "payload",
+                JSONObject()
+                    .put("client_id", clientId)
+                    .put("chat_id", chatId)
+                    .put("media", mediaPayload)
+                    .put("caption", caption),
+            )
+            .toString()
+        val accepted = sendCommand(command)
+        if (!accepted) {
+            _state.update {
+                if (it.activeTextSendId == clientId) it.copy(
+                    activeTextSendId = null,
+                    activeTextSendChatId = null,
+                    activeTextSendText = null,
+                ) else it
+            }
+        }
+        return accepted
+    }
+
     fun editMessage(chatId: Long, messageId: Long, text: String) {
         submitMessageMutation(
             chatId = chatId,
@@ -752,6 +862,17 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
     fun deleteMessageForMe(chatId: Long, messageId: Long) {
         submitMessageMutation(chatId, messageId, "delete_message_for_me")
     }
+
+    private fun OutgoingMediaUi.toPickedMedia() = PickedOutgoingMedia(
+        kind = kind,
+        path = path,
+        fileName = fileName,
+        mimeType = mimeType,
+        sizeBytes = sizeBytes,
+        videoDurationMs = videoDurationMs,
+        videoWidth = videoWidth,
+        videoHeight = videoHeight,
+    )
 
     private fun submitMessageMutation(
         chatId: Long,
@@ -1087,6 +1208,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
             "state" -> applyStatePayload(payload)
             "message_send_state_changed" -> {
                 val send = parseOutgoingTextSendEvent(payload)
+                send?.let { cleanupTerminalOutgoingMedia(listOf(it)) }
                 _state.update { current ->
                     if (send == null) current.copy(lastEventType = type, lastEventPayload = "")
                     else current.applyOutgoingTextSend(send).copy(
@@ -1433,6 +1555,11 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         }.getOrDefault(AuthorizationUiStep.Closed)
 
         val loggedOut = authorization == AuthorizationUiStep.Closed
+        val mediaPathsToDeleteOnLogout = if (loggedOut) {
+            _state.value.outbox.values.mapNotNull { it.media?.path }.distinct()
+        } else {
+            emptyList()
+        }
         _state.update { current ->
             current.clearPendingReactionsAfterConnectionChange().copy(
                 chats = if (loggedOut) emptyList() else current.chats,
@@ -1484,6 +1611,14 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
             )
         }
 
+        if (mediaPathsToDeleteOnLogout.isNotEmpty()) {
+            viewModelScope.launch(Dispatchers.IO) {
+                mediaPathsToDeleteOnLogout.forEach { path ->
+                    deletePickedMedia(getApplication(), path)
+                }
+            }
+        }
+
         if (loggedOut && restartHandleAfterLogout) {
             restartHandleAfterLogout = false
             // The old Grammers update worker is scoped to this connection generation.
@@ -1492,6 +1627,25 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         } else if (authorization == AuthorizationUiStep.Ready) {
             loadChats()
             loadContacts(offset = 0)
+        }
+    }
+
+    private fun cleanupTerminalOutgoingMedia(sends: Collection<OutgoingTextSendUi>) {
+        val paths = sends.asSequence()
+            .filter { send ->
+                send.media != null && (
+                    send.status == "sent" ||
+                        send.status == "rejected" ||
+                        send.status == "cancelled" ||
+                        (send.status == "failed" && !send.retryable)
+                    )
+            }
+            .mapNotNull { it.media?.path }
+            .distinct()
+            .toList()
+        if (paths.isEmpty()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            paths.forEach { path -> deletePickedMedia(getApplication(), path) }
         }
     }
 
@@ -1512,6 +1666,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
             val ledger = parseOutgoingTextOutbox(root.optJSONObject("send_ledger"))
             ParsedNativeState(authorization, chats, messages, pinnedMessages, contacts, profiles, capabilities, outbox + ledger)
         }.onSuccess { parsed ->
+            cleanupTerminalOutgoingMedia(parsed.outbox.values)
             _state.update {
                 it.copy(
                     authorization = parsed.authorization,

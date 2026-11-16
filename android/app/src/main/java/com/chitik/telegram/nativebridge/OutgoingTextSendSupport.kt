@@ -26,19 +26,47 @@ internal fun reliableTextCommand(clientId: Long, chatId: Long, text: String): St
         .toString()
 }
 
+data class OutgoingMediaUi(
+    val kind: String,
+    val path: String,
+    val fileName: String,
+    val mimeType: String,
+    val sizeBytes: Long,
+    val videoDurationMs: Long? = null,
+    val videoWidth: Int? = null,
+    val videoHeight: Int? = null,
+)
+
 data class OutgoingTextSendUi(
     val clientId: Long,
     val chatId: Long,
     val text: String,
     val status: String,
     val reason: String? = null,
+    val media: OutgoingMediaUi? = null,
+    val bytesTransferred: Long = 0L,
+    val totalBytes: Long? = null,
+    val retryable: Boolean = false,
 ) {
     val isInFlight: Boolean
-        get() = status == "pending" || status == "sending" ||
+        get() = status == "pending" || status == "sending" || status == "uploading" ||
             status == "awaiting_confirmation" || status == "flood_wait"
 
     val isFailure: Boolean
         get() = status == "failed" || status == "rejected"
+
+    val canRetry: Boolean
+        get() = media != null && (
+            status == "awaiting_confirmation" || (status == "failed" && retryable)
+        )
+
+    val canCancel: Boolean
+        get() = status == "uploading" && media != null
+
+    val progressPercent: Int?
+        get() = if (status == "uploading" && totalBytes != null && totalBytes > 0L) {
+            ((bytesTransferred.coerceIn(0L, totalBytes) * 100L) / totalBytes).toInt()
+        } else null
 }
 
 internal fun parseOutgoingTextSend(value: JSONObject?): OutgoingTextSendUi? {
@@ -48,9 +76,51 @@ internal fun parseOutgoingTextSend(value: JSONObject?): OutgoingTextSendUi? {
     if (clientId <= 0L || chatId == 0L || !value.has("text") || value.isNull("text")) return null
     val state = value.optJSONObject("state") ?: return null
     val status = state.optString("status")
-    if (status !in setOf("pending", "sending", "awaiting_confirmation", "flood_wait", "sent", "failed", "rejected", "cancelled")) return null
-    return OutgoingTextSendUi(clientId, chatId, value.optString("text"), status,
-        state.optString("reason").takeIf(String::isNotBlank))
+    if (status !in setOf("pending", "sending", "uploading", "awaiting_confirmation", "flood_wait", "sent", "failed", "rejected", "cancelled")) return null
+    val mediaObject = value.optJSONObject("media")
+    val media = mediaObject?.let { item ->
+        val kind = item.optString("kind")
+        val path = item.optString("path")
+        val fileName = item.optString("file_name")
+        val mimeType = item.optString("mime_type")
+        val sizeBytes = item.optLong("size_bytes", 0L)
+        val videoDurationMs = item.optLong("video_duration_ms", -1L)
+            .takeIf { kind == "video" && it in 1..172_800_000L }
+        val videoWidth = item.optInt("video_width", -1)
+            .takeIf { kind == "video" && it in 1..32768 }
+        val videoHeight = item.optInt("video_height", -1)
+            .takeIf { kind == "video" && it in 1..32768 }
+        val dimensions = if (videoWidth != null && videoHeight != null) {
+            videoWidth to videoHeight
+        } else {
+            null
+        }
+        if (kind in setOf("photo", "video", "document") && path.isNotBlank() &&
+            fileName.isNotBlank() && mimeType.isNotBlank() && sizeBytes > 0L
+        ) OutgoingMediaUi(
+            kind,
+            path,
+            fileName,
+            mimeType,
+            sizeBytes,
+            videoDurationMs,
+            dimensions?.first,
+            dimensions?.second,
+        ) else null
+    }
+    if (status == "uploading" && media == null) return null
+    return OutgoingTextSendUi(
+        clientId = clientId,
+        chatId = chatId,
+        text = value.optString("text"),
+        status = status,
+        reason = state.optString("reason").takeIf(String::isNotBlank),
+        media = media,
+        bytesTransferred = state.optLong("bytes_transferred", value.optLong("bytes_transferred", 0L)).coerceAtLeast(0L),
+        totalBytes = state.optLong("total_bytes", 0L).takeIf { it > 0L }
+            ?: media?.sizeBytes,
+        retryable = state.optBoolean("retryable", false),
+    )
 }
 
 internal fun parseOutgoingTextOutbox(root: JSONObject?): Map<Long, OutgoingTextSendUi> {
@@ -83,23 +153,35 @@ internal fun NativeUiState.applyOutgoingTextSend(send: OutgoingTextSendUi): Nati
             failedTextSendText = activeTextSendText,
             textSendError = send.reason ?: "Отправка сообщения не удалась",
         )
-        send.status == "sent" || send.status == "cancelled" -> copy(
-            outbox = updated,
-            activeTextSendId = null,
-            activeTextSendChatId = null,
-            activeTextSendText = null,
-        )
+        send.status == "sent" || send.status == "cancelled" ||
+            send.status == "awaiting_confirmation" -> copy(
+                outbox = updated,
+                activeTextSendId = null,
+                activeTextSendChatId = null,
+                activeTextSendText = null,
+            )
         else -> copy(outbox = updated)
     }
 }
 
+internal fun NativeUiState.mediaSendForChat(chatId: Long): OutgoingTextSendUi? {
+    val active = lastTextSendId?.let(outbox::get)
+        ?.takeIf { it.chatId == chatId && it.media != null }
+    return active ?: outbox.values
+        .filter { it.chatId == chatId && it.media != null }
+        .maxByOrNull { it.clientId }
+}
+
 internal fun NativeUiState.textSendStatusForChat(chatId: Long): String? {
-    val id = lastTextSendId ?: return null
-    val send = outbox[id] ?: return if (activeTextSendId == id && activeTextSendChatId == chatId) "В очереди" else null
+    val send = lastTextSendId?.let(outbox::get)
+        ?.takeIf { it.chatId == chatId }
+        ?: mediaSendForChat(chatId)
+        ?: return null
     if (send.chatId != chatId) return null
     return when (send.status) {
         "pending" -> "В очереди"
-        "sending" -> "Отправляется"
+        "uploading" -> send.progressPercent?.let { "Загружается: $it%" } ?: "Загружается"
+        "sending" -> if (send.media != null) "Отправляется в Telegram" else "Отправляется"
         "awaiting_confirmation" -> "Ожидается подтверждение Telegram"
         "flood_wait" -> "Ожидание ограничения Telegram"
         "sent" -> "Отправлено"

@@ -64,7 +64,10 @@ pub use search::{
     SearchMessagesRequest, MAX_MESSAGE_SEARCH_LIMIT, MAX_MESSAGE_SEARCH_QUERY_BYTES,
 };
 pub use selection::{MessageSelection, SelectionAction, SelectionCapabilities, SelectionError};
-pub use send::{ClientMessageId, OutgoingSend, OutgoingSendState};
+pub use send::{
+    ClientMessageId, OutgoingMediaAttachment, OutgoingMediaKind, OutgoingSend, OutgoingSendState,
+    MAX_OUTGOING_MEDIA_BYTES,
+};
 pub use service_message::{
     ServiceAction, ServiceIcon, ServiceMessage, ServicePresentation, ServiceTone,
 };
