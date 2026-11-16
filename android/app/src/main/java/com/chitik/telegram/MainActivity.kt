@@ -93,11 +93,22 @@ private fun TelegramRustApp(
     var draft by rememberSaveable { mutableStateOf("") }
     var pendingLocationChatId by rememberSaveable { mutableLongStateOf(0L) }
     var activeLocationRequest by remember { mutableStateOf<LocationRequestHandle?>(null) }
-    DisposableEffect(lifecycleOwner) {
+    DisposableEffect(lifecycleOwner, selectedChatId, viewModel) {
         if (lifecycleOwner == null) {
-            onDispose { }
+            viewModel.setNotificationVisibility(false, null)
+            onDispose { viewModel.setNotificationVisibility(false, null) }
         } else {
+            viewModel.setNotificationVisibility(
+                lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED),
+                selectedChatId.takeIf { it != 0L },
+            )
             val observer = LifecycleEventObserver { _, event ->
+                if (event == Lifecycle.Event.ON_START) {
+                    viewModel.setNotificationVisibility(true, selectedChatId.takeIf { it != 0L })
+                }
+                if (event == Lifecycle.Event.ON_STOP) {
+                    viewModel.setNotificationVisibility(false, null)
+                }
                 if (event == Lifecycle.Event.ON_STOP) {
                     activeLocationRequest?.cancel()
                     activeLocationRequest = null
@@ -105,7 +116,10 @@ private fun TelegramRustApp(
                 }
             }
             lifecycleOwner.lifecycle.addObserver(observer)
-            onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+            onDispose {
+                lifecycleOwner.lifecycle.removeObserver(observer)
+                viewModel.setNotificationVisibility(false, null)
+            }
         }
     }
     DisposableEffect(selectedChatId) {
