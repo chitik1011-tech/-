@@ -1,4 +1,4 @@
-use tg_mobile_core::{CoreCommand, CoreEvent, CoreState};
+use tg_mobile_core::{ChatSummary, CoreCommand, CoreEvent, CoreState};
 
 #[test]
 fn pin_commands_validate_ids_and_round_trip_over_the_canonical_wire() {
@@ -197,16 +197,30 @@ fn no_pts_pin_rpc_ack_cannot_override_a_newer_unpin_update() {
 }
 
 #[test]
-fn pin_state_does_not_persist_per_message_acknowledgement_history() {
+fn chats_loaded_prunes_pinned_bookkeeping_outside_the_bounded_chat_cache() {
     let mut state = CoreState::default();
-    for message_id in 1..=2_000 {
+    for chat_id in 1..=2_000 {
         state.reduce(&CoreEvent::PinnedMessagesChanged {
-            chat_id: 9,
-            message_ids: vec![message_id],
+            chat_id,
+            message_ids: vec![7],
             pinned: true,
-            pts: None,
+            pts: Some(1),
         });
     }
-    let serialized = serde_json::to_value(&state).expect("serialize state");
-    assert!(serialized.get("pinned_message_target_revision").is_none());
+    assert_eq!(state.pinned_message_pts.len(), 2_000);
+
+    state.reduce(&CoreEvent::ChatsLoaded(vec![ChatSummary {
+        id: 2_000,
+        title: "recent chat".into(),
+        unread_count: 0,
+        archived: None,
+        muted: None,
+        pinned: None,
+        is_unread: None,
+        last_message: None,
+    }]));
+
+    assert_eq!(state.pinned_message_pts.keys().copied().collect::<Vec<_>>(), vec![2_000]);
+    assert_eq!(state.pinned_message_revision.keys().copied().collect::<Vec<_>>(), vec![2_000]);
+    assert_eq!(state.pinned_messages.keys().copied().collect::<Vec<_>>(), vec![2_000]);
 }

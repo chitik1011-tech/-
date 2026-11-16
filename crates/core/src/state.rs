@@ -273,6 +273,17 @@ impl CoreState {
             }
             CoreEvent::ChatsLoaded(chats) => {
                 self.account.chats = chats.clone();
+                // The backend loads a bounded recent-dialog window. Drop pinned
+                // bookkeeping for chats outside that cache so old conversations do
+                // not leave pts/revision entries behind indefinitely. Active chats
+                // remain covered by the same snapshot guards.
+                let cached_chat_ids = chats.iter().map(|chat| chat.id).collect::<BTreeSet<_>>();
+                self.pinned_messages
+                    .retain(|chat_id, _| cached_chat_ids.contains(chat_id));
+                self.pinned_message_pts
+                    .retain(|chat_id, _| cached_chat_ids.contains(chat_id));
+                self.pinned_message_revision
+                    .retain(|chat_id, _| cached_chat_ids.contains(chat_id));
                 if self.connection_machine.phase() == LinkPhase::Synchronizing {
                     let token = self.connection_machine.token();
                     if matches!(
