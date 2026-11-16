@@ -1,6 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
-use grammers_client::{Client, session::types::PeerRef, tl};
+use grammers_client::{Client, session::types::{PeerKind, PeerRef}, tl};
+use tg_mobile_core::model::ChatKind;
 use tg_mobile_core::{ChatCapabilities, ChatSummary};
 use tokio::sync::RwLock;
 
@@ -44,7 +45,13 @@ pub(crate) async fn load_chats(
         remember_peer(registry, chat_id, dialog.peer_ref()).await;
         capabilities.push(from_peer(dialog.peer(), chat_id));
 
+        let kind = match dialog.peer_id().kind() {
+            PeerKind::User => ChatKind::Private,
+            PeerKind::Chat => ChatKind::Group,
+            PeerKind::Channel => ChatKind::Channel,
+        };
         result.push(ChatSummary {
+            kind: Some(kind),
             id: chat_id,
             title: dialog.peer().name().unwrap_or_default().to_owned(),
             unread_count: unread_count(&dialog.raw),
