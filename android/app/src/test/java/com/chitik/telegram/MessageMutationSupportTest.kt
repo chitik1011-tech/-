@@ -16,6 +16,10 @@ class MessageMutationSupportTest {
         assertTrue(matchesMutationTarget(10, 42, 10, 42))
         assertFalse(matchesMutationTarget(10, 42, 11, 42))
         assertFalse(matchesMutationTarget(10, 42, 10, 43))
+        assertFalse(mutationEventAcknowledges("message_edited", 10, 42, 10, 42))
+        assertFalse(mutationEventAcknowledges("messages_deleted", 10, 42, 10, 42))
+        assertTrue(mutationEventAcknowledges("message_mutation_succeeded", 10, 42, 10, 42))
+        assertFalse(mutationEventAcknowledges("message_mutation_succeeded", 10, 42, 10, 43))
     }
 
     private fun message(text: String) = ConversationMessageUi(
