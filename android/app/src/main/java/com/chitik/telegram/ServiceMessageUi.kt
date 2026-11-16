@@ -22,7 +22,7 @@ sealed interface ServiceActionUi {
 
 internal fun parseServiceAction(message: JSONObject): ServiceActionUi? {
     if (!message.has("service") || message.isNull("service")) {
-        return if (message.optBoolean("service_message")) ServiceActionUi.Unknown else null
+        return legacyServiceAction(message.optBoolean("service_message"))
     }
     val service = message.optJSONObject("service")
         ?: return ServiceActionUi.Unknown
@@ -36,26 +36,55 @@ internal fun parseServiceAction(message: JSONObject): ServiceActionUi? {
             }
         }
     }
-    return when (action.optString("type")) {
+    val type = action.optString("type").takeIf { action.has("type") && it.isNotBlank() }
+    return mapServiceAction(
+        type = type,
+        userId = nullableLong(action, "user_id"),
+        inviterId = nullableLong(action, "inviter_id"),
+        userIds = ids("user_ids"),
+        title = action.optString("title"),
+        photoId = nullableLong(action, "photo_id"),
+        messageId = nullableLong(action, "message_id"),
+        supergroupId = action.optLong("supergroup_id"),
+        groupId = action.optLong("group_id"),
+    )
+}
+
+private fun nullableLong(action: JSONObject, key: String): Long? =
+    action.optLong(key).takeIf { action.has(key) && !action.isNull(key) }
+
+internal fun legacyServiceAction(isServiceMessage: Boolean): ServiceActionUi? =
+    if (isServiceMessage) ServiceActionUi.Unknown else null
+
+internal fun mapServiceAction(
+    type: String?,
+    userId: Long? = null,
+    inviterId: Long? = null,
+    userIds: List<Long> = emptyList(),
+    title: String = "",
+    photoId: Long? = null,
+    messageId: Long? = null,
+    supergroupId: Long = 0,
+    groupId: Long = 0,
+): ServiceActionUi = when (type) {
         "user_joined" -> ServiceActionUi.UserJoined(
-            action.optLong("user_id").takeIf { action.has("user_id") && !action.isNull("user_id") },
-            action.optLong("inviter_id").takeIf { action.has("inviter_id") && !action.isNull("inviter_id") },
+            userId,
+            inviterId,
         )
-        "user_left" -> ServiceActionUi.UserLeft(action.optLong("user_id"))
-        "user_removed" -> ServiceActionUi.UserRemoved(action.optLong("user_id"))
-        "user_added" -> ServiceActionUi.UserAdded(ids("user_ids"))
-        "title_changed" -> ServiceActionUi.TitleChanged(action.optString("title"))
-        "photo_changed" -> ServiceActionUi.PhotoChanged(action.optLong("photo_id").takeIf { action.has("photo_id") && !action.isNull("photo_id") })
+        "user_left" -> ServiceActionUi.UserLeft(userId ?: 0L)
+        "user_removed" -> ServiceActionUi.UserRemoved(userId ?: 0L)
+        "user_added" -> ServiceActionUi.UserAdded(userIds)
+        "title_changed" -> ServiceActionUi.TitleChanged(title)
+        "photo_changed" -> ServiceActionUi.PhotoChanged(photoId)
         "photo_removed" -> ServiceActionUi.PhotoRemoved
-        "message_pinned" -> ServiceActionUi.MessagePinned(action.optLong("message_id").takeIf { action.has("message_id") && !action.isNull("message_id") })
-        "group_created" -> ServiceActionUi.GroupCreated(action.optString("title"), ids("user_ids"))
-        "channel_created" -> ServiceActionUi.ChannelCreated(action.optString("title"))
-        "group_migrated_to_supergroup" -> ServiceActionUi.GroupMigrated(action.optLong("supergroup_id"))
-        "channel_migrated_from_group" -> ServiceActionUi.ChannelMigrated(action.optLong("group_id"), action.optString("title"))
+        "message_pinned" -> ServiceActionUi.MessagePinned(messageId)
+        "group_created" -> ServiceActionUi.GroupCreated(title, userIds)
+        "channel_created" -> ServiceActionUi.ChannelCreated(title)
+        "group_migrated_to_supergroup" -> ServiceActionUi.GroupMigrated(supergroupId)
+        "channel_migrated_from_group" -> ServiceActionUi.ChannelMigrated(groupId, title)
         "history_cleared" -> ServiceActionUi.HistoryCleared
         else -> ServiceActionUi.Unknown
     }
-}
 
 internal fun ServiceActionUi.displayText(): String = when (this) {
     is ServiceActionUi.UserJoined -> userId?.let { "Пользователь $it присоединился к группе" } ?: "Пользователь присоединился к группе"
