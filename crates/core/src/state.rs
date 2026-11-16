@@ -89,6 +89,14 @@ impl Default for CoreState {
 }
 
 impl CoreState {
+    /// Clone the live state for persistence, omitting session-only contacts.
+    /// Contact fields remain available in the live JNI state.
+    pub fn persistence_snapshot(&self) -> Self {
+        let mut snapshot = self.clone();
+        snapshot.contacts = ContactBook::default();
+        snapshot
+    }
+
     /// Validate persisted or externally constructed state invariants.
     pub fn validate(&self) -> crate::error::Result<()> {
         use crate::error::CoreError;

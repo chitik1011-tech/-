@@ -68,7 +68,7 @@ fn refreshed_contact_pages_reduce_to_canonical_jni_state_without_phone_fields() 
 }
 
 #[tokio::test]
-async fn contact_snapshot_survives_state_persistence() {
+async fn contact_snapshot_is_live_but_omitted_from_persistence() {
     let path = std::env::temp_dir().join(format!("tg-mobile-contacts-{}.json", std::process::id()));
     let _ = std::fs::remove_file(&path);
     let store = JsonFileStateStore::new(&path);
@@ -78,8 +78,12 @@ async fn contact_snapshot_survives_state_persistence() {
         total: 1,
         contacts: vec![contact(123, "Linus Torvalds")],
     });
+    assert!(tg_mobile_core::encode_state(&state).unwrap().contains("Linus Torvalds"));
     store.save(&state).await.unwrap();
+    let persisted = std::fs::read_to_string(&path).unwrap();
+    assert!(!persisted.contains("Linus Torvalds"));
+    assert!(!persisted.contains("avatar_photo_id"));
     let restored = store.load().await.unwrap().unwrap();
-    assert_eq!(restored.contacts.get(123), state.contacts.get(123));
+    assert!(restored.contacts.is_empty());
     let _ = std::fs::remove_file(path);
 }
