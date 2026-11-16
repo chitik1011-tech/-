@@ -101,6 +101,11 @@ pub enum CoreCommand {
         /// Runtime-assigned monotonically increasing upload attempt generation.
         #[serde(default)]
         transfer_generation: u64,
+        /// Connection token attached by the core runtime to reject stale callbacks.
+        #[serde(default)]
+        session_generation: u64,
+        #[serde(default)]
+        session_epoch: u64,
     },
     /// Cancel an active outgoing upload while retaining its retryable outbox entry.
     CancelMediaSend {
