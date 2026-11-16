@@ -16,6 +16,7 @@ pub mod runtime;
 pub mod search;
 pub mod selection;
 pub mod send;
+pub mod service_message;
 pub mod state;
 pub mod storage;
 pub mod transfer;
@@ -56,6 +57,9 @@ pub use search::{
 };
 pub use selection::{MessageSelection, SelectionAction, SelectionCapabilities, SelectionError};
 pub use send::{ClientMessageId, OutgoingSend, OutgoingSendState};
+pub use service_message::{
+    ServiceAction, ServiceIcon, ServiceMessage, ServicePresentation, ServiceTone,
+};
 pub use state::{CoreState, FolderAction, MAX_CACHED_MESSAGES_PER_CHAT, MAX_CACHED_POLLS};
 pub use storage::{JsonFileStateStore, MemoryStateStore, NoopStateStore, StateStore};
 pub use transfer::{

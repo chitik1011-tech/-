@@ -96,6 +96,7 @@ fn empty_attachment_list_keeps_old_message_wire_shape() {
         edited: false,
         edit_timestamp_unix: None,
         service_message: false,
+        service: None,
         media_caption: None,
         reply_to: None,
     };

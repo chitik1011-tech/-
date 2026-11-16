@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use crate::service_message::ServiceMessage;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
@@ -83,6 +84,10 @@ pub struct MessageSummary {
     /// Whether this message represents a Telegram service action.
     #[serde(default, skip_serializing_if = "is_false")]
     pub service_message: bool,
+    /// Typed Telegram action metadata. New consumers should use this field; the
+    /// boolean above remains for compatibility with older persisted state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service: Option<ServiceMessage>,
     /// Caption attached to media, kept separate from ordinary message text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub media_caption: Option<String>,

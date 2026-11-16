@@ -49,6 +49,7 @@ fn message_metadata_round_trips_with_media_compatible_defaults() {
         edited: true,
         edit_timestamp_unix: Some(210),
         service_message: true,
+        service: None,
         media_caption: Some("photo caption".into()),
         reply_to: Some(ReplyMetadata {
             message_id: 8,

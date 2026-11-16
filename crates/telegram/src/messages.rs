@@ -10,7 +10,7 @@ use grammers_client::{
 };
 use tg_mobile_core::{
     AttachmentDownloadState, AttachmentKind, AttachmentThumbnail, CoreError, ForwardedFrom,
-    MediaAttachment, MessageSummary, PollSummary, ReplyMetadata,
+    MediaAttachment, MessageSummary, PollSummary, ReplyMetadata, ServiceAction, ServiceMessage,
 };
 use tokio::sync::Mutex;
 
@@ -60,6 +60,13 @@ pub(crate) fn message_to_summary(message: &Message) -> MessageSummary {
     summary.edited = edit_timestamp_unix.is_some();
     summary.edit_timestamp_unix = edit_timestamp_unix;
     summary.service_message = message.action().is_some();
+    summary.service = message.action().map(|action| {
+        service_action_to_message(
+            action,
+            summary.sender_id,
+            message.reply_to_message_id().map(i64::from),
+        )
+    });
     summary.media_caption =
         (message.media().is_some() && !text.is_empty()).then(|| text.to_owned());
     summary.reply_to = message
@@ -72,6 +79,69 @@ pub(crate) fn message_to_summary(message: &Message) -> MessageSummary {
         });
 
     summary
+}
+
+fn service_action_to_message(
+    action: &tl::enums::MessageAction,
+    actor_id: i64,
+    pinned_message_id: Option<i64>,
+) -> ServiceMessage {
+    use tl::enums::MessageAction as Action;
+
+    let action = match action {
+        Action::ChatCreate(value) => ServiceAction::GroupCreated {
+            title: value.title.clone(),
+            user_ids: value.users.clone(),
+        },
+        Action::ChatEditTitle(value) => ServiceAction::TitleChanged {
+            title: value.title.clone(),
+        },
+        Action::ChatEditPhoto(value) => ServiceAction::PhotoChanged {
+            photo_id: Some(Photo::from_raw(value.photo.clone()).id()),
+        },
+        Action::ChatDeletePhoto => ServiceAction::PhotoRemoved,
+        Action::ChatAddUser(value)
+            if value.users.len() == 1 && value.users.first().copied() == Some(actor_id) =>
+        {
+            ServiceAction::UserJoined {
+                user_id: value.users.first().copied(),
+                inviter_id: None,
+            }
+        }
+        Action::ChatAddUser(value) => ServiceAction::UserAdded {
+            user_ids: value.users.clone(),
+        },
+        Action::ChatDeleteUser(value) if value.user_id == actor_id => ServiceAction::UserLeft {
+            user_id: value.user_id,
+        },
+        Action::ChatDeleteUser(value) => ServiceAction::UserRemoved {
+            user_id: value.user_id,
+        },
+        Action::ChatJoinedByLink(value) => ServiceAction::UserJoined {
+            user_id: (actor_id != 0).then_some(actor_id),
+            inviter_id: Some(value.inviter_id),
+        },
+        Action::ChatJoinedByRequest => ServiceAction::UserJoined {
+            user_id: (actor_id != 0).then_some(actor_id),
+            inviter_id: None,
+        },
+        Action::ChannelCreate(value) => ServiceAction::ChannelCreated {
+            title: value.title.clone(),
+        },
+        Action::ChatMigrateTo(value) => ServiceAction::GroupMigratedToSupergroup {
+            supergroup_id: value.channel_id,
+        },
+        Action::ChannelMigrateFrom(value) => ServiceAction::ChannelMigratedFromGroup {
+            group_id: value.chat_id,
+            title: value.title.clone(),
+        },
+        Action::PinMessage => ServiceAction::MessagePinned {
+            message_id: pinned_message_id,
+        },
+        Action::HistoryClear => ServiceAction::HistoryCleared,
+        _ => ServiceAction::Unknown,
+    };
+    ServiceMessage::new(action, (actor_id != 0).then_some(actor_id))
 }
 
 fn media_to_attachment(media: Media) -> Option<MediaAttachment> {
@@ -227,6 +297,7 @@ fn message_summary_from_fields(fields: MessageFields<'_>) -> MessageSummary {
         edited: false,
         edit_timestamp_unix: None,
         service_message: false,
+        service: None,
         media_caption: None,
         reply_to: None,
     }
@@ -690,8 +761,9 @@ impl MessageDeduplicator {
 mod tests {
     use super::{
         MessageDeduplicator, MessageFields, finalize_message_page, finalize_search_page,
-        message_summary_from_fields,
+        message_summary_from_fields, service_action_to_message,
     };
+    use tg_mobile_core::ServiceAction;
 
     #[test]
     fn maps_message_fields_without_losing_identifiers() {
@@ -710,6 +782,171 @@ mod tests {
         assert_eq!(summary.text, "hello");
         assert_eq!(summary.timestamp_unix, 1_700_000_000);
         assert!(summary.outgoing);
+    }
+
+    #[test]
+    fn maps_telegram_service_actions_to_typed_events() {
+        use grammers_client::tl;
+
+        let joined = service_action_to_message(
+            &tl::enums::MessageAction::ChatJoinedByLink(tl::types::MessageActionChatJoinedByLink {
+                inviter_id: 31,
+            }),
+            41,
+            None,
+        );
+        assert_eq!(
+            joined.action,
+            ServiceAction::UserJoined {
+                user_id: Some(41),
+                inviter_id: Some(31)
+            }
+        );
+        assert_eq!(joined.actor_id, Some(41));
+
+        let added = service_action_to_message(
+            &tl::enums::MessageAction::ChatAddUser(tl::types::MessageActionChatAddUser {
+                users: vec![41, 42],
+            }),
+            31,
+            None,
+        );
+        assert_eq!(
+            added.action,
+            ServiceAction::UserAdded {
+                user_ids: vec![41, 42]
+            }
+        );
+        let joined_by_add = service_action_to_message(
+            &tl::enums::MessageAction::ChatAddUser(tl::types::MessageActionChatAddUser {
+                users: vec![41],
+            }),
+            41,
+            None,
+        );
+        assert_eq!(
+            joined_by_add.action,
+            ServiceAction::UserJoined {
+                user_id: Some(41),
+                inviter_id: None
+            }
+        );
+
+        let left = service_action_to_message(
+            &tl::enums::MessageAction::ChatDeleteUser(tl::types::MessageActionChatDeleteUser {
+                user_id: 31,
+            }),
+            31,
+            None,
+        );
+        assert_eq!(left.action, ServiceAction::UserLeft { user_id: 31 });
+        let removed = service_action_to_message(
+            &tl::enums::MessageAction::ChatDeleteUser(tl::types::MessageActionChatDeleteUser {
+                user_id: 31,
+            }),
+            41,
+            None,
+        );
+        assert_eq!(removed.action, ServiceAction::UserRemoved { user_id: 31 });
+
+        let pinned = service_action_to_message(&tl::enums::MessageAction::PinMessage, 41, Some(73));
+        assert_eq!(
+            pinned.action,
+            ServiceAction::MessagePinned {
+                message_id: Some(73)
+            }
+        );
+        let cleared = service_action_to_message(&tl::enums::MessageAction::HistoryClear, 41, None);
+        assert_eq!(cleared.action, ServiceAction::HistoryCleared);
+
+        let migrated = service_action_to_message(
+            &tl::enums::MessageAction::ChatMigrateTo(tl::types::MessageActionChatMigrateTo {
+                channel_id: -100,
+            }),
+            41,
+            None,
+        );
+        assert_eq!(
+            migrated.action,
+            ServiceAction::GroupMigratedToSupergroup {
+                supergroup_id: -100
+            }
+        );
+        let created = service_action_to_message(
+            &tl::enums::MessageAction::ChatCreate(tl::types::MessageActionChatCreate {
+                title: "Team".into(),
+                users: vec![41, 42],
+            }),
+            41,
+            None,
+        );
+        assert_eq!(
+            created.action,
+            ServiceAction::GroupCreated {
+                title: "Team".into(),
+                user_ids: vec![41, 42]
+            }
+        );
+
+        let title = service_action_to_message(
+            &tl::enums::MessageAction::ChatEditTitle(tl::types::MessageActionChatEditTitle {
+                title: "Renamed".into(),
+            }),
+            41,
+            None,
+        );
+        assert_eq!(
+            title.action,
+            ServiceAction::TitleChanged {
+                title: "Renamed".into()
+            }
+        );
+
+        let photo = service_action_to_message(
+            &tl::enums::MessageAction::ChatEditPhoto(tl::types::MessageActionChatEditPhoto {
+                photo: tl::enums::Photo::Empty(tl::types::PhotoEmpty { id: 99 }),
+            }),
+            41,
+            None,
+        );
+        assert_eq!(
+            photo.action,
+            ServiceAction::PhotoChanged { photo_id: Some(99) }
+        );
+        let removed_photo =
+            service_action_to_message(&tl::enums::MessageAction::ChatDeletePhoto, 41, None);
+        assert_eq!(removed_photo.action, ServiceAction::PhotoRemoved);
+
+        let channel = service_action_to_message(
+            &tl::enums::MessageAction::ChannelCreate(tl::types::MessageActionChannelCreate {
+                title: "Updates".into(),
+            }),
+            41,
+            None,
+        );
+        assert_eq!(
+            channel.action,
+            ServiceAction::ChannelCreated {
+                title: "Updates".into()
+            }
+        );
+        let channel_from_group = service_action_to_message(
+            &tl::enums::MessageAction::ChannelMigrateFrom(
+                tl::types::MessageActionChannelMigrateFrom {
+                    title: "Updates".into(),
+                    chat_id: 17,
+                },
+            ),
+            41,
+            None,
+        );
+        assert_eq!(
+            channel_from_group.action,
+            ServiceAction::ChannelMigratedFromGroup {
+                group_id: 17,
+                title: "Updates".into()
+            }
+        );
     }
 
     #[test]
