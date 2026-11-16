@@ -3,12 +3,14 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    capabilities::ChatCapabilities,
     connection::ConnectionState,
     connection_machine::{ConnectionMachine, LinkEvent, LinkPhase, Outcome},
+    contacts::ContactBook,
     event::CoreEvent,
     model::{
         AccountState, AttachmentDownloadState, ChatFolder, ChatSummary, Draft, MessageHistoryState,
-        MessageSummary, ReadDirection, ReadReceipt,
+        MessageSummary, PeerProfile, ReadDirection, ReadReceipt,
     },
     poll::PollSummary,
     search::MessageSearchState,
@@ -17,11 +19,18 @@ use crate::{
 
 pub const MAX_CACHED_MESSAGES_PER_CHAT: usize = 512;
 pub const MAX_CACHED_POLLS: usize = 512;
+pub const MAX_CACHED_PROFILES: usize = 128;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CoreState {
     pub running: bool,
     pub account: AccountState,
+    /// Server-provided contact names and stable IDs; phone numbers are never stored here.
+    #[serde(default)]
+    pub contacts: ContactBook,
+    /// Session-scoped permissions reported by Telegram, keyed by stable chat ID.
+    #[serde(default)]
+    pub chat_capabilities: BTreeMap<i64, ChatCapabilities>,
     /// Current Telegram transport state. Older persisted snapshots default to disconnected.
     #[serde(default)]
     pub connection_state: ConnectionState,
@@ -29,6 +38,11 @@ pub struct CoreState {
     #[serde(default)]
     pub connection_machine: ConnectionMachine,
     pub messages: BTreeMap<i64, Vec<MessageSummary>>,
+    #[serde(default)]
+    pub profiles: BTreeMap<i64, PeerProfile>,
+    /// FIFO order for the bounded, in-memory profile cache.
+    #[serde(default)]
+    pub profile_order: VecDeque<i64>,
     /// Telegram's monotonic per-chat inbox and outbox read boundaries.
     #[serde(default)]
     pub read_receipts: BTreeMap<i64, ReadReceipt>,
@@ -66,9 +80,13 @@ impl Default for CoreState {
         Self {
             running: true,
             account: AccountState::default(),
+            contacts: ContactBook::default(),
+            chat_capabilities: BTreeMap::new(),
             connection_state: ConnectionState::Disconnected,
             connection_machine: ConnectionMachine::default(),
             messages: BTreeMap::new(),
+            profiles: BTreeMap::new(),
+            profile_order: VecDeque::new(),
             read_receipts: BTreeMap::new(),
             message_history: BTreeMap::new(),
             message_search: MessageSearchState::default(),
@@ -84,6 +102,20 @@ impl Default for CoreState {
 }
 
 impl CoreState {
+    /// Clone live state for persistence, omitting session-only contact and
+    /// capability data and transient personal profile data.
+    pub fn persistence_snapshot(&self) -> Self {
+        let mut snapshot = self.clone();
+        snapshot.contacts = ContactBook::default();
+        snapshot.profiles.clear();
+        snapshot.profile_order.clear();
+        snapshot.chat_capabilities.clear();
+        snapshot
+    }
+
+    pub fn profile(&self, peer_id: i64) -> Option<&PeerProfile> {
+        self.profiles.get(&peer_id)
+    }
     /// Validate persisted or externally constructed state invariants.
     pub fn validate(&self) -> crate::error::Result<()> {
         use crate::error::CoreError;
@@ -135,6 +167,16 @@ impl CoreState {
                 ));
             }
             draft.validate()?;
+        }
+        for (chat_id, capabilities) in &self.chat_capabilities {
+            if *chat_id != capabilities.chat_id {
+                return Err(CoreError::InvalidInput(
+                    "chat capability map key must match capability chat id".into(),
+                ));
+            }
+            capabilities
+                .validate()
+                .map_err(|message| CoreError::InvalidInput(message.into()))?;
         }
         Ok(())
     }
@@ -205,6 +247,19 @@ impl CoreState {
 
     pub fn reduce(&mut self, event: &CoreEvent) {
         match event {
+            CoreEvent::ProfileUpdated(profile) => {
+                let peer_id = profile.peer_id;
+                if !self.profiles.contains_key(&peer_id) {
+                    self.profile_order.push_back(peer_id);
+                }
+                self.profiles.insert(profile.peer_id, profile.clone());
+                while self.profile_order.len() > MAX_CACHED_PROFILES {
+                    if let Some(evicted) = self.profile_order.pop_front() {
+                        self.profiles.remove(&evicted);
+                    }
+                }
+                self.last_error = None;
+            }
             CoreEvent::State(account) => {
                 self.account = account.clone();
                 self.last_error = None;
@@ -216,6 +271,7 @@ impl CoreState {
             CoreEvent::ConnectionSessionStarted => {
                 self.connection_machine.start_session();
                 self.connection_state = self.connection_machine.transport_state();
+                self.chat_capabilities.clear();
             }
             CoreEvent::ConnectionLifecycle { token, event } => {
                 if matches!(
@@ -223,6 +279,12 @@ impl CoreState {
                     Ok(Outcome::Changed { .. })
                 ) {
                     self.connection_state = self.connection_machine.transport_state();
+                    if matches!(
+                        *event,
+                        LinkEvent::TransportLost | LinkEvent::Logout | LinkEvent::Shutdown
+                    ) {
+                        self.chat_capabilities.clear();
+                    }
                 }
             }
             CoreEvent::SessionUpdate { token, event } => {
@@ -235,6 +297,9 @@ impl CoreState {
             }
             CoreEvent::ChatsLoaded(chats) => {
                 self.account.chats = chats.clone();
+                let chat_ids = chats.iter().map(|chat| chat.id).collect::<BTreeSet<_>>();
+                self.chat_capabilities
+                    .retain(|chat_id, _| chat_ids.contains(chat_id));
                 if self.connection_machine.phase() == LinkPhase::Synchronizing {
                     let token = self.connection_machine.token();
                     if matches!(
@@ -247,6 +312,19 @@ impl CoreState {
                 }
                 self.last_error = None;
             }
+            CoreEvent::ChatCapabilitiesUpdated(capabilities) => {
+                if capabilities.validate().is_ok() {
+                    self.chat_capabilities
+                        .insert(capabilities.chat_id, capabilities.clone());
+                }
+            }
+            CoreEvent::ContactsLoaded {
+                offset, contacts, ..
+            } => {
+                self.contacts.apply_page(*offset, contacts);
+                self.last_error = None;
+            }
+            CoreEvent::ContactsRefreshRequested => {}
             CoreEvent::MessagesLoaded { chat_id, messages } => {
                 self.merge_messages(*chat_id, messages);
                 self.last_error = None;
@@ -377,6 +455,14 @@ impl CoreState {
                     .fail(*request_id, *chat_id, query, *before_message_id, error);
             }
             CoreEvent::MessageAdded(message) => {
+                let mut message = message.clone();
+                if let Some(existing) = self
+                    .messages
+                    .get(&message.chat_id)
+                    .and_then(|messages| messages.iter().find(|cached| cached.id == message.id))
+                {
+                    preserve_reaction_snapshot(existing, &mut message);
+                }
                 let inserted = self.upsert_message(message.clone());
 
                 if let Some(chat) = self
@@ -421,6 +507,8 @@ impl CoreState {
                     }
                 });
             }
+            CoreEvent::MessageMutationSucceeded { .. }
+            | CoreEvent::MessageMutationFailed { .. } => {}
             CoreEvent::MessageEdited(message) => {
                 if self.apply_message_edit(message) {
                     self.last_error = None;
@@ -503,6 +591,18 @@ impl CoreState {
             CoreEvent::PollVoteFailed { error, .. } => {
                 self.last_error = Some(error.clone());
             }
+            CoreEvent::MessageReactionsUpdated {
+                chat_id,
+                message_id,
+                reactions,
+                revision,
+            } => match self.apply_message_reactions(*chat_id, *message_id, reactions, *revision) {
+                Ok(true) => self.last_error = None,
+                Ok(false) => {}
+                Err(error) => self.last_error = Some(error),
+            },
+            CoreEvent::ReactionOperationSucceeded { .. } => {}
+            CoreEvent::ReactionOperationFailed { .. } => {}
             CoreEvent::MessagesForwarded(result) => {
                 self.last_error = result.outcomes.iter().find_map(|outcome| match outcome {
                     crate::forwarding::ForwardOutcome::Failed { error, .. } => Some(error.clone()),
@@ -635,7 +735,9 @@ impl CoreState {
         for message in messages.iter().filter(|message| message.chat_id == chat_id) {
             page_ids.insert(message.id);
             if let Some(index) = cache.iter().position(|cached| cached.id == message.id) {
-                cache[index] = message.clone();
+                let mut merged = message.clone();
+                preserve_reaction_snapshot(&cache[index], &mut merged);
+                cache[index] = merged;
             } else {
                 cache.push(message.clone());
             }
@@ -711,6 +813,9 @@ impl CoreState {
             return false;
         }
 
+        let mut incoming = incoming.clone();
+        preserve_reaction_snapshot(current, &mut incoming);
+
         let mut updated = false;
         if let Some(messages) = self.messages.get_mut(&incoming.chat_id) {
             if let Some(existing) = messages.iter_mut().find(|item| item.id == incoming.id) {
@@ -758,7 +863,6 @@ impl CoreState {
                 }
             }
         }
-
         if let Some(chat) = self
             .account
             .chats
@@ -780,6 +884,72 @@ impl CoreState {
             }
         }
         updated
+    }
+
+    fn apply_message_reactions(
+        &mut self,
+        chat_id: i64,
+        message_id: i64,
+        reactions: &[crate::model::MessageReaction],
+        revision: crate::model::ReactionRevision,
+    ) -> std::result::Result<bool, String> {
+        let mut seen = BTreeSet::new();
+        for item in reactions {
+            item.reaction
+                .validate()
+                .map_err(|error| error.to_string())?;
+            if !seen.insert(item.reaction.clone()) {
+                return Err("reaction snapshot contains duplicate reaction identities".into());
+            }
+        }
+
+        let cached = self
+            .messages
+            .get(&chat_id)
+            .and_then(|messages| messages.iter().find(|message| message.id == message_id))
+            .map(|message| (message.reaction_revision, message.reactions.clone()));
+        let preview = self
+            .chat(chat_id)
+            .and_then(|chat| chat.last_message.as_ref())
+            .filter(|message| message.id == message_id)
+            .map(|message| (message.reaction_revision, message.reactions.clone()));
+        let current_revision = cached
+            .as_ref()
+            .map(|item| item.0)
+            .into_iter()
+            .chain(preview.as_ref().map(|item| item.0))
+            .flatten()
+            .max();
+
+        if current_revision.is_some_and(|current| revision <= current) {
+            return Ok(false);
+        }
+
+        let mut updated = false;
+        if let Some(messages) = self.messages.get_mut(&chat_id) {
+            if let Some(message) = messages.iter_mut().find(|message| message.id == message_id) {
+                message.reactions = reactions.to_vec();
+                message.reaction_revision = Some(revision);
+                updated = true;
+            }
+        }
+        if let Some(chat) = self
+            .account
+            .chats
+            .iter_mut()
+            .find(|chat| chat.id == chat_id)
+        {
+            if let Some(message) = chat
+                .last_message
+                .as_mut()
+                .filter(|message| message.id == message_id)
+            {
+                message.reactions = reactions.to_vec();
+                message.reaction_revision = Some(revision);
+                updated = true;
+            }
+        }
+        Ok(updated)
     }
 
     fn delete_cached_messages(&mut self, chat_id: i64, deleted: &BTreeSet<i64>) -> bool {
@@ -889,7 +1059,9 @@ impl CoreState {
     fn upsert_message(&mut self, message: MessageSummary) -> bool {
         let messages = self.messages.entry(message.chat_id).or_default();
         let inserted = if let Some(index) = messages.iter().position(|item| item.id == message.id) {
-            messages[index] = message;
+            let mut merged = message;
+            preserve_reaction_snapshot(&messages[index], &mut merged);
+            messages[index] = merged;
             false
         } else {
             messages.push(message);
@@ -951,6 +1123,18 @@ fn accept_media_transfer_update(
     current != incoming
 }
 
+fn preserve_reaction_snapshot(existing: &MessageSummary, incoming: &mut MessageSummary) {
+    let keep_existing = match (existing.reaction_revision, incoming.reaction_revision) {
+        (Some(current), Some(candidate)) => candidate <= current,
+        (Some(_), None) => true,
+        _ => false,
+    };
+    if keep_existing {
+        incoming.reactions.clone_from(&existing.reactions);
+        incoming.reaction_revision = existing.reaction_revision;
+    }
+}
+
 #[cfg(test)]
 mod message_ordering_tests {
     use super::*;
@@ -976,13 +1160,17 @@ mod message_ordering_tests {
             text: format!("message {id}"),
             timestamp_unix,
             outgoing,
+            location: None,
             attachments: vec![],
             forwarded_from: None,
             edited: false,
             edit_timestamp_unix: None,
             service_message: false,
+            service: None,
             media_caption: None,
             reply_to: None,
+            reactions: Vec::new(),
+            reaction_revision: None,
         }
     }
 

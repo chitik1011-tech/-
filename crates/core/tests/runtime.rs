@@ -39,13 +39,18 @@ fn reducer_deduplicates_message_updates() {
         text: "draft".into(),
         timestamp_unix: 100,
         outgoing: true,
+        location: None,
         attachments: Vec::new(),
         forwarded_from: None,
         edited: false,
         edit_timestamp_unix: None,
         service_message: false,
+        service: None,
         media_caption: None,
         reply_to: None,
+
+        reactions: Vec::new(),
+        reaction_revision: None,
     };
 
     state.reduce(&CoreEvent::MessageAdded(original.clone()));
@@ -204,11 +209,14 @@ async fn mock_backend_can_authorize_load_chats_and_send() {
     .await
     .unwrap();
 
-    assert!(matches!(
-        timeout(Duration::from_secs(1), events.recv())
-            .await
-            .unwrap()
-            .unwrap(),
-        CoreEvent::MessageAdded(message) if message.text == "hello from rust"
-    ));
+    timeout(Duration::from_secs(1), async {
+        loop {
+            if let CoreEvent::MessageAdded(message) = events.recv().await.unwrap() {
+                assert_eq!(message.text, "hello from rust");
+                break;
+            }
+        }
+    })
+    .await
+    .expect("mock send did not emit a message");
 }

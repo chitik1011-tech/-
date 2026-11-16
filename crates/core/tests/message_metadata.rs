@@ -38,6 +38,7 @@ fn message_metadata_round_trips_with_media_compatible_defaults() {
         text: "forwarded reply".into(),
         timestamp_unix: 200,
         outgoing: false,
+        location: None,
         attachments: Vec::new(),
         forwarded_from: Some(ForwardedFrom {
             sender_id: Some(12),
@@ -49,6 +50,7 @@ fn message_metadata_round_trips_with_media_compatible_defaults() {
         edited: true,
         edit_timestamp_unix: Some(210),
         service_message: true,
+        service: None,
         media_caption: Some("photo caption".into()),
         reply_to: Some(ReplyMetadata {
             message_id: 8,
@@ -56,6 +58,9 @@ fn message_metadata_round_trips_with_media_compatible_defaults() {
             sender_id: Some(10),
             sender_display_name: Some("Reply target".into()),
         }),
+
+        reactions: Vec::new(),
+        reaction_revision: None,
     };
 
     let encoded = serde_json::to_string(&message).expect("message should serialize");

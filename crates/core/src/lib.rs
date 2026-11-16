@@ -2,9 +2,11 @@
 
 pub mod activity;
 pub mod backend;
+pub mod capabilities;
 pub mod command;
 pub mod connection;
 pub mod connection_machine;
+pub mod contacts;
 pub mod error;
 pub mod event;
 pub mod forwarding;
@@ -16,6 +18,7 @@ pub mod runtime;
 pub mod search;
 pub mod selection;
 pub mod send;
+pub mod service_message;
 pub mod state;
 pub mod storage;
 pub mod transfer;
@@ -26,23 +29,29 @@ pub use backend::{
     backend_update_channel, BackendFuture, BackendUpdateReceiver, BackendUpdateSender,
     TelegramBackend, DEFAULT_BACKEND_UPDATE_CAPACITY,
 };
-pub use command::{CoreCommand, MAX_CHAT_LOAD_LIMIT, MAX_MESSAGE_LOAD_LIMIT};
+pub use capabilities::{CapabilityValue, ChatAction, ChatCapabilities, ChatKind};
+pub use command::{
+    CoreCommand, MAX_CHAT_LOAD_LIMIT, MAX_EDIT_MESSAGE_TEXT_BYTES, MAX_MESSAGE_LOAD_LIMIT,
+    MAX_REACTION_BYTES,
+};
 pub use connection::ConnectionState;
 pub use connection_machine::{
     ConnectionEpoch, ConnectionMachine, ConnectionToken, LinkError, LinkEvent, LinkPhase,
     Outcome as ConnectionOutcome, SessionGeneration,
 };
+pub use contacts::{Contact, ContactBook, MAX_CONTACT_PAGE_LIMIT};
 pub use error::{CoreError, Result};
-pub use event::CoreEvent;
+pub use event::{CoreEvent, MessageMutationAction};
 pub use forwarding::{
     ForwardMessagesRequest, ForwardMessagesResult, ForwardOutcome, MAX_FORWARD_MESSAGES,
 };
 pub use mock::MockTelegramBackend;
 pub use model::{
     AccountState, AttachmentDownloadState, AttachmentKind, AttachmentThumbnail, AuthorizationState,
-    ChatActivityKind, ChatFolder, ChatFolderFacts, ChatSummary, Draft, ForwardedFrom,
-    MediaAttachment, MessageHistoryState, MessageSummary, ReadDirection, ReadReceipt,
-    ReplyMetadata,
+    AvatarReference, ChatActivityKind, ChatFolder, ChatFolderFacts, ChatSummary, Draft,
+    ForwardedFrom, GeoPoint, MediaAttachment, MessageHistoryState, MessageLocation,
+    MessageReaction, MessageReactionType, MessageSummary, PeerKind, PeerPresence, PeerProfile,
+    ReactionRevision, ReadDirection, ReadReceipt, ReplyMetadata, Venue,
 };
 pub use peer::{
     parse_peer_reference, MessageLink, MessageLinkMetadata, MessageLinkResolution, MessagePeer,
@@ -56,7 +65,12 @@ pub use search::{
 };
 pub use selection::{MessageSelection, SelectionAction, SelectionCapabilities, SelectionError};
 pub use send::{ClientMessageId, OutgoingSend, OutgoingSendState};
-pub use state::{CoreState, FolderAction, MAX_CACHED_MESSAGES_PER_CHAT, MAX_CACHED_POLLS};
+pub use service_message::{
+    ServiceAction, ServiceIcon, ServiceMessage, ServicePresentation, ServiceTone,
+};
+pub use state::{
+    CoreState, FolderAction, MAX_CACHED_MESSAGES_PER_CHAT, MAX_CACHED_POLLS, MAX_CACHED_PROFILES,
+};
 pub use storage::{JsonFileStateStore, MemoryStateStore, NoopStateStore, StateStore};
 pub use transfer::{
     DownloadState, TransferDirection, TransferError, TransferKey, TransferManager,

@@ -5,13 +5,16 @@
 
 mod auth;
 mod backend;
+mod capabilities;
 mod chats;
 mod config;
+mod contacts;
 mod downloads;
 mod error;
 mod ids;
 mod messages;
 mod polls;
+mod profiles;
 mod updates;
 
 pub use backend::GrammersBackend;

@@ -2,15 +2,16 @@ use std::collections::{HashSet, VecDeque};
 
 use grammers_client::{
     Client,
-    media::{Document, Media, Photo, PhotoSize},
-    message::Message,
+    media::{Document, Geo, Media, Photo, PhotoSize},
+    message::{InputMessage, Message},
     sender::InvocationError,
     session::types::{PeerKind, PeerRef},
     tl,
 };
 use tg_mobile_core::{
     AttachmentDownloadState, AttachmentKind, AttachmentThumbnail, CoreError, ForwardedFrom,
-    MediaAttachment, MessageSummary, PollSummary, ReplyMetadata,
+    GeoPoint, MediaAttachment, MessageLocation, MessageReaction, MessageReactionType,
+    MessageSummary, PollSummary, ReplyMetadata, ServiceAction, ServiceMessage, Venue,
 };
 use tokio::sync::Mutex;
 
@@ -59,7 +60,15 @@ pub(crate) fn message_to_summary(message: &Message) -> MessageSummary {
     });
     summary.edited = edit_timestamp_unix.is_some();
     summary.edit_timestamp_unix = edit_timestamp_unix;
+    summary.location = message.media().as_ref().and_then(media_to_location);
     summary.service_message = message.action().is_some();
+    summary.service = message.action().map(|action| {
+        service_action_to_message(
+            action,
+            summary.sender_id,
+            message.reply_to_message_id().map(i64::from),
+        )
+    });
     summary.media_caption =
         (message.media().is_some() && !text.is_empty()).then(|| text.to_owned());
     summary.reply_to = message
@@ -70,8 +79,96 @@ pub(crate) fn message_to_summary(message: &Message) -> MessageSummary {
             sender_id: None,
             sender_display_name: None,
         });
+    summary.reactions = message_reactions(&message.raw);
 
     summary
+}
+
+fn geo_to_core(geo: &Geo) -> Option<GeoPoint> {
+    GeoPoint::new(geo.raw.lat, geo.raw.long, geo.raw.accuracy_radius).ok()
+}
+
+fn media_to_location(media: &Media) -> Option<MessageLocation> {
+    match media {
+        Media::Geo(geo) => geo_to_core(geo).map(|point| MessageLocation::Location { point }),
+        Media::Venue(venue) => {
+            let point = venue.geo.as_ref().and_then(geo_to_core);
+            Venue::new(
+                point,
+                venue.title().to_owned(),
+                venue.address().to_owned(),
+                venue.provider().to_owned(),
+                venue.venue_id().to_owned(),
+                (!venue.venue_type().is_empty()).then(|| venue.venue_type().to_owned()),
+            )
+            .ok()
+            .map(|venue| MessageLocation::Venue { venue })
+        }
+        _ => None,
+    }
+}
+
+fn service_action_to_message(
+    action: &tl::enums::MessageAction,
+    actor_id: i64,
+    pinned_message_id: Option<i64>,
+) -> ServiceMessage {
+    use tl::enums::MessageAction as Action;
+
+    let action = match action {
+        Action::ChatCreate(value) => ServiceAction::GroupCreated {
+            title: value.title.clone(),
+            user_ids: value.users.clone(),
+        },
+        Action::ChatEditTitle(value) => ServiceAction::TitleChanged {
+            title: value.title.clone(),
+        },
+        Action::ChatEditPhoto(value) => ServiceAction::PhotoChanged {
+            photo_id: Some(Photo::from_raw(value.photo.clone()).id()),
+        },
+        Action::ChatDeletePhoto => ServiceAction::PhotoRemoved,
+        Action::ChatAddUser(value)
+            if value.users.len() == 1 && value.users.first().copied() == Some(actor_id) =>
+        {
+            ServiceAction::UserJoined {
+                user_id: value.users.first().copied(),
+                inviter_id: None,
+            }
+        }
+        Action::ChatAddUser(value) => ServiceAction::UserAdded {
+            user_ids: value.users.clone(),
+        },
+        Action::ChatDeleteUser(value) if value.user_id == actor_id => ServiceAction::UserLeft {
+            user_id: value.user_id,
+        },
+        Action::ChatDeleteUser(value) => ServiceAction::UserRemoved {
+            user_id: value.user_id,
+        },
+        Action::ChatJoinedByLink(value) => ServiceAction::UserJoined {
+            user_id: (actor_id != 0).then_some(actor_id),
+            inviter_id: Some(value.inviter_id),
+        },
+        Action::ChatJoinedByRequest => ServiceAction::UserJoined {
+            user_id: (actor_id != 0).then_some(actor_id),
+            inviter_id: None,
+        },
+        Action::ChannelCreate(value) => ServiceAction::ChannelCreated {
+            title: value.title.clone(),
+        },
+        Action::ChatMigrateTo(value) => ServiceAction::GroupMigratedToSupergroup {
+            supergroup_id: value.channel_id,
+        },
+        Action::ChannelMigrateFrom(value) => ServiceAction::ChannelMigratedFromGroup {
+            group_id: value.chat_id,
+            title: value.title.clone(),
+        },
+        Action::PinMessage => ServiceAction::MessagePinned {
+            message_id: pinned_message_id,
+        },
+        Action::HistoryClear => ServiceAction::HistoryCleared,
+        _ => ServiceAction::Unknown,
+    };
+    ServiceMessage::new(action, (actor_id != 0).then_some(actor_id))
 }
 
 fn media_to_attachment(media: Media) -> Option<MediaAttachment> {
@@ -222,13 +319,17 @@ fn message_summary_from_fields(fields: MessageFields<'_>) -> MessageSummary {
         text: fields.text.to_owned(),
         timestamp_unix: fields.timestamp_unix,
         outgoing: fields.outgoing,
+        location: None,
         attachments: Vec::new(),
         forwarded_from: None,
         edited: false,
         edit_timestamp_unix: None,
         service_message: false,
+        service: None,
         media_caption: None,
         reply_to: None,
+        reactions: Vec::new(),
+        reaction_revision: None,
     }
 }
 
@@ -236,6 +337,42 @@ fn message_summary_from_fields(fields: MessageFields<'_>) -> MessageSummary {
 pub(crate) struct LoadedMessages {
     pub messages: Vec<MessageSummary>,
     pub polls: Vec<PollSummary>,
+}
+
+pub(crate) fn message_reactions(message: &tl::enums::Message) -> Vec<MessageReaction> {
+    let snapshot = match message {
+        tl::enums::Message::Message(message) => message.reactions.as_ref(),
+        _ => None,
+    };
+    snapshot.map(map_reactions).unwrap_or_default()
+}
+
+pub(crate) fn map_reactions(snapshot: &tl::enums::MessageReactions) -> Vec<MessageReaction> {
+    let tl::enums::MessageReactions::Reactions(snapshot) = snapshot;
+    let mut seen = std::collections::BTreeSet::new();
+    snapshot
+        .results
+        .iter()
+        .filter_map(|result| {
+            let tl::enums::ReactionCount::Count(result) = result;
+            let reaction = match &result.reaction {
+                tl::enums::Reaction::Emoji(value) => {
+                    MessageReactionType::Emoji(value.emoticon.clone())
+                }
+                tl::enums::Reaction::CustomEmoji(value) => {
+                    MessageReactionType::CustomEmoji(value.document_id)
+                }
+                _ => return None,
+            };
+            let reaction = MessageReaction {
+                reaction,
+                count: u32::try_from(result.count).ok()?,
+                chosen_by_me: result.chosen_order.is_some(),
+            };
+            reaction.reaction.validate().ok()?;
+            seen.insert(reaction.reaction.clone()).then_some(reaction)
+        })
+        .collect()
 }
 
 pub(crate) async fn load_messages(
@@ -448,6 +585,26 @@ pub(crate) async fn send_text(
         .send_message(peer, text)
         .await
         .map_err(|error| api_error("send message", error))?;
+    Ok(message_to_summary(&message))
+}
+
+pub(crate) async fn send_location(
+    client: &Client,
+    peer: PeerRef,
+    location: GeoPoint,
+) -> tg_mobile_core::Result<MessageSummary> {
+    location.validate()?;
+    let geo_point: tl::enums::InputGeoPoint = tl::types::InputGeoPoint {
+        lat: location.latitude(),
+        long: location.longitude(),
+        accuracy_radius: location.accuracy_radius_meters(),
+    }
+    .into();
+    let media = tl::types::InputMediaGeoPoint { geo_point };
+    let message = client
+        .send_message(peer, InputMessage::new().media(media))
+        .await
+        .map_err(|error| api_error("send location", error))?;
     Ok(message_to_summary(&message))
 }
 
@@ -713,8 +870,65 @@ impl MessageDeduplicator {
 mod tests {
     use super::{
         MessageDeduplicator, MessageFields, finalize_message_page, finalize_search_page,
-        message_summary_from_fields,
+        media_to_location, message_summary_from_fields, service_action_to_message,
     };
+    use grammers_client::{
+        media::{Geo, Media, Venue as TelegramVenue},
+        tl,
+    };
+    use tg_mobile_core::{MessageLocation, MessageReaction, MessageReactionType, ServiceAction};
+
+    #[test]
+    fn maps_reaction_counts_chosen_state_and_custom_emoji_ids() {
+        let raw = tl::enums::MessageReactions::Reactions(tl::types::MessageReactions {
+            min: false,
+            can_see_list: true,
+            reactions_as_tags: false,
+            results: vec![
+                tl::enums::ReactionCount::Count(tl::types::ReactionCount {
+                    chosen_order: Some(0),
+                    reaction: tl::enums::Reaction::Emoji(tl::types::ReactionEmoji {
+                        emoticon: "👍".into(),
+                    }),
+                    count: 4,
+                }),
+                tl::enums::ReactionCount::Count(tl::types::ReactionCount {
+                    chosen_order: None,
+                    reaction: tl::enums::Reaction::CustomEmoji(tl::types::ReactionCustomEmoji {
+                        document_id: 9876,
+                    }),
+                    count: 2,
+                }),
+            ],
+            recent_reactions: None,
+            top_reactors: None,
+        });
+
+        assert_eq!(
+            super::map_reactions(&raw),
+            vec![
+                MessageReaction {
+                    reaction: MessageReactionType::Emoji("👍".into()),
+                    count: 4,
+                    chosen_by_me: true,
+                },
+                MessageReaction {
+                    reaction: MessageReactionType::CustomEmoji(9876),
+                    count: 2,
+                    chosen_by_me: false,
+                },
+            ]
+        );
+    }
+
+    fn telegram_geo() -> tl::types::GeoPoint {
+        tl::types::GeoPoint {
+            long: 21.012_228_7,
+            lat: 52.229_675_6,
+            access_hash: 7,
+            accuracy_radius: Some(15),
+        }
+    }
 
     #[test]
     fn maps_message_fields_without_losing_identifiers() {
@@ -733,6 +947,171 @@ mod tests {
         assert_eq!(summary.text, "hello");
         assert_eq!(summary.timestamp_unix, 1_700_000_000);
         assert!(summary.outgoing);
+    }
+
+    #[test]
+    fn maps_telegram_service_actions_to_typed_events() {
+        use grammers_client::tl;
+
+        let joined = service_action_to_message(
+            &tl::enums::MessageAction::ChatJoinedByLink(tl::types::MessageActionChatJoinedByLink {
+                inviter_id: 31,
+            }),
+            41,
+            None,
+        );
+        assert_eq!(
+            joined.action,
+            ServiceAction::UserJoined {
+                user_id: Some(41),
+                inviter_id: Some(31)
+            }
+        );
+        assert_eq!(joined.actor_id, Some(41));
+
+        let added = service_action_to_message(
+            &tl::enums::MessageAction::ChatAddUser(tl::types::MessageActionChatAddUser {
+                users: vec![41, 42],
+            }),
+            31,
+            None,
+        );
+        assert_eq!(
+            added.action,
+            ServiceAction::UserAdded {
+                user_ids: vec![41, 42]
+            }
+        );
+        let joined_by_add = service_action_to_message(
+            &tl::enums::MessageAction::ChatAddUser(tl::types::MessageActionChatAddUser {
+                users: vec![41],
+            }),
+            41,
+            None,
+        );
+        assert_eq!(
+            joined_by_add.action,
+            ServiceAction::UserJoined {
+                user_id: Some(41),
+                inviter_id: None
+            }
+        );
+
+        let left = service_action_to_message(
+            &tl::enums::MessageAction::ChatDeleteUser(tl::types::MessageActionChatDeleteUser {
+                user_id: 31,
+            }),
+            31,
+            None,
+        );
+        assert_eq!(left.action, ServiceAction::UserLeft { user_id: 31 });
+        let removed = service_action_to_message(
+            &tl::enums::MessageAction::ChatDeleteUser(tl::types::MessageActionChatDeleteUser {
+                user_id: 31,
+            }),
+            41,
+            None,
+        );
+        assert_eq!(removed.action, ServiceAction::UserRemoved { user_id: 31 });
+
+        let pinned = service_action_to_message(&tl::enums::MessageAction::PinMessage, 41, Some(73));
+        assert_eq!(
+            pinned.action,
+            ServiceAction::MessagePinned {
+                message_id: Some(73)
+            }
+        );
+        let cleared = service_action_to_message(&tl::enums::MessageAction::HistoryClear, 41, None);
+        assert_eq!(cleared.action, ServiceAction::HistoryCleared);
+
+        let migrated = service_action_to_message(
+            &tl::enums::MessageAction::ChatMigrateTo(tl::types::MessageActionChatMigrateTo {
+                channel_id: -100,
+            }),
+            41,
+            None,
+        );
+        assert_eq!(
+            migrated.action,
+            ServiceAction::GroupMigratedToSupergroup {
+                supergroup_id: -100
+            }
+        );
+        let created = service_action_to_message(
+            &tl::enums::MessageAction::ChatCreate(tl::types::MessageActionChatCreate {
+                title: "Team".into(),
+                users: vec![41, 42],
+            }),
+            41,
+            None,
+        );
+        assert_eq!(
+            created.action,
+            ServiceAction::GroupCreated {
+                title: "Team".into(),
+                user_ids: vec![41, 42]
+            }
+        );
+
+        let title = service_action_to_message(
+            &tl::enums::MessageAction::ChatEditTitle(tl::types::MessageActionChatEditTitle {
+                title: "Renamed".into(),
+            }),
+            41,
+            None,
+        );
+        assert_eq!(
+            title.action,
+            ServiceAction::TitleChanged {
+                title: "Renamed".into()
+            }
+        );
+
+        let photo = service_action_to_message(
+            &tl::enums::MessageAction::ChatEditPhoto(tl::types::MessageActionChatEditPhoto {
+                photo: tl::enums::Photo::Empty(tl::types::PhotoEmpty { id: 99 }),
+            }),
+            41,
+            None,
+        );
+        assert_eq!(
+            photo.action,
+            ServiceAction::PhotoChanged { photo_id: Some(99) }
+        );
+        let removed_photo =
+            service_action_to_message(&tl::enums::MessageAction::ChatDeletePhoto, 41, None);
+        assert_eq!(removed_photo.action, ServiceAction::PhotoRemoved);
+
+        let channel = service_action_to_message(
+            &tl::enums::MessageAction::ChannelCreate(tl::types::MessageActionChannelCreate {
+                title: "Updates".into(),
+            }),
+            41,
+            None,
+        );
+        assert_eq!(
+            channel.action,
+            ServiceAction::ChannelCreated {
+                title: "Updates".into()
+            }
+        );
+        let channel_from_group = service_action_to_message(
+            &tl::enums::MessageAction::ChannelMigrateFrom(
+                tl::types::MessageActionChannelMigrateFrom {
+                    title: "Updates".into(),
+                    chat_id: 17,
+                },
+            ),
+            41,
+            None,
+        );
+        assert_eq!(
+            channel_from_group.action,
+            ServiceAction::ChannelMigratedFromGroup {
+                group_id: 17,
+                title: "Updates".into()
+            }
+        );
     }
 
     #[test]
@@ -799,6 +1178,43 @@ mod tests {
         let final_page = finalize_search_page(vec![hit(20), hit(10)], 2);
         assert_eq!(final_page.next_before_message_id, None);
         assert!(!final_page.has_more);
+    }
+
+    #[test]
+    fn maps_telegram_geo_media_to_core_location() {
+        let media = Media::Geo(Geo {
+            raw: telegram_geo(),
+        });
+        let mapped = media_to_location(&media).expect("geo must map");
+        let MessageLocation::Location { point } = mapped else {
+            panic!("expected location");
+        };
+        assert_eq!(point.latitude(), 52.229_675_6);
+        assert_eq!(point.longitude(), 21.012_228_7);
+        assert_eq!(point.accuracy_radius_meters(), Some(15));
+    }
+
+    #[test]
+    fn maps_telegram_venue_media_to_core_venue() {
+        let raw = tl::types::MessageMediaVenue {
+            geo: telegram_geo().into(),
+            title: "Central Library".into(),
+            address: "1 Example Street".into(),
+            provider: "foursquare".into(),
+            venue_id: "venue-1".into(),
+            venue_type: "library".into(),
+        };
+        let media = Media::Venue(TelegramVenue::from_raw_media(raw));
+        let mapped = media_to_location(&media).expect("venue must map");
+        let MessageLocation::Venue { venue } = mapped else {
+            panic!("expected venue");
+        };
+        assert_eq!(venue.title(), "Central Library");
+        assert_eq!(venue.address(), "1 Example Street");
+        assert_eq!(venue.provider(), "foursquare");
+        assert_eq!(venue.venue_id(), "venue-1");
+        assert_eq!(venue.venue_type(), Some("library"));
+        assert_eq!(venue.point().unwrap().accuracy_radius_meters(), Some(15));
     }
 
     #[tokio::test]

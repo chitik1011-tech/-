@@ -7,8 +7,9 @@ use std::{
 use grammers_client::{
     Client,
     media::Media,
+    message::InputReactions,
     sender::{SenderPool, SenderPoolHandle},
-    session::{storages::SqliteSession, updates::UpdatesLike},
+    session::{storages::SqliteSession, types::PeerKind, updates::UpdatesLike},
     tl,
 };
 use tg_media_cache::{CacheConfig, MediaCache};
@@ -28,11 +29,12 @@ use crate::{
     auth::AuthFlow,
     chats::{PeerRegistry, find_peer, load_chats, new_peer_registry},
     config::TelegramConfig,
+    contacts::load_contacts,
     downloads::{MediaTarget, event as media_event, spawn_download, state_from_snapshot},
     error::{TelegramBackendError, session_error},
     messages::{
         MessageDeduplicator, load_messages, load_messages_page, mark_read, message_to_summary,
-        search_messages_page, send_reply, send_text, send_text_idempotent,
+        search_messages_page, send_location, send_reply, send_text, send_text_idempotent,
     },
     polls::{PollRegistry, new_poll_registry, poll_by_id, polls_from_updates, remember_poll},
     updates::{TelegramUpdate, UpdateWorkerInput, run_update_worker},
@@ -668,8 +670,44 @@ impl GrammersBackend {
             }
             CoreCommand::LoadChats { limit } => {
                 self.require_ready().await?;
-                let chats = load_chats(&self.client, &self.peers, limit).await?;
-                vec![CoreEvent::ChatsLoaded(chats)]
+                let (chats, capabilities) = load_chats(&self.client, &self.peers, limit).await?;
+                let mut events = vec![CoreEvent::ChatsLoaded(chats)];
+                events.extend(
+                    capabilities
+                        .into_iter()
+                        .map(CoreEvent::ChatCapabilitiesUpdated),
+                );
+                events
+            }
+            CoreCommand::LoadProfile { peer_id } => {
+                self.require_ready().await?;
+                let peer_ref = find_peer(&self.peers, peer_id)
+                    .await
+                    .ok_or(TelegramBackendError::UnknownChat(peer_id))?;
+                let peer = self
+                    .client
+                    .resolve_peer(peer_ref)
+                    .await
+                    .map_err(|error| crate::error::api_error("load profile", error))?;
+                let mut profile = crate::profiles::profile_from_peer(peer_id, &peer);
+                crate::profiles::hydrate_profile(
+                    &self.client,
+                    &peer,
+                    &mut profile,
+                    &self.media_cache,
+                )
+                .await;
+                vec![CoreEvent::ProfileUpdated(profile)]
+            }
+            CoreCommand::LoadContacts { offset, limit } => {
+                self.require_ready().await?;
+                let (total, contacts) =
+                    load_contacts(&self.client, &self.peers, offset, limit).await?;
+                vec![CoreEvent::ContactsLoaded {
+                    offset,
+                    total,
+                    contacts,
+                }]
             }
             CoreCommand::ResolvePeer { input } => {
                 self.require_ready().await?;
@@ -679,18 +717,28 @@ impl GrammersBackend {
             }
             CoreCommand::LoadMessages { chat_id, limit } => {
                 self.require_ready().await?;
-                let peer = find_peer(&self.peers, chat_id)
+                let peer_ref = find_peer(&self.peers, chat_id)
                     .await
                     .ok_or(TelegramBackendError::UnknownChat(chat_id))?;
-                let mut loaded = load_messages(&self.client, peer, limit).await?;
+                let peer = self
+                    .client
+                    .resolve_peer(peer_ref)
+                    .await
+                    .map_err(|error| crate::error::api_error("load chat permissions", error))?;
+                let mut capabilities = crate::capabilities::from_peer(&peer, chat_id);
+                crate::capabilities::fill_slow_mode(&self.client, &peer, &mut capabilities).await;
+                let mut loaded = load_messages(&self.client, peer_ref, limit).await?;
                 self.hydrate_cached_media(&mut loaded.messages);
                 for poll in &loaded.polls {
                     remember_poll(&self.polls, poll.clone()).await;
                 }
-                let mut events = vec![CoreEvent::MessagesLoaded {
-                    chat_id,
-                    messages: loaded.messages,
-                }];
+                let mut events = vec![
+                    CoreEvent::ChatCapabilitiesUpdated(capabilities),
+                    CoreEvent::MessagesLoaded {
+                        chat_id,
+                        messages: loaded.messages,
+                    },
+                ];
                 events.extend(loaded.polls.into_iter().map(CoreEvent::PollUpdated));
                 events
             }
@@ -731,6 +779,80 @@ impl GrammersBackend {
                 vec![CoreEvent::ChatRead {
                     chat_id,
                     max_message_id,
+                }]
+            }
+            CoreCommand::AddReaction {
+                chat_id,
+                message_id,
+                reaction,
+            } => {
+                self.require_ready().await?;
+                let peer = find_peer(&self.peers, chat_id)
+                    .await
+                    .ok_or(TelegramBackendError::UnknownChat(chat_id))?;
+                let message_id = i32::try_from(message_id).map_err(|_| {
+                    CoreError::InvalidInput("message id exceeds Telegram range".into())
+                })?;
+                let input = match reaction {
+                    tg_mobile_core::MessageReactionType::Emoji(value) => {
+                        InputReactions::emoticon(value)
+                    }
+                    tg_mobile_core::MessageReactionType::CustomEmoji(document_id) => {
+                        InputReactions::custom_emoji(document_id)
+                    }
+                };
+                self.client
+                    .send_reactions(peer, message_id, input)
+                    .await
+                    .map_err(|error| crate::error::api_error("set message reaction", error))?;
+                vec![CoreEvent::ReactionOperationSucceeded {
+                    chat_id,
+                    message_id: i64::from(message_id),
+                }]
+            }
+            CoreCommand::RemoveReaction {
+                chat_id,
+                message_id,
+            } => {
+                self.require_ready().await?;
+                let peer = find_peer(&self.peers, chat_id)
+                    .await
+                    .ok_or(TelegramBackendError::UnknownChat(chat_id))?;
+                let message_id = i32::try_from(message_id).map_err(|_| {
+                    CoreError::InvalidInput("message id exceeds Telegram range".into())
+                })?;
+                self.client
+                    .send_reactions(peer, message_id, InputReactions::remove())
+                    .await
+                    .map_err(|error| crate::error::api_error("remove message reaction", error))?;
+                vec![CoreEvent::ReactionOperationSucceeded {
+                    chat_id,
+                    message_id: i64::from(message_id),
+                }]
+            }
+            CoreCommand::DeleteMessages {
+                chat_id,
+                message_ids,
+            } => {
+                self.require_ready().await?;
+                let peer = find_peer(&self.peers, chat_id)
+                    .await
+                    .ok_or(TelegramBackendError::UnknownChat(chat_id))?;
+                let ids = message_ids
+                    .iter()
+                    .map(|id| {
+                        i32::try_from(*id).map_err(|_| {
+                            CoreError::InvalidInput("message id exceeds Telegram range".into())
+                        })
+                    })
+                    .collect::<tg_mobile_core::Result<Vec<_>>>()?;
+                self.client
+                    .delete_messages(peer, &ids)
+                    .await
+                    .map_err(|error| crate::error::api_error("delete messages", error))?;
+                vec![CoreEvent::MessagesDeleted {
+                    chat_id: Some(chat_id),
+                    message_ids,
                 }]
             }
             CoreCommand::SearchMessages(request) => {
@@ -787,6 +909,160 @@ impl GrammersBackend {
                 } else {
                     Vec::new()
                 }
+            }
+            CoreCommand::SendLocation { chat_id, location } => {
+                self.require_ready().await?;
+                let peer = find_peer(&self.peers, chat_id)
+                    .await
+                    .ok_or(TelegramBackendError::UnknownChat(chat_id))?;
+                let message = send_location(&self.client, peer, location).await?;
+                if self.dedup.should_emit(&message).await {
+                    vec![CoreEvent::MessageAdded(message)]
+                } else {
+                    Vec::new()
+                }
+            }
+            CoreCommand::EditMessage {
+                chat_id,
+                message_id,
+                text,
+            } => {
+                self.require_ready().await?;
+                let peer = find_peer(&self.peers, chat_id)
+                    .await
+                    .ok_or(TelegramBackendError::UnknownChat(chat_id))?;
+                let telegram_message_id = i32::try_from(message_id).map_err(|_| {
+                    CoreError::InvalidInput("message id exceeds Telegram range".into())
+                })?;
+                let _target = self
+                    .client
+                    .get_messages_by_id(peer.clone(), &[telegram_message_id])
+                    .await
+                    .map_err(|error| crate::error::api_error("load message for editing", error))?
+                    .into_iter()
+                    .next()
+                    .flatten()
+                    .ok_or_else(|| {
+                        CoreError::InvalidInput("message no longer exists in this chat".into())
+                    })?;
+                self.client
+                    .edit_message(peer.clone(), telegram_message_id, text.as_str())
+                    .await
+                    .map_err(|error| crate::error::api_error("edit message", error))?;
+                let updated = self
+                    .client
+                    .get_messages_by_id(peer, &[telegram_message_id])
+                    .await
+                    .map_err(|error| crate::error::api_error("confirm edited message", error))?
+                    .into_iter()
+                    .next()
+                    .flatten()
+                    .ok_or_else(|| {
+                        CoreError::Backend(
+                            "Telegram accepted the edit but returned no updated message".into(),
+                        )
+                    })?;
+                vec![
+                    CoreEvent::MessageEdited(message_to_summary(&updated)),
+                    CoreEvent::MessageMutationSucceeded {
+                        chat_id,
+                        message_id,
+                        action: tg_mobile_core::MessageMutationAction::Edit,
+                    },
+                ]
+            }
+            CoreCommand::DeleteMessageForMe {
+                chat_id,
+                message_id,
+            } => {
+                self.require_ready().await?;
+                let peer = find_peer(&self.peers, chat_id)
+                    .await
+                    .ok_or(TelegramBackendError::UnknownChat(chat_id))?;
+                if peer.id.kind() == PeerKind::Channel {
+                    return Err(CoreError::InvalidInput(
+                        "delete for this account is unsupported in channels".into(),
+                    ));
+                }
+                let telegram_message_id = i32::try_from(message_id).map_err(|_| {
+                    CoreError::InvalidInput("message id exceeds Telegram range".into())
+                })?;
+                let _target = self
+                    .client
+                    .get_messages_by_id(peer.clone(), &[telegram_message_id])
+                    .await
+                    .map_err(|error| {
+                        crate::error::api_error("load message before deletion", error)
+                    })?
+                    .into_iter()
+                    .next()
+                    .flatten()
+                    .ok_or_else(|| {
+                        CoreError::InvalidInput("message no longer exists in this chat".into())
+                    })?;
+                let _: tl::enums::messages::AffectedMessages = self
+                    .client
+                    .invoke(&tl::functions::messages::DeleteMessages {
+                        revoke: false,
+                        id: vec![telegram_message_id],
+                    })
+                    .await
+                    .map_err(|error| {
+                        crate::error::api_error("delete message for this account", error)
+                    })?;
+                vec![
+                    CoreEvent::MessagesDeleted {
+                        chat_id: Some(chat_id),
+                        message_ids: vec![message_id],
+                    },
+                    CoreEvent::MessageMutationSucceeded {
+                        chat_id,
+                        message_id,
+                        action: tg_mobile_core::MessageMutationAction::DeleteForMe,
+                    },
+                ]
+            }
+            CoreCommand::DeleteMessageForEveryone {
+                chat_id,
+                message_id,
+            } => {
+                self.require_ready().await?;
+                let peer = find_peer(&self.peers, chat_id)
+                    .await
+                    .ok_or(TelegramBackendError::UnknownChat(chat_id))?;
+                let telegram_message_id = i32::try_from(message_id).map_err(|_| {
+                    CoreError::InvalidInput("message id exceeds Telegram range".into())
+                })?;
+                let _target = self
+                    .client
+                    .get_messages_by_id(peer.clone(), &[telegram_message_id])
+                    .await
+                    .map_err(|error| {
+                        crate::error::api_error("load message before deletion", error)
+                    })?
+                    .into_iter()
+                    .next()
+                    .flatten()
+                    .ok_or_else(|| {
+                        CoreError::InvalidInput("message no longer exists in this chat".into())
+                    })?;
+                self.client
+                    .delete_messages(peer, &[telegram_message_id])
+                    .await
+                    .map_err(|error| {
+                        crate::error::api_error("delete message for everyone", error)
+                    })?;
+                vec![
+                    CoreEvent::MessagesDeleted {
+                        chat_id: Some(chat_id),
+                        message_ids: vec![message_id],
+                    },
+                    CoreEvent::MessageMutationSucceeded {
+                        chat_id,
+                        message_id,
+                        action: tg_mobile_core::MessageMutationAction::DeleteForEveryone,
+                    },
+                ]
             }
             CoreCommand::SendTextReliable {
                 client_id,

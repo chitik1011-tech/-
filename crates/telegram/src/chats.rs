@@ -1,10 +1,12 @@
 use std::{collections::HashMap, sync::Arc};
 
 use grammers_client::{Client, session::types::PeerRef, tl};
-use tg_mobile_core::ChatSummary;
+use tg_mobile_core::{ChatCapabilities, ChatSummary};
 use tokio::sync::RwLock;
 
-use crate::{error::api_error, ids::peer_id_to_core, messages::message_to_summary};
+use crate::{
+    capabilities::from_peer, error::api_error, ids::peer_id_to_core, messages::message_to_summary,
+};
 
 pub(crate) type PeerRegistry = Arc<RwLock<HashMap<i64, PeerRef>>>;
 
@@ -24,13 +26,14 @@ pub(crate) async fn load_chats(
     client: &Client,
     registry: &PeerRegistry,
     limit: usize,
-) -> tg_mobile_core::Result<Vec<ChatSummary>> {
+) -> tg_mobile_core::Result<(Vec<ChatSummary>, Vec<ChatCapabilities>)> {
     if limit == 0 {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), Vec::new()));
     }
 
     let mut dialogs = client.iter_dialogs().limit(limit);
     let mut result = Vec::with_capacity(limit.min(100));
+    let mut capabilities = Vec::with_capacity(limit.min(100));
 
     while let Some(dialog) = dialogs
         .next()
@@ -39,6 +42,7 @@ pub(crate) async fn load_chats(
     {
         let chat_id = peer_id_to_core(dialog.peer_id());
         remember_peer(registry, chat_id, dialog.peer_ref()).await;
+        capabilities.push(from_peer(dialog.peer(), chat_id));
 
         result.push(ChatSummary {
             id: chat_id,
@@ -52,7 +56,7 @@ pub(crate) async fn load_chats(
         });
     }
 
-    Ok(result)
+    Ok((result, capabilities))
 }
 
 fn unread_count(dialog: &tl::enums::Dialog) -> u32 {

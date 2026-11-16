@@ -222,13 +222,18 @@ mod tests {
             text: text.to_owned(),
             timestamp_unix: id,
             outgoing,
+            location: None,
             attachments: Vec::new(),
             forwarded_from: None,
             edited: false,
             edit_timestamp_unix: None,
             service_message: false,
+            service: None,
             media_caption: None,
             reply_to: None,
+
+            reactions: Vec::new(),
+            reaction_revision: None,
         }
     }
 

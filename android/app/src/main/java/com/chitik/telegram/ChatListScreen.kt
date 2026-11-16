@@ -20,6 +20,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -38,6 +39,7 @@ data class ChatListEntry(
     val title: String,
     val unreadCount: Long,
     val lastMessage: ChatListPreview?,
+    val capabilities: ChatCapabilitiesUi = ChatCapabilitiesUi(),
 )
 
 data class ChatListPreview(
@@ -59,6 +61,7 @@ fun ChatListScreen(
     isLoading: Boolean,
     error: String?,
     onRefresh: () -> Unit,
+    onOpenContacts: () -> Unit,
     onChatSelected: (Long) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -92,7 +95,9 @@ fun ChatListScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            Spacer(Modifier.width(12.dp))
+            Spacer(Modifier.width(8.dp))
+            TextButton(onClick = onOpenContacts) { Text("Contacts") }
+            Spacer(Modifier.width(4.dp))
             OutlinedButton(
                 onClick = onRefresh,
                 enabled = !isLoading,

@@ -20,6 +20,45 @@ class MessageForwardSelectionTest {
         assertEquals(listOf(5L), selectedForwardMessageIds(messages, setOf(5L)))
     }
 
+    @Test
+    fun selectedTextFollowsConversationOrderAndSkipsUnselectedRows() {
+        val messages = listOf(
+            message("10").copy(text = "first"),
+            message("11").copy(text = "skip"),
+            message("12").copy(text = "second"),
+        )
+        assertEquals("first\nsecond", selectedMessageText(messages, setOf(12L, 10L)))
+    }
+
+    @Test
+    fun selectModeTapAddsAndRemovesMessages() {
+        val firstTap = toggleSelectedMessageId(emptySet(), 17L)
+        assertEquals(setOf(17L), firstTap)
+        assertEquals(emptySet<Long>(), toggleSelectedMessageId(firstTap, 17L))
+    }
+
+    @Test
+    fun unrelatedChatDeletionKeepsVisibleChatSelection() {
+        val selected = setOf(17L, 18L)
+        val visibleInOpenChat = setOf(17L, 18L, 19L)
+
+        val result = pruneSelectedMessageIds(selected, visibleInOpenChat)
+
+        assertEquals(selected, result.selectedIds)
+        assertEquals(false, result.shouldExitSelectionMode)
+    }
+
+    @Test
+    fun deletionPrunesOnlyMissingIdsAndExitsWhenSelectionIsEmpty() {
+        val partial = pruneSelectedMessageIds(setOf(17L, 18L), setOf(18L, 19L))
+        assertEquals(setOf(18L), partial.selectedIds)
+        assertEquals(false, partial.shouldExitSelectionMode)
+
+        val allDeleted = pruneSelectedMessageIds(partial.selectedIds, setOf(19L))
+        assertEquals(emptySet<Long>(), allDeleted.selectedIds)
+        assertEquals(true, allDeleted.shouldExitSelectionMode)
+    }
+
     private fun message(id: String) = ConversationMessageUi(
         id = id,
         chatId = "1",

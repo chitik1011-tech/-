@@ -2,8 +2,9 @@ use std::sync::Arc;
 
 use tg_mobile_core::{
     backend_update_channel, spawn_core_with_store, AuthorizationState, BackendFuture,
-    BackendUpdateReceiver, BackendUpdateSender, CoreCommand, CoreEvent, MemoryStateStore,
-    MessageSummary, SearchMessagesRequest, TelegramBackend,
+    BackendUpdateReceiver, BackendUpdateSender, CapabilityValue, ChatCapabilities, ChatKind,
+    CoreCommand, CoreEvent, MemoryStateStore, MessageSummary, SearchMessagesRequest,
+    TelegramBackend,
 };
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio::time::{sleep, timeout, Duration};
@@ -14,6 +15,7 @@ struct ControlledBackend {
     started: mpsc::UnboundedSender<CoreCommand>,
     release: Arc<Mutex<Option<oneshot::Receiver<()>>>>,
     hang_first: bool,
+    hang_reliable: bool,
     hang_shutdown: bool,
     panic_first: bool,
     page_id: i64,
@@ -37,6 +39,7 @@ impl ControlledBackend {
                 started,
                 release: Arc::new(Mutex::new(Some(release_rx))),
                 hang_first,
+                hang_reliable: false,
                 hang_shutdown: false,
                 panic_first: false,
                 page_id: 77,
@@ -65,8 +68,9 @@ impl TelegramBackend for ControlledBackend {
     fn handle<'a>(&'a mut self, command: CoreCommand) -> BackendFuture<'a> {
         let started = self.started.clone();
         let release = self.release.clone();
-        let should_hang =
-            self.hang_first || (self.hang_shutdown && matches!(&command, CoreCommand::Shutdown));
+        let should_hang = self.hang_first
+            || (self.hang_reliable && matches!(&command, CoreCommand::SendTextReliable { .. }))
+            || (self.hang_shutdown && matches!(&command, CoreCommand::Shutdown));
         self.hang_first = false;
         let should_panic = self.panic_first;
         self.panic_first = false;
@@ -116,13 +120,18 @@ fn message(id: i64, chat_id: i64) -> MessageSummary {
         text: format!("message {id}"),
         timestamp_unix: id,
         outgoing: false,
+        location: None,
         attachments: vec![],
         forwarded_from: None,
         edited: false,
         edit_timestamp_unix: None,
         service_message: false,
+        service: None,
         media_caption: None,
         reply_to: None,
+
+        reactions: Vec::new(),
+        reaction_revision: None,
     }
 }
 
@@ -178,9 +187,33 @@ async fn hanging_rpc_does_not_block_updates_or_persistence_tick() {
 
 #[tokio::test]
 async fn shutdown_persists_reliable_send_recovery_without_waiting_for_rpc() {
-    let (backend, mut started, _release) = ControlledBackend::new(true);
+    let (mut backend, mut started, _release) = ControlledBackend::new(false);
+    backend.hang_reliable = true;
     let store = MemoryStateStore::default();
+    let updates = backend.update_tx.clone();
     let core = spawn_core_with_store(backend, store.clone());
+    core.send(CoreCommand::Start).await.unwrap();
+    wait_for_command(&mut started, CoreCommand::Start).await;
+    let mut capabilities = ChatCapabilities {
+        chat_id: 42,
+        chat_kind: ChatKind::Private,
+        can_send_messages: CapabilityValue::Known(true),
+        slow_mode_enabled: CapabilityValue::Known(false),
+        slow_mode_remaining_seconds: CapabilityValue::Known(None),
+        ..ChatCapabilities::default()
+    };
+    capabilities.refresh_derived();
+    updates
+        .send(Ok(CoreEvent::ChatCapabilitiesUpdated(capabilities)))
+        .await
+        .unwrap();
+    timeout(Duration::from_secs(1), async {
+        while !core.state().chat_capabilities.contains_key(&42) {
+            sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("capability update was not applied before send");
     core.send(CoreCommand::SendTextReliable {
         client_id: 9,
         chat_id: 42,

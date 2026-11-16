@@ -13,6 +13,9 @@ fn message_with_photo() -> MessageSummary {
         text: String::new(),
         timestamp_unix: 1,
         outgoing: false,
+        reactions: Vec::new(),
+        reaction_revision: None,
+        location: None,
         attachments: vec![MediaAttachment {
             kind: AttachmentKind::Photo,
             file_reference: "photo:100".into(),
@@ -30,6 +33,7 @@ fn message_with_photo() -> MessageSummary {
         edited: false,
         edit_timestamp_unix: None,
         service_message: false,
+        service: None,
         media_caption: None,
         reply_to: None,
     }

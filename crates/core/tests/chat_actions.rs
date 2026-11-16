@@ -8,7 +8,8 @@ async fn load_chats(core: &tg_mobile_core::CoreHandle) {
         .unwrap();
     tokio::time::timeout(std::time::Duration::from_secs(1), async {
         loop {
-            if core.state().chat(2).is_some() {
+            let state = core.state();
+            if state.chat(2).is_some() && state.chat_capabilities.contains_key(&2) {
                 break;
             }
             tokio::task::yield_now().await;
@@ -88,13 +89,18 @@ fn incoming_message_for_unknown_chat_does_not_invent_chat_metadata() {
         text: "hello".into(),
         timestamp_unix: 1,
         outgoing: false,
+        location: None,
         attachments: Vec::new(),
         forwarded_from: None,
         edited: false,
         edit_timestamp_unix: None,
         service_message: false,
+        service: None,
         media_caption: None,
         reply_to: None,
+
+        reactions: Vec::new(),
+        reaction_revision: None,
     }));
 
     assert!(state.chat(404).is_none());
