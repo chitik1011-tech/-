@@ -1,10 +1,7 @@
 use std::{
     collections::{HashMap, VecDeque},
     path::Path,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::Arc,
 };
 
 use grammers_client::{
@@ -452,20 +449,15 @@ impl GrammersBackend {
         if !active.send_stage.try_cancel() {
             return Ok(Vec::new());
         }
-        let snapshot = self
-            .transfers
-            .get_by_key(TransferDirection::Upload, &active.reference)
-            .map_err(|error| CoreError::Backend(error.to_string()))?;
-        let Some(snapshot) = snapshot else {
-            return Ok(Vec::new());
-        };
-        if snapshot.token != active.transfer_token {
-            return Ok(Vec::new());
-        }
+        let fallback_generation = active.transfer_generation.saturating_add(1);
         let cancelled_generation = self
             .transfers
-            .cancel(snapshot.token)
-            .map_or(active.transfer_generation.saturating_add(1), |token| token.generation);
+            .get_by_key(TransferDirection::Upload, &active.reference)
+            .ok()
+            .flatten()
+            .filter(|snapshot| snapshot.token == active.transfer_token)
+            .and_then(|snapshot| self.transfers.cancel(snapshot.token).ok())
+            .map_or(fallback_generation, |token| token.generation);
         let Some(active) = self.media_send_tasks.remove(&client_id) else {
             return Ok(Vec::new());
         };
