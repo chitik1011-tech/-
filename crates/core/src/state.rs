@@ -421,6 +421,7 @@ impl CoreState {
                     }
                 });
             }
+            CoreEvent::MessageMutationFailed { .. } => {}
             CoreEvent::MessageEdited(message) => {
                 if self.apply_message_edit(message) {
                     self.last_error = None;
