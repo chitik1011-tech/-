@@ -524,7 +524,7 @@ where
                             generation,
                             sync_required,
                             pinned_revision,
-                                    command: command.clone(),
+                            command: command.clone(),
                         })
                         .is_err()
                     {
