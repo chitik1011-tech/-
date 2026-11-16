@@ -5,7 +5,7 @@ use std::{
 
 use grammers_client::{
     Client,
-    media::{Attribute, Document, Geo, InputMedia, Media, Photo, PhotoSize, Uploaded},
+    media::{Attribute, Document, Geo, Media, Photo, PhotoSize, Uploaded},
     message::{InputMessage, Message},
     sender::InvocationError,
     session::types::{PeerKind, PeerRef},
@@ -672,27 +672,60 @@ pub(crate) async fn send_media_idempotent(
         ));
     }
 
-    let media = match attachment.kind {
-        OutgoingMediaKind::Photo => InputMedia::new().photo(uploaded),
-        OutgoingMediaKind::Video => InputMedia::new()
-            .document(uploaded)
-            .mime_type(&attachment.mime_type)
-            .attribute(Attribute::Video {
-                round_message: false,
-                supports_streaming: true,
-                duration: Duration::from_millis(attachment.video_duration_ms.unwrap_or_default()),
-                w: attachment.video_width.unwrap_or_default() as i32,
-                h: attachment.video_height.unwrap_or_default() as i32,
-            })
-            .attribute(Attribute::FileName(attachment.file_name.clone())),
-        OutgoingMediaKind::Document => InputMedia::new()
-            .document(uploaded)
-            .mime_type(&attachment.mime_type),
-    }
-    .caption(caption.clone());
+    let uploaded_media: tl::enums::InputMedia = match attachment.kind {
+        OutgoingMediaKind::Photo => tl::types::InputMediaUploadedPhoto {
+            spoiler: false,
+            live_photo: false,
+            file: uploaded.raw,
+            stickers: None,
+            ttl_seconds: None,
+            video: None,
+        }
+        .into(),
+        OutgoingMediaKind::Video => tl::types::InputMediaUploadedDocument {
+            nosound_video: false,
+            force_file: false,
+            spoiler: false,
+            file: uploaded.raw,
+            thumb: None,
+            mime_type: attachment.mime_type.clone(),
+            attributes: vec![
+                Attribute::Video {
+                    round_message: false,
+                    supports_streaming: true,
+                    duration: Duration::from_millis(
+                        attachment.video_duration_ms.unwrap_or_default(),
+                    ),
+                    w: attachment.video_width.unwrap_or_default() as i32,
+                    h: attachment.video_height.unwrap_or_default() as i32,
+                }
+                .into(),
+                Attribute::FileName(attachment.file_name.clone()).into(),
+            ],
+            stickers: None,
+            video_cover: None,
+            video_timestamp: None,
+            ttl_seconds: None,
+        }
+        .into(),
+        OutgoingMediaKind::Document => tl::types::InputMediaUploadedDocument {
+            nosound_video: false,
+            force_file: false,
+            spoiler: false,
+            file: uploaded.raw,
+            thumb: None,
+            mime_type: attachment.mime_type.clone(),
+            attributes: vec![Attribute::FileName(attachment.file_name.clone()).into()],
+            stickers: None,
+            video_cover: None,
+            video_timestamp: None,
+            ttl_seconds: None,
+        }
+        .into(),
+    };
 
     let uploaded_media = client
-        .upload_media(peer, media)
+        .upload_media(peer, uploaded_media)
         .await
         .map_err(classify_send_error)?
         .and_then(|media| media.to_raw_input_media())
