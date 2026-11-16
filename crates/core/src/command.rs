@@ -52,7 +52,12 @@ pub enum CoreCommand {
         message_id: i64,
         text: String,
     },
-    /// Delete a message for everyone. This backend does not expose a local-only delete.
+    /// Delete a message only for the current account where Telegram supports it.
+    DeleteMessageForMe {
+        chat_id: i64,
+        message_id: i64,
+    },
+    /// Delete a message for everyone.
     DeleteMessageForEveryone {
         chat_id: i64,
         message_id: i64,
@@ -134,6 +139,7 @@ impl CoreCommand {
             Self::SendText { .. } => "send_text",
             Self::SendTextReliable { .. } => "send_text_reliable",
             Self::EditMessage { .. } => "edit_message",
+            Self::DeleteMessageForMe { .. } => "delete_message_for_me",
             Self::DeleteMessageForEveryone { .. } => "delete_message_for_everyone",
             Self::VotePoll { .. } => "vote_poll",
             Self::ArchiveChat { .. } => "archive_chat",
@@ -256,6 +262,10 @@ impl CoreCommand {
             } => {
                 validate_message_target(*chat_id, *message_id)
             }
+            Self::DeleteMessageForMe {
+                chat_id,
+                message_id,
+            } => validate_message_target(*chat_id, *message_id),
             Self::VotePoll {
                 poll_id,
                 chat_id,
