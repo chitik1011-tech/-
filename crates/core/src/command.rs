@@ -10,6 +10,7 @@ use crate::{
 pub const MAX_CHAT_LOAD_LIMIT: usize = 500;
 pub const MAX_MESSAGE_LOAD_LIMIT: usize = 200;
 pub const MAX_REACTION_BYTES: usize = 128;
+pub const MAX_BULK_MESSAGE_IDS: usize = 100;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
@@ -45,6 +46,11 @@ pub enum CoreCommand {
     },
     SearchMessages(SearchMessagesRequest),
     ForwardMessages(crate::forwarding::ForwardMessagesRequest),
+    /// Delete a bounded selection from one chat after Telegram accepts the request.
+    DeleteMessages {
+        chat_id: i64,
+        message_ids: Vec<i64>,
+    },
     SendText {
         chat_id: i64,
         text: String,
@@ -148,6 +154,7 @@ impl CoreCommand {
             Self::MarkRead { .. } => "mark_read",
             Self::SearchMessages(_) => "search_messages",
             Self::ForwardMessages(_) => "forward_messages",
+            Self::DeleteMessages { .. } => "delete_messages",
             Self::SendText { .. } => "send_text",
             Self::SendLocation { .. } => "send_location",
             Self::SendTextReliable { .. } => "send_text_reliable",
@@ -244,6 +251,26 @@ impl CoreCommand {
             }
             Self::SearchMessages(request) => request.validate(),
             Self::ForwardMessages(request) => request.validate(),
+            Self::DeleteMessages {
+                chat_id,
+                message_ids,
+            } => {
+                validate_chat_id(*chat_id)?;
+                if message_ids.is_empty() || message_ids.len() > MAX_BULK_MESSAGE_IDS {
+                    return Err(CoreError::InvalidInput(format!(
+                        "delete selection must contain 1..={MAX_BULK_MESSAGE_IDS} messages"
+                    )));
+                }
+                let mut unique = std::collections::HashSet::with_capacity(message_ids.len());
+                for message_id in message_ids {
+                    if *message_id <= 0 || !unique.insert(*message_id) {
+                        return Err(CoreError::InvalidInput(
+                            "delete selection contains an invalid or duplicate message id".into(),
+                        ));
+                    }
+                }
+                Ok(())
+            }
             Self::SendText { chat_id, text } => {
                 validate_chat_id(*chat_id)?;
                 require_non_blank("message text", text)

@@ -814,6 +814,31 @@ impl GrammersBackend {
                     message_id: i64::from(message_id),
                 }]
             }
+            CoreCommand::DeleteMessages {
+                chat_id,
+                message_ids,
+            } => {
+                self.require_ready().await?;
+                let peer = find_peer(&self.peers, chat_id)
+                    .await
+                    .ok_or(TelegramBackendError::UnknownChat(chat_id))?;
+                let ids = message_ids
+                    .iter()
+                    .map(|id| {
+                        i32::try_from(*id).map_err(|_| {
+                            CoreError::InvalidInput("message id exceeds Telegram range".into())
+                        })
+                    })
+                    .collect::<tg_mobile_core::Result<Vec<_>>>()?;
+                self.client
+                    .delete_messages(peer, &ids)
+                    .await
+                    .map_err(|error| crate::error::api_error("delete messages", error))?;
+                vec![CoreEvent::MessagesDeleted {
+                    chat_id: Some(chat_id),
+                    message_ids,
+                }]
+            }
             CoreCommand::SearchMessages(request) => {
                 self.require_ready().await?;
                 let peer = find_peer(&self.peers, request.chat_id)

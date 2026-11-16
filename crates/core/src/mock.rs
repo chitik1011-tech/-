@@ -185,6 +185,9 @@ impl MockTelegramBackend {
             CoreCommand::ForwardMessages(_) => Err(CoreError::Backend(
                 "message forwarding is not implemented by the mock backend".into(),
             )),
+            CoreCommand::DeleteMessages { .. } => Err(CoreError::Backend(
+                "message deletion is not implemented by the mock backend".into(),
+            )),
             CoreCommand::SendText { chat_id, text } => {
                 if self.authorization != AuthorizationState::Ready {
                     return Err(CoreError::Backend("not authorized".into()));

@@ -54,6 +54,10 @@ data class NativeUiState(
     val pollVoteErrors: Map<Long, String> = emptyMap(),
     val forwardError: String? = null,
     val forwardSuccessCount: Long = 0,
+    val selectionGeneration: Long = 0,
+    val lastConnectionSessionGeneration: Long? = null,
+    val deletingMessages: Boolean = false,
+    val deleteError: String? = null,
     val busy: Boolean = false,
     val lastEventType: String = "none",
     val lastEventPayload: String = "",
@@ -154,6 +158,29 @@ private data class ParsedNativeState(
     val contacts: List<ContactListEntry>,
     val profiles: Map<Long, PeerProfileUi>,
 )
+
+internal fun NativeUiState.advanceSelectionGeneration(): NativeUiState = copy(
+    selectionGeneration = selectionGeneration + 1,
+    deletingMessages = false,
+    deleteError = if (deletingMessages) {
+        "Удаление прервано; обновите сообщения и проверьте результат"
+    } else {
+        deleteError
+    },
+)
+
+internal fun NativeUiState.recordConnectionSessionGeneration(generation: Long): NativeUiState =
+    when (lastConnectionSessionGeneration) {
+        null -> copy(lastConnectionSessionGeneration = generation)
+        generation -> this
+        else -> copy(lastConnectionSessionGeneration = generation).advanceSelectionGeneration()
+    }
+
+internal fun connectionSessionGenerationFromEvent(payload: String): Long? = runCatching {
+    val eventPayload = JSONObject(payload).optJSONObject("payload") ?: return@runCatching null
+    val token = eventPayload.optJSONObject("token") ?: return@runCatching null
+    token.optLong("generation", -1L).takeIf { it >= 0L }
+}.getOrNull()
 
 class NativeSessionViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -463,7 +490,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
     }
 
     fun loadMessages(chatId: Long, limit: Int = 100) {
-        _state.update { it.copy(busy = true, error = null) }
+        _state.update { it.copy(busy = true, error = null, deleteError = null) }
         sendCommand(
             JSONObject()
                 .put("type", "load_messages")
@@ -602,6 +629,29 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 it.copy(
                     pendingReactionKeys = it.pendingReactionKeys - key,
                     reactionErrors = it.reactionErrors + (key to "Не удалось отправить реакцию"),
+                )
+            }
+        }
+    }
+
+    fun deleteMessages(chatId: Long, messageIds: List<Long>) {
+        if (chatId == 0L || messageIds.isEmpty() || messageIds.size > 100 ||
+            messageIds.any { it <= 0L } || messageIds.distinct().size != messageIds.size
+        ) return
+        _state.update { it.copy(deletingMessages = true, deleteError = null, busy = true, error = null) }
+        val ids = JSONArray().apply { messageIds.forEach { put(it) } }
+        val accepted = sendCommand(
+            JSONObject()
+                .put("type", "delete_messages")
+                .put("payload", JSONObject().put("chat_id", chatId).put("message_ids", ids))
+                .toString(),
+        )
+        if (!accepted) {
+            _state.update {
+                it.copy(
+                    deletingMessages = false,
+                    deleteError = "Не удалось отправить запрос удаления",
+                    busy = false,
                 )
             }
         }
@@ -898,6 +948,27 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                     }
                 }
             }
+            "connection_lifecycle" -> {
+                val sessionGeneration = connectionSessionGenerationFromEvent(payload)
+                _state.update { current ->
+                    val updated = sessionGeneration?.let(current::recordConnectionSessionGeneration) ?: current
+                    updated.copy(
+                        lastEventType = type,
+                        lastEventPayload = payload,
+                    )
+                }
+            }
+            "messages_deleted" -> {
+                _state.update {
+                    it.copy(
+                        busy = false,
+                        deletingMessages = false,
+                        deleteError = null,
+                        lastEventType = type,
+                        lastEventPayload = payload,
+                    )
+                }
+            }
             "messages_forwarded" -> {
                 val (succeeded, failed, firstError) = runCatching {
                     val result = JSONObject(payload).optJSONObject("payload") ?: JSONObject()
@@ -978,6 +1049,8 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                         profileLoadingPeerId = if (it.profileLoadingPeerId != null) null else it.profileLoadingPeerId,
                         profileError = if (it.profileLoadingPeerId != null) message else it.profileError,
                         contactsLoading = false,
+                        deletingMessages = false,
+                        deleteError = if (it.deletingMessages) message else it.deleteError,
                         lastEventType = type,
                         lastEventPayload = payload,
                         error = message,
@@ -1004,6 +1077,16 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         _state.update { current ->
             current.clearPendingReactionsAfterConnectionChange().copy(
                 authorization = authorization,
+                selectionGeneration = if (
+                    authorization != AuthorizationUiStep.Ready &&
+                    current.authorization == AuthorizationUiStep.Ready
+                ) {
+                    current.selectionGeneration + 1
+                } else {
+                    current.selectionGeneration
+                },
+                deletingMessages = false,
+                deleteError = null,
                 busy = false,
                 contactsLoading = false,
                 lastEventType = "authorization_changed",

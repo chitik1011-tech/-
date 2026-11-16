@@ -29,6 +29,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
@@ -140,6 +141,10 @@ private fun TelegramRustApp(
     var forwardingSourceChatId by remember { mutableLongStateOf(0L) }
     var forwardingMessageIds by remember { mutableStateOf<List<Long>>(emptyList()) }
     var profilePeerId by rememberSaveable { mutableLongStateOf(0L) }
+    LaunchedEffect(state.selectionGeneration, state.authorization) {
+        showForwardTargets = false
+        forwardingMessageIds = emptyList()
+    }
     var confirmedJoinIntent by remember(incomingLink) { mutableStateOf<TelegramJoinInviteIntent?>(null) }
 
     when {
@@ -223,6 +228,9 @@ private fun TelegramRustApp(
                     reactionErrors = state.reactionErrors,
                     forwardingError = state.forwardError,
                     forwardSuccessCount = state.forwardSuccessCount,
+                    selectionGeneration = state.selectionGeneration,
+                    deletingMessages = state.deletingMessages,
+                    deleteError = state.deleteError,
                 ),
                 onBack = {
                     selectedChatId = 0L
@@ -264,6 +272,14 @@ private fun TelegramRustApp(
                     forwardingSourceChatId = sourceChatId
                     forwardingMessageIds = messageIds
                     showForwardTargets = messageIds.isNotEmpty()
+                },
+                onDelete = viewModel::deleteMessages,
+                onCopy = { text ->
+                    if (text.isNotBlank()) {
+                        context.getSystemService(android.content.ClipboardManager::class.java)
+                            ?.setPrimaryClip(android.content.ClipData.newPlainText("Telegram messages", text))
+                        Toast.makeText(context, "Сообщения скопированы", Toast.LENGTH_SHORT).show()
+                    }
                 },
                 onRetry = { viewModel.loadMessages(selectedChatId) },
                 onOpenProfile = {
