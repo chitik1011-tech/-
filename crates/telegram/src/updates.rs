@@ -647,11 +647,13 @@ async fn map_update(
                 .into_iter()
                 .collect()),
             tl::enums::Update::ContactsReset => Ok(vec![TelegramUpdate::ContactsRefreshRequested]),
-            tl::enums::Update::ReadHistoryInbox(update) => Ok(vec![TelegramUpdate::ReadReceiptUpdated {
-                chat_id: raw_peer_to_core(&update.peer),
-                direction: ReadDirection::Inbox,
-                max_message_id: i64::from(update.max_id),
-            }]),
+            tl::enums::Update::ReadHistoryInbox(update) => {
+                Ok(vec![TelegramUpdate::ReadReceiptUpdated {
+                    chat_id: raw_peer_to_core(&update.peer),
+                    direction: ReadDirection::Inbox,
+                    max_message_id: i64::from(update.max_id),
+                }])
+            }
             tl::enums::Update::ReadHistoryOutbox(update) => {
                 Ok(vec![TelegramUpdate::ReadReceiptUpdated {
                     chat_id: raw_peer_to_core(&update.peer),

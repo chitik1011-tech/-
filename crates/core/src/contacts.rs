@@ -18,6 +18,8 @@ pub struct Contact {
     pub display_name: String,
     pub username: Option<String>,
     pub is_mutual: bool,
+    #[serde(default)]
+    pub is_bot: bool,
 }
 
 impl Contact {
@@ -149,6 +151,7 @@ mod tests {
             display_name: format!("Person {user_id}"),
             username: username.map(str::to_owned),
             is_mutual: false,
+            is_bot: false,
         }
     }
 

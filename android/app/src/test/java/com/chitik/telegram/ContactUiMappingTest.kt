@@ -10,7 +10,7 @@ class ContactUiMappingTest {
     fun parsesContactsByStableUserIdAndIgnoresUntrustedFields() {
         val state = JSONObject(
             """{"by_user_id":{
-                "42":{"user_id":42,"display_name":"Ada Lovelace","username":"ada_l","is_mutual":true,"phone":"must-not-render"},
+                "42":{"user_id":42,"display_name":"Ada Lovelace","username":"ada_l","is_mutual":true,"is_bot":true,"phone":"must-not-render"},
                 "8":{"user_id":8,"display_name":"Grace Hopper","username":null,"is_mutual":false}
             }}""",
         )
@@ -19,6 +19,7 @@ class ContactUiMappingTest {
         assertEquals(listOf(8L, 42L), contacts.map(ContactListEntry::userId))
         assertEquals("ada_l", contacts[1].username)
         assertEquals("Ada Lovelace", contacts[1].displayName)
+        assertEquals(true, contacts[1].isBot)
         assertEquals(true, contacts[1].isMutual)
     }
 

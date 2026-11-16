@@ -45,6 +45,10 @@ pub(crate) async fn load_contacts(
     for user in response.users {
         let peer = User::from_raw(client, user);
         let user_id = peer_id_to_core(peer.id());
+        // Telegram's deleted-account stubs cannot resolve into a usable direct chat.
+        if peer.deleted() {
+            continue;
+        }
         let Some(is_mutual) = mutual_by_id.get(&user_id).copied() else {
             continue;
         };
@@ -65,6 +69,7 @@ pub(crate) async fn load_contacts(
             peer.last_name().unwrap_or_default(),
             peer.username(),
             is_mutual,
+            peer.is_bot(),
         )?;
         contacts.upsert(contact)?;
     }
@@ -79,6 +84,7 @@ fn contact_summary(
     last_name: &str,
     username: Option<&str>,
     is_mutual: bool,
+    is_bot: bool,
 ) -> tg_mobile_core::Result<Contact> {
     let display_name = [first_name.trim(), last_name.trim()]
         .into_iter()
@@ -95,6 +101,7 @@ fn contact_summary(
         display_name,
         username: username.map(str::to_owned),
         is_mutual,
+        is_bot,
     }
     .normalized()
 }
@@ -107,7 +114,7 @@ mod tests {
 
     #[test]
     fn maps_contact_identity_without_phone_data() {
-        let contact = contact_summary(42, "Ada", "Lovelace", Some("Ada_L"), true).unwrap();
+        let contact = contact_summary(42, "Ada", "Lovelace", Some("Ada_L"), true, false).unwrap();
         assert_eq!(contact.user_id, 42);
         assert_eq!(contact.display_name, "Ada Lovelace");
         assert_eq!(contact.username.as_deref(), Some("ada_l"));
@@ -118,9 +125,10 @@ mod tests {
 
     #[test]
     fn missing_server_names_use_a_non_sensitive_fallback() {
-        let contact = contact_summary(8, " ", "", None, false).unwrap();
+        let contact = contact_summary(8, " ", "", None, false, true).unwrap();
         assert_eq!(contact.display_name, "Telegram user");
         assert_eq!(contact.user_id, 8);
+        assert!(contact.is_bot);
     }
 
     #[tokio::test]

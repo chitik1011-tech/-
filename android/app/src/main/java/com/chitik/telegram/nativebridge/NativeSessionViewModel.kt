@@ -738,6 +738,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
             it.copy(
                 authorization = authorization,
                 busy = false,
+                contactsLoading = false,
                 lastEventType = "authorization_changed",
                 lastEventPayload = payload,
                 error = null,
@@ -746,6 +747,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
 
         if (authorization == AuthorizationUiStep.Ready) {
             loadChats()
+            loadContacts(offset = 0)
         }
     }
 
@@ -769,6 +771,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                     contactTotal = maxOf(it.contactTotal, contacts.size),
                     messages = messages,
                     busy = false,
+                    contactsLoading = false,
                     lastEventType = "state",
                     lastEventPayload = payloadWithoutContacts(payload),
                     error = null,
@@ -778,6 +781,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
             _state.update {
                 it.copy(
                     busy = false,
+                    contactsLoading = false,
                     error = "Invalid Rust state payload: ${error.message}",
                 )
             }

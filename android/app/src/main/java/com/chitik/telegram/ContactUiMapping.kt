@@ -17,6 +17,7 @@ internal fun parseContactListState(root: JSONObject?): List<ContactListEntry> {
             displayName = displayName,
             username = contact.optString("username").takeIf(String::isNotEmpty),
             isMutual = contact.optBoolean("is_mutual"),
+            isBot = contact.optBoolean("is_bot"),
         )
     }
 }
