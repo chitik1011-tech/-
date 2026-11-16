@@ -193,6 +193,7 @@ fn photo_attachment(photo: &Photo) -> MediaAttachment {
         width,
         height,
         duration_ms: None,
+        voice_waveform: None,
         filename: None,
         thumbnail: None,
         download_generation: 0,
@@ -221,11 +222,20 @@ fn document_attachment(
         width,
         height,
         duration_ms,
+        voice_waveform: voice_waveform(document),
         filename: document.name().map(str::to_owned),
         thumbnail,
         download_generation: 0,
         download_state: AttachmentDownloadState::NotDownloaded,
     }
+}
+
+fn voice_waveform(document: &Document) -> Option<Vec<u8>> {
+    let tl::enums::Document::Document(raw) = document.raw.document.as_ref()?;
+    raw.attributes.iter().find_map(|attribute| match attribute {
+        tl::enums::DocumentAttribute::Audio(audio) if audio.voice => audio.waveform.clone(),
+        _ => None,
+    })
 }
 
 fn document_kind(document: &Document) -> AttachmentKind {
@@ -605,29 +615,6 @@ pub(crate) async fn send_location(
         .send_message(peer, InputMessage::new().media(media))
         .await
         .map_err(|error| api_error("send location", error))?;
-    Ok(message_to_summary(&message))
-}
-
-pub(crate) async fn send_reply(
-    client: &Client,
-    peer: PeerRef,
-    text: String,
-    reply_to_message_id: i64,
-) -> tg_mobile_core::Result<MessageSummary> {
-    if text.trim().is_empty() {
-        return Err(CoreError::InvalidInput(
-            "reply text must not be empty".into(),
-        ));
-    }
-    let reply_id = i32::try_from(reply_to_message_id)
-        .map_err(|_| CoreError::InvalidInput("reply target exceeds Telegram range".into()))?;
-    let input = grammers_client::message::InputMessage::new()
-        .text(text)
-        .reply_to(Some(reply_id));
-    let message = client
-        .send_message(peer, input)
-        .await
-        .map_err(|error| api_error("send reply", error))?;
     Ok(message_to_summary(&message))
 }
 

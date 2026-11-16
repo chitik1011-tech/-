@@ -13,6 +13,7 @@ fn media(kind: AttachmentKind) -> MediaAttachment {
         width: Some(120),
         height: Some(80),
         duration_ms: Some(1_250),
+        voice_waveform: (kind == AttachmentKind::Voice).then_some(vec![1, 2, 3]),
         filename: Some("media.webp".into()),
         thumbnail: Some(AttachmentThumbnail {
             file_reference: "thumbnail-reference".into(),
