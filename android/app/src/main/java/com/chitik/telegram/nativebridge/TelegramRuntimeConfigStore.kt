@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import com.chitik.telegram.BuildConfig
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
 import java.security.KeyStore
@@ -77,7 +78,7 @@ object TelegramRuntimeConfigStore {
     fun load(context: Context): TelegramRuntimeConfig? = synchronized(lock) {
         val appContext = context.applicationContext
         val encoded = preferences(appContext).getString(ENCRYPTED_CONFIG_KEY, null)
-            ?: return@synchronized null
+            ?: return@synchronized buildTimeConfig(appContext)
         val encrypted = try {
             Base64.decode(encoded, Base64.NO_WRAP)
         } catch (error: IllegalArgumentException) {
@@ -102,6 +103,22 @@ object TelegramRuntimeConfigStore {
             appContext,
             stored.optInt(API_ID_FIELD, 0).toString(),
             stored.optString(API_HASH_FIELD, ""),
+        )
+    }
+
+    /**
+     * Release/CI builds receive the app-level Telegram credentials from BuildConfig.
+     * The values originate from TG_API_ID/TG_API_HASH build environment variables,
+     * so users never need to enter application credentials in the login UI.
+     */
+    private fun buildTimeConfig(context: Context): TelegramRuntimeConfig? {
+        if (BuildConfig.TELEGRAM_API_ID <= 0 || BuildConfig.TELEGRAM_API_HASH.isBlank()) {
+            return null
+        }
+        return TelegramRuntimeConfigProvider.fromUserInput(
+            context,
+            BuildConfig.TELEGRAM_API_ID.toString(),
+            BuildConfig.TELEGRAM_API_HASH,
         )
     }
 
