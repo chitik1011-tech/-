@@ -91,6 +91,7 @@ impl TelegramUpdate {
                 message_ids: message_ids.clone(),
                 pinned: *pinned,
                 pts: Some(*pts),
+                request_revision: None,
             }),
             Self::ContactsRefreshRequested => Some(CoreEvent::ContactsRefreshRequested),
             Self::ReadReceiptUpdated {

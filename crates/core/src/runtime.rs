@@ -104,6 +104,7 @@ where
                     generation,
                     sync_required,
                     pinned_revision,
+                    pinned_target_revision,
                     command,
                 } => {
                     // Reapply the operation's generation immediately before its RPC. This
@@ -122,6 +123,7 @@ where
                             generation,
                             sync_required,
                             pinned_revision,
+                            pinned_target_revision,
                             command,
                             result,
                         })
@@ -189,6 +191,7 @@ where
                         Err(error) => operation_error_events(&command, error),
                     };
                     attach_pinned_snapshot_revision(&mut events, result.pinned_revision);
+                    attach_pinned_action_revision(&mut events, result.pinned_target_revision);
                     complete_operation_events(&command, &mut events);
                     let initial_sync = result.sync_required
                         && reduced_state.connection_machine.phase() == LinkPhase::Synchronizing
@@ -518,12 +521,27 @@ where
                         )),
                         _ => None,
                     };
+                    let pinned_target_revision = match &command {
+                        CoreCommand::PinMessage { chat_id, message_id }
+                        | CoreCommand::UnpinMessage { chat_id, message_id } => Some((
+                            *chat_id,
+                            *message_id,
+                            reduced_state
+                                .pinned_message_target_revision
+                                .get(chat_id)
+                                .and_then(|revisions| revisions.get(message_id))
+                                .copied()
+                                .unwrap_or_default(),
+                        )),
+                        _ => None,
+                    };
                     if worker_tx
                         .try_send(WorkerRequest::Execute {
                             op_id,
                             generation,
                             sync_required,
                             pinned_revision,
+                            pinned_target_revision,
                             command: command.clone(),
                         })
                         .is_err()
@@ -612,6 +630,7 @@ where
                                 generation: sync_token,
                                 sync_required: true,
                                 pinned_revision: None,
+                                pinned_target_revision: None,
                                 command: CoreCommand::LoadChats { limit: 100 },
                             })
                             .is_err()
@@ -716,6 +735,7 @@ enum WorkerRequest {
         generation: crate::connection_machine::ConnectionToken,
         sync_required: bool,
         pinned_revision: Option<(i64, u64)>,
+        pinned_target_revision: Option<(i64, i64, u64)>,
         command: CoreCommand,
     },
 }
@@ -725,6 +745,7 @@ struct BackendResult {
     generation: crate::connection_machine::ConnectionToken,
     sync_required: bool,
     pinned_revision: Option<(i64, u64)>,
+    pinned_target_revision: Option<(i64, i64, u64)>,
     command: CoreCommand,
     result: Result<Vec<CoreEvent>>,
 }
@@ -757,7 +778,10 @@ fn operation_error_events(command: &CoreCommand, error: CoreError) -> Vec<CoreEv
             text.clone(),
             error,
         ))],
-        CoreCommand::PinMessage { chat_id, message_id } => {
+        CoreCommand::PinMessage {
+            chat_id,
+            message_id,
+        } => {
             vec![CoreEvent::PinnedMessageFailed {
                 chat_id: *chat_id,
                 message_id: *message_id,
@@ -765,7 +789,10 @@ fn operation_error_events(command: &CoreCommand, error: CoreError) -> Vec<CoreEv
                 error: error.to_string(),
             }]
         }
-        CoreCommand::UnpinMessage { chat_id, message_id } => {
+        CoreCommand::UnpinMessage {
+            chat_id,
+            message_id,
+        } => {
             vec![CoreEvent::PinnedMessageFailed {
                 chat_id: *chat_id,
                 message_id: *message_id,
@@ -814,9 +841,38 @@ fn attach_pinned_snapshot_revision(events: &mut [CoreEvent], revision: Option<(i
     }
 }
 
+fn attach_pinned_action_revision(events: &mut [CoreEvent], revision: Option<(i64, i64, u64)>) {
+    let Some((requested_chat_id, requested_message_id, requested_revision)) = revision else {
+        return;
+    };
+    for event in events {
+        if let CoreEvent::PinnedMessagesChanged {
+            chat_id,
+            message_ids,
+            pts,
+            request_revision,
+            ..
+        } = event
+        {
+            if *chat_id == requested_chat_id
+                && pts.is_none()
+                && message_ids.contains(&requested_message_id)
+            {
+                *request_revision = Some(requested_revision);
+            }
+        }
+    }
+}
+
 fn complete_operation_events(command: &CoreCommand, events: &mut Vec<CoreEvent>) {
-    if let CoreCommand::PinMessage { chat_id, message_id }
-    | CoreCommand::UnpinMessage { chat_id, message_id } = command
+    if let CoreCommand::PinMessage {
+        chat_id,
+        message_id,
+    }
+    | CoreCommand::UnpinMessage {
+        chat_id,
+        message_id,
+    } = command
     {
         let pinned = matches!(command, CoreCommand::PinMessage { .. });
         let confirmed = events.iter().any(|event| {

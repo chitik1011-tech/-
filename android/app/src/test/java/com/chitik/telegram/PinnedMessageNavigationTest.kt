@@ -12,8 +12,8 @@ class PinnedMessageNavigationTest {
         assertFalse(shouldClearPinnedFailure("9:7", 9, listOf(3), null))
         assertFalse(shouldClearPinnedFailure("9:7", 10, listOf(7), null))
         assertTrue(shouldClearPinnedFailure("9:7", 9, listOf(7, 8), null))
-        assertFalse(shouldClearPinnedFailure("9:7", 9, listOf(7), 42L))
-        assertFalse(shouldResolvePinnedAction(42L, 9, listOf(7)))
+        assertFalse(shouldClearPinnedFailure("9:7", 9, listOf(7), 42))
+        assertFalse(shouldResolvePinnedAction(42, 9, listOf(7)))
         assertTrue(shouldResolvePinnedAction(null, 9, listOf(7)))
     }
 

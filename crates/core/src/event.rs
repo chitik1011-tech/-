@@ -79,6 +79,9 @@ pub enum CoreEvent {
         /// Telegram per-peer update sequence, when supplied by MTProto.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pts: Option<i32>,
+        /// Per-message revision captured when a no-pts pin RPC was sent.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        request_revision: Option<u64>,
     },
     /// A pin or unpin request failed for one specific message.
     PinnedMessageFailed {

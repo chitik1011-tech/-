@@ -59,10 +59,10 @@ data class NativeUiState(
         get() = libraryLoaded && nativeHandle != 0L && error == null
 }
 
-internal fun shouldResolvePinnedAction(pts: Long?, chatId: Long, messageIds: List<Long>): Boolean =
+internal fun shouldResolvePinnedAction(pts: Int?, chatId: Long, messageIds: List<Long>): Boolean =
     pts == null && messageIds.isNotEmpty()
 
-internal fun shouldClearPinnedFailure(failureKey: String?, chatId: Long, messageIds: List<Long>, pts: Long?): Boolean =
+internal fun shouldClearPinnedFailure(failureKey: String?, chatId: Long, messageIds: List<Long>, pts: Int?): Boolean =
     shouldResolvePinnedAction(pts, chatId, messageIds) &&
         failureKey != null && messageIds.any { "$chatId:$it" == failureKey }
 
