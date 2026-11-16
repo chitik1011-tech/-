@@ -22,6 +22,25 @@ class MessageMutationSupportTest {
         assertFalse(mutationEventAcknowledges("message_mutation_succeeded", 10, 42, 10, 43))
     }
 
+    @Test
+    fun sessionReplacementMarksInFlightMutationUnconfirmed() {
+        val interrupted = messageMutationStateAfterSessionChange(
+            pending = true,
+            currentError = null,
+            reason = "Session changed",
+        )
+        assertFalse(interrupted.pending)
+        assertTrue(interrupted.error == "Session changed")
+
+        val idle = messageMutationStateAfterSessionChange(
+            pending = false,
+            currentError = "Keep this error",
+            reason = "Session changed",
+        )
+        assertFalse(idle.pending)
+        assertTrue(idle.error == "Keep this error")
+    }
+
     private fun message(text: String) = ConversationMessageUi(
         id = "12",
         chatId = "-1001",
