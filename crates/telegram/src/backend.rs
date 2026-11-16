@@ -761,7 +761,11 @@ impl GrammersBackend {
                     },
                 )]
             }
-            CoreCommand::ReplyMessage { chat_id, reply_to_message_id, text } => {
+            CoreCommand::ReplyMessage {
+                chat_id,
+                reply_to_message_id,
+                text,
+            } => {
                 self.require_ready().await?;
                 let peer = find_peer(&self.peers, chat_id)
                     .await

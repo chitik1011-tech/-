@@ -215,10 +215,16 @@ impl CoreCommand {
                 validate_chat_id(*chat_id)?;
                 require_non_blank("message text", text)
             }
-            Self::ReplyMessage { chat_id, reply_to_message_id, text } => {
+            Self::ReplyMessage {
+                chat_id,
+                reply_to_message_id,
+                text,
+            } => {
                 validate_chat_id(*chat_id)?;
                 if *reply_to_message_id <= 0 {
-                    return Err(CoreError::InvalidInput("reply target message id must be positive".into()));
+                    return Err(CoreError::InvalidInput(
+                        "reply target message id must be positive".into(),
+                    ));
                 }
                 require_non_blank("reply text", text)
             }

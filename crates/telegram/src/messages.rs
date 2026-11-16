@@ -458,14 +458,18 @@ pub(crate) async fn send_reply(
     reply_to_message_id: i64,
 ) -> tg_mobile_core::Result<MessageSummary> {
     if text.trim().is_empty() {
-        return Err(CoreError::InvalidInput("reply text must not be empty".into()));
+        return Err(CoreError::InvalidInput(
+            "reply text must not be empty".into(),
+        ));
     }
     let reply_id = i32::try_from(reply_to_message_id)
         .map_err(|_| CoreError::InvalidInput("reply target exceeds Telegram range".into()))?;
     let input = grammers_client::message::InputMessage::new()
         .text(text)
         .reply_to(reply_id);
-    let message = client.send_message(peer, input).await
+    let message = client
+        .send_message(peer, input)
+        .await
         .map_err(|error| api_error("send reply", error))?;
     Ok(message_to_summary(&message))
 }
