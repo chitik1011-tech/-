@@ -670,8 +670,14 @@ impl GrammersBackend {
             }
             CoreCommand::LoadChats { limit } => {
                 self.require_ready().await?;
-                let chats = load_chats(&self.client, &self.peers, limit).await?;
-                vec![CoreEvent::ChatsLoaded(chats)]
+                let (chats, capabilities) = load_chats(&self.client, &self.peers, limit).await?;
+                let mut events = vec![CoreEvent::ChatsLoaded(chats)];
+                events.extend(
+                    capabilities
+                        .into_iter()
+                        .map(CoreEvent::ChatCapabilitiesUpdated),
+                );
+                events
             }
             CoreCommand::LoadProfile { peer_id } => {
                 self.require_ready().await?;
@@ -711,18 +717,28 @@ impl GrammersBackend {
             }
             CoreCommand::LoadMessages { chat_id, limit } => {
                 self.require_ready().await?;
-                let peer = find_peer(&self.peers, chat_id)
+                let peer_ref = find_peer(&self.peers, chat_id)
                     .await
                     .ok_or(TelegramBackendError::UnknownChat(chat_id))?;
-                let mut loaded = load_messages(&self.client, peer, limit).await?;
+                let peer = self
+                    .client
+                    .resolve_peer(peer_ref)
+                    .await
+                    .map_err(|error| crate::error::api_error("load chat permissions", error))?;
+                let mut capabilities = crate::capabilities::from_peer(&peer, chat_id);
+                crate::capabilities::fill_slow_mode(&self.client, &peer, &mut capabilities).await;
+                let mut loaded = load_messages(&self.client, peer_ref, limit).await?;
                 self.hydrate_cached_media(&mut loaded.messages);
                 for poll in &loaded.polls {
                     remember_poll(&self.polls, poll.clone()).await;
                 }
-                let mut events = vec![CoreEvent::MessagesLoaded {
-                    chat_id,
-                    messages: loaded.messages,
-                }];
+                let mut events = vec![
+                    CoreEvent::ChatCapabilitiesUpdated(capabilities),
+                    CoreEvent::MessagesLoaded {
+                        chat_id,
+                        messages: loaded.messages,
+                    },
+                ];
                 events.extend(loaded.polls.into_iter().map(CoreEvent::PollUpdated));
                 events
             }

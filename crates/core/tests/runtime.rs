@@ -209,11 +209,14 @@ async fn mock_backend_can_authorize_load_chats_and_send() {
     .await
     .unwrap();
 
-    assert!(matches!(
-        timeout(Duration::from_secs(1), events.recv())
-            .await
-            .unwrap()
-            .unwrap(),
-        CoreEvent::MessageAdded(message) if message.text == "hello from rust"
-    ));
+    timeout(Duration::from_secs(1), async {
+        loop {
+            if let CoreEvent::MessageAdded(message) = events.recv().await.unwrap() {
+                assert_eq!(message.text, "hello from rust");
+                break;
+            }
+        }
+    })
+    .await
+    .expect("mock send did not emit a message");
 }

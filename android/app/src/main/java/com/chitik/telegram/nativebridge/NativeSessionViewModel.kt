@@ -6,6 +6,8 @@ import androidx.lifecycle.viewModelScope
 import com.chitik.telegram.AuthorizationUiStep
 import com.chitik.telegram.ChatListEntry
 import com.chitik.telegram.ChatListPreview
+import com.chitik.telegram.ChatCapabilitiesUi
+import com.chitik.telegram.parseChatCapabilities
 import com.chitik.telegram.ConversationMessageUi
 import com.chitik.telegram.ConversationReactionUi
 import com.chitik.telegram.ReactionRevisionUi
@@ -46,6 +48,7 @@ data class NativeUiState(
     val contacts: List<ContactListEntry> = emptyList(),
     val contactTotal: Int = 0,
     val contactsLoading: Boolean = false,
+    val chatCapabilities: Map<Long, ChatCapabilitiesUi> = emptyMap(),
     val messages: Map<Long, List<ConversationMessageUi>> = emptyMap(),
     val pendingReactionKeys: Set<String> = emptySet(),
     val reactionConnectionToken: Pair<Long, Long>? = null,
@@ -157,6 +160,7 @@ private data class ParsedNativeState(
     val messages: Map<Long, List<ConversationMessageUi>>,
     val contacts: List<ContactListEntry>,
     val profiles: Map<Long, PeerProfileUi>,
+    val chatCapabilities: Map<Long, ChatCapabilitiesUi>,
 )
 
 internal fun NativeUiState.advanceSelectionGeneration(): NativeUiState = copy(
@@ -1112,16 +1116,23 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
             val messages = parseMessages(root.optJSONObject("messages"), polls, readOutboxMaxIds)
             val profiles = parseProfiles(root.optJSONObject("profiles") ?: JSONObject())
             val contacts = parseContactListState(root.optJSONObject("contacts"))
-            ParsedNativeState(authorization, chats, messages, contacts, profiles)
+            val capabilities = parseChatCapabilities(root.optJSONObject("chat_capabilities"))
+            ParsedNativeState(authorization, chats, messages, contacts, profiles, capabilities)
         }.onSuccess { parsed ->
             _state.update {
                 it.copy(
                     authorization = parsed.authorization,
-                    chats = parsed.chats,
+                    chats = parsed.chats.map { chat ->
+                        chat.copy(
+                            capabilities = parsed.chatCapabilities[chat.id]
+                                ?: ChatCapabilitiesUi(),
+                        )
+                    },
                     contacts = parsed.contacts,
                     contactTotal = maxOf(it.contactTotal, parsed.contacts.size),
                     messages = parsed.messages,
                     profiles = parsed.profiles,
+                    chatCapabilities = parsed.chatCapabilities,
                     busy = false,
                     contactsLoading = false,
                     lastEventType = "state",

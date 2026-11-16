@@ -2,6 +2,7 @@
 
 pub mod activity;
 pub mod backend;
+pub mod capabilities;
 pub mod command;
 pub mod connection;
 pub mod connection_machine;
@@ -28,6 +29,7 @@ pub use backend::{
     backend_update_channel, BackendFuture, BackendUpdateReceiver, BackendUpdateSender,
     TelegramBackend, DEFAULT_BACKEND_UPDATE_CAPACITY,
 };
+pub use capabilities::{CapabilityValue, ChatAction, ChatCapabilities, ChatKind};
 pub use command::{CoreCommand, MAX_CHAT_LOAD_LIMIT, MAX_MESSAGE_LOAD_LIMIT, MAX_REACTION_BYTES};
 pub use connection::ConnectionState;
 pub use connection_machine::{

@@ -161,6 +161,7 @@ data class ConversationScreenState(
     val selectionGeneration: Long = 0,
     val deletingMessages: Boolean = false,
     val deleteError: String? = null,
+    val capabilities: ChatCapabilitiesUi = ChatCapabilitiesUi(),
 )
 
 internal fun selectedForwardMessageIds(messages: List<ConversationMessageUi>, selectedIds: Set<Long>): List<Long> =
@@ -244,10 +245,10 @@ fun ConversationScreen(
         hasError = state.error != null,
     )
     val latestMessageId = state.messages.lastOrNull()?.id
-    val submitMessage = remember(state.chatId, state.draft, state.sending, onSend) {
+    val submitMessage = remember(state.chatId, state.draft, state.sending, state.capabilities, onSend) {
         {
             val text = state.draft.trim()
-            if (text.isNotEmpty() && !state.sending) {
+            if (text.isNotEmpty() && !state.sending && state.capabilities.canSendNow == true) {
                 onSend(state.chatId, text)
             }
         }
@@ -317,9 +318,11 @@ fun ConversationScreen(
                                 )
                                 DropdownMenuItem(
                                     text = { Text("Переслать") },
-                                    enabled = ordered.isNotEmpty(),
+                                    enabled = ordered.isNotEmpty() && state.capabilities.canForwardMessages == true,
                                     onClick = {
-                                        state.chatId.toLongOrNull()?.let { onForward(it, ordered) }
+                                        if (state.capabilities.canForwardMessages == true) {
+                                            state.chatId.toLongOrNull()?.let { onForward(it, ordered) }
+                                        }
                                         selectionMenuOpen = false
                                     },
                                 )
@@ -351,13 +354,32 @@ fun ConversationScreen(
         },
         bottomBar = {
             if (!selectionActive) {
-                ComposerBar(
-                    draft = state.draft,
-                    sending = state.sending,
-                    onDraftChange = onDraftChange,
-                    onSend = submitMessage,
-                    onSendLocation = { onSendLocation(state.chatId) },
-                )
+                Column {
+                    if (state.capabilities.canSendNow != true) {
+                        val notice = when {
+                            state.capabilities.canSendNow == null -> "Права отправки пока неизвестны. Обновите список чатов."
+                            state.capabilities.slowModeEnabled == true &&
+                                (state.capabilities.slowModeRemainingSeconds ?: 0L) > 0L ->
+                                "Медленный режим: подождите ${state.capabilities.slowModeRemainingSeconds} с."
+                            else -> "Telegram сейчас запрещает отправку в этом чате."
+                        }
+                        Text(
+                            text = notice,
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    ComposerBar(
+                        draft = state.draft,
+                        sending = state.sending,
+                        canSend = state.capabilities.canSendNow == true,
+                        canSendMedia = state.capabilities.canSendMedia == true,
+                        onDraftChange = onDraftChange,
+                        onSend = submitMessage,
+                        onSendLocation = { onSendLocation(state.chatId) },
+                    )
+                }
             } else {
                 TextButton(onClick = { selectedMessageIds = emptySet() }) { Text("Отменить выбор") }
             }
@@ -1237,11 +1259,13 @@ private fun formatCoordinates(point: ConversationGeoPointUi): String =
 private fun ComposerBar(
     draft: String,
     sending: Boolean,
+    canSend: Boolean,
+    canSendMedia: Boolean,
     onDraftChange: (String) -> Unit,
     onSend: () -> Unit,
     onSendLocation: () -> Unit,
 ) {
-    val canSend = draft.isNotBlank() && !sending
+    val canSubmit = draft.isNotBlank() && !sending && canSend
 
     Surface(
         tonalElevation = 2.dp,
@@ -1261,7 +1285,7 @@ private fun ComposerBar(
             ) {
                 TextButton(
                     onClick = onSendLocation,
-                    enabled = !sending,
+                    enabled = !sending && canSend && canSendMedia,
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 12.dp),
                 ) {
                     Text("📍")
@@ -1278,12 +1302,12 @@ private fun ComposerBar(
                         imeAction = ImeAction.Send,
                     ),
                     keyboardActions = KeyboardActions(
-                        onSend = { if (canSend) onSend() },
+                        onSend = { if (canSubmit) onSend() },
                     ),
                 )
                 Button(
                     onClick = onSend,
-                    enabled = canSend,
+                    enabled = canSubmit,
                     contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
                 ) {
                     Text(if (sending) "…" else "Отправить")
