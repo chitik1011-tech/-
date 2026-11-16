@@ -921,10 +921,16 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
     /** Only live, generation-validated JNI events reach this path. Never notify from snapshots. */
     private fun handleNotificationEvent(generation: Long, type: String, payload: String) {
         if (type == "authorization_changed") {
-            if (_state.value.authorization == AuthorizationUiStep.Ready &&
-                !payload.contains("ready", ignoreCase = true)) {
+            val incomingReady = runCatching {
+                JSONObject(payload).optString("payload") == "Ready"
+            }.getOrDefault(false)
+            val wasReady = _state.value.authorization == AuthorizationUiStep.Ready
+            if (wasReady && !incomingReady) {
                 notifications.cancelAll()
                 notificationPlanner.reset(null)
+            } else if (!wasReady && incomingReady) {
+                // Authentication can restart inside the same JNI handle.
+                notificationPlanner.reset(generation)
             }
             return
         }
