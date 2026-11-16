@@ -209,15 +209,8 @@ pub(crate) fn spawn_media_send(
             .send(Ok(CoreEvent::MessageSendStateChanged(sending)))
             .await;
 
-        match send_media_idempotent(
-            &client,
-            peer,
-            uploaded,
-            &media,
-            caption.clone(),
-            client_id,
-        )
-        .await
+        match send_media_idempotent(&client, peer, uploaded, &media, caption.clone(), client_id)
+            .await
         {
             Ok(message) => {
                 let _ = transfers.complete(active);
