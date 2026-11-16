@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 12355)
-Total output lines: 1241
-
 package com.chitik.telegram.nativebridge
 
 import android.app.Application
@@ -679,7 +676,40 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                             (it.contacts + page.contacts).distinctBy(ContactListEntry::userId)
                                 .sortedBy(ContactListEntry::userId)
                         }
-          …355 tokens truncated…                 it.votingPollIds - pollId
+                        it.copy(
+                            contacts = contacts,
+                            contactsLoading = false,
+                            contactTotal = page.total,
+                            lastEventType = type,
+                            // Keep contact names and usernames out of diagnostic state.
+                            lastEventPayload = "{\"offset\":${page.offset},\"count\":${page.contacts.size},\"total\":${page.total}}",
+                            error = null,
+                        )
+                    }
+                }
+            }
+            "contacts_refresh_requested" -> loadContacts(offset = 0)
+            "messages_loaded" -> {
+                val target = parseReadTarget(payload)
+                _state.update {
+                    it.copy(
+                        busy = false,
+                        contactsLoading = false,
+                        lastEventType = type,
+                        lastEventPayload = payload,
+                        error = null,
+                    )
+                }
+                target?.let { (chatId, maxMessageId) ->
+                    markRead(chatId, maxMessageId)
+                }
+            }
+            "poll_updated" -> {
+                val pollId = parsePollEventId(payload)
+                _state.update {
+                    it.copy(
+                        votingPollIds = if (pollId != null) {
+                            it.votingPollIds - pollId
                         } else {
                             it.votingPollIds
                         },
@@ -855,6 +885,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         }
     }
 
+    // Profiles are fetched on demand, so retain only the most recent cache entries.
     private fun boundedProfiles(
         current: Map<Long, PeerProfileUi>,
         profile: PeerProfileUi,
