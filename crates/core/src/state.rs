@@ -761,6 +761,12 @@ impl CoreState {
             CoreEvent::MessageSendStateChanged(update) => {
                 let client_id = update.client_id;
                 let mut update = update.clone();
+                if update.media.is_some() {
+                    let token = self.connection_machine.token();
+                    if update.session_generation != token.generation || update.session_epoch != token.epoch {
+                        return;
+                    }
+                }
                 if let Some(existing) = self.send_ledger.get(&client_id) {
                     if !existing.same_payload(&update) {
                         self.last_error = Some(format!(
