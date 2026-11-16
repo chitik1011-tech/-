@@ -1478,7 +1478,6 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 deletingMessages = false,
                 deleteError = null,
                 busy = false,
-                contactsLoading = false,
                 lastEventType = "authorization_changed",
                 lastEventPayload = payload,
                 error = null,
