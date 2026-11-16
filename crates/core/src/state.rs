@@ -128,6 +128,15 @@ impl CoreState {
     pub fn profile(&self, peer_id: i64) -> Option<&PeerProfile> {
         self.profiles.get(&peer_id)
     }
+
+    fn clear_authenticated_session(&mut self) {
+        let connection_machine = self.connection_machine.clone();
+        let running = self.running;
+        *self = Self::default();
+        self.connection_machine = connection_machine;
+        self.connection_state = connection_machine.transport_state();
+        self.running = running;
+    }
     /// Validate persisted or externally constructed state invariants.
     pub fn validate(&self) -> crate::error::Result<()> {
         use crate::error::CoreError;
@@ -299,14 +308,17 @@ impl CoreState {
                 self.chat_capabilities.clear();
             }
             CoreEvent::ConnectionLifecycle { token, event } => {
+                let outcome = self.connection_machine.apply(*token, *event);
                 if matches!(
-                    self.connection_machine.apply(*token, *event),
-                    Ok(Outcome::Changed { .. })
+                    outcome,
+                    Ok(Outcome::Changed { .. } | Outcome::Duplicate)
                 ) {
                     self.connection_state = self.connection_machine.transport_state();
-                    if matches!(
+                    if matches!(*event, LinkEvent::Logout) {
+                        self.clear_authenticated_session();
+                    } else if matches!(
                         *event,
-                        LinkEvent::TransportLost | LinkEvent::Logout | LinkEvent::Shutdown
+                        LinkEvent::TransportLost | LinkEvent::Shutdown
                     ) {
                         self.chat_capabilities.clear();
                     }
@@ -1351,6 +1363,50 @@ mod message_ordering_tests {
             state.chat(42).unwrap().last_message.as_ref().unwrap().id,
             10
         );
+    }
+
+
+    #[test]
+    fn logout_invalidates_generation_and_clears_account_scoped_caches() {
+        let mut state = CoreState::default();
+        seed_chat(&mut state, 0);
+        state.reduce(&CoreEvent::MessageAdded(message(7, 1, false)));
+        state.pinned_messages.insert(42, vec![7]);
+        state.outbox.insert(1, OutgoingSend::sending(1, 42, "pending"));
+        state.send_ledger.insert(1, OutgoingSend::sending(1, 42, "pending"));
+        state.last_error = Some("old session error".into());
+
+        state.reduce(&CoreEvent::ConnectionSessionStarted);
+        let token = state.connection_machine.token();
+        state.reduce(&CoreEvent::ConnectionLifecycle {
+            token,
+            event: LinkEvent::TransportConnected,
+        });
+        let token = state.connection_machine.token();
+        state.reduce(&CoreEvent::ConnectionLifecycle {
+            token,
+            event: LinkEvent::SyncStarted,
+        });
+        let token = state.connection_machine.token();
+        state.reduce(&CoreEvent::ConnectionLifecycle {
+            token,
+            event: LinkEvent::SyncCompleted,
+        });
+        let token = state.connection_machine.token();
+
+        state.reduce(&CoreEvent::ConnectionLifecycle {
+            token,
+            event: LinkEvent::Logout,
+        });
+
+        assert!(state.account.chats.is_empty());
+        assert!(state.messages.is_empty());
+        assert!(state.pinned_messages.is_empty());
+        assert!(state.outbox.is_empty());
+        assert!(state.send_ledger.is_empty());
+        assert!(state.last_error.is_none());
+        assert_eq!(state.connection_machine.phase(), LinkPhase::Disconnected);
+        assert_ne!(state.connection_machine.token(), token);
     }
 }
 

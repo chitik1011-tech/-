@@ -887,6 +887,12 @@ impl MessageDeduplicator {
             .await
             .insert_if_new((message.chat_id, message.id))
     }
+
+    pub(crate) async fn clear(&self) {
+        let mut recent = self.recent.lock().await;
+        recent.keys.clear();
+        recent.order.clear();
+    }
 }
 
 #[cfg(test)]

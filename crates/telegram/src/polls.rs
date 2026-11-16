@@ -24,6 +24,12 @@ pub(crate) fn new_poll_registry() -> PollRegistry {
     Arc::new(Mutex::new(PollRegistryState::default()))
 }
 
+pub(crate) async fn clear_poll_registry(registry: &PollRegistry) {
+    let mut state = registry.lock().await;
+    state.polls.clear();
+    state.order.clear();
+}
+
 pub(crate) async fn remember_poll(registry: &PollRegistry, poll: PollSummary) {
     let mut state = registry.lock().await;
     if !state.polls.contains_key(&poll.id) {
