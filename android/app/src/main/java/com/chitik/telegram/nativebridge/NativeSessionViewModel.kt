@@ -598,7 +598,6 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
     fun reportLocationError(message: String) {
         setErrorIfOpen(message)
     }
-    }
 
     fun forwardMessages(sourceChatId: Long, messageIds: List<Long>, destinationChatId: Long) {
         if (sourceChatId == 0L || destinationChatId == 0L || messageIds.isEmpty()) return
