@@ -46,7 +46,7 @@ use crate::{
         remember_poll,
     },
     updates::{TelegramUpdate, UpdateWorkerInput, run_update_worker},
-    uploads::spawn_media_send,
+    uploads::{MediaSendStage, spawn_media_send},
 };
 
 const MESSAGE_DEDUP_CAPACITY: usize = 4096;
@@ -74,7 +74,7 @@ struct ActiveMediaSendTask {
     chat_id: i64,
     media: OutgoingMediaAttachment,
     caption: String,
-    send_stage: Arc<AtomicBool>,
+    send_stage: Arc<MediaSendStage>,
     handle: JoinHandle<()>,
 }
 
@@ -410,7 +410,7 @@ impl GrammersBackend {
             },
         };
 
-        let send_stage = Arc::new(AtomicBool::new(false));
+        let send_stage = Arc::new(MediaSendStage::default());
         let handle = spawn_media_send(
             self.client.clone(),
             peer,
@@ -449,7 +449,7 @@ impl GrammersBackend {
         let Some(active) = self.media_send_tasks.get(&client_id) else {
             return Ok(Vec::new());
         };
-        if active.send_stage.load(Ordering::Acquire) {
+        if !active.send_stage.try_cancel() {
             return Ok(Vec::new());
         }
         let snapshot = self
@@ -462,10 +462,10 @@ impl GrammersBackend {
         if snapshot.token != active.transfer_token {
             return Ok(Vec::new());
         }
-        let cancelled = match self.transfers.cancel(snapshot.token) {
-            Ok(token) => token,
-            Err(_) => return Ok(Vec::new()),
-        };
+        let cancelled_generation = self
+            .transfers
+            .cancel(snapshot.token)
+            .map_or(active.transfer_generation.saturating_add(1), |token| token.generation);
         let Some(active) = self.media_send_tasks.remove(&client_id) else {
             return Ok(Vec::new());
         };
@@ -480,7 +480,7 @@ impl GrammersBackend {
             active
                 .transfer_generation
                 .saturating_add(1)
-                .max(cancelled.generation),
+                .max(cancelled_generation),
         )
         .with_session_token(active.session_generation, active.session_epoch);
         Ok(vec![CoreEvent::MessageSendStateChanged(update)])
