@@ -1743,7 +1743,9 @@ mod pin_failure_tests {
 #[cfg(test)]
 mod interrupted_send_recovery_tests {
     use super::recover_interrupted_send;
-    use crate::send::{OutgoingMediaAttachment, OutgoingMediaKind, OutgoingSend, OutgoingSendState};
+    use crate::send::{
+        OutgoingMediaAttachment, OutgoingMediaKind, OutgoingSend, OutgoingSendState,
+    };
 
     fn video_media() -> OutgoingMediaAttachment {
         OutgoingMediaAttachment {
@@ -1773,7 +1775,10 @@ mod interrupted_send_recovery_tests {
         assert_eq!(recovered.session_epoch, 12);
         assert!(matches!(
             recovered.state,
-            OutgoingSendState::Failed { retryable: true, .. }
+            OutgoingSendState::Failed {
+                retryable: true,
+                ..
+            }
         ));
     }
 
@@ -1788,7 +1793,10 @@ mod interrupted_send_recovery_tests {
         assert_eq!(recovered.transfer_generation, 4);
         assert!(matches!(
             recovered.state,
-            OutgoingSendState::Failed { retryable: true, .. }
+            OutgoingSendState::Failed {
+                retryable: true,
+                ..
+            }
         ));
     }
 
