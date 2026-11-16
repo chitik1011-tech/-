@@ -65,14 +65,16 @@ class OutgoingTextSendSupportTest {
     }
 
     @Test
-    fun pendingSendingConfirmedReleasesComposer() {
+    fun unknownSendOutcomeReleasesComposerWithoutMakingTheSendRetryable() {
         val id = 31L
         val pending = NativeUiState(activeTextSendId = id, activeTextSendChatId = 99L, activeTextSendText = "hello")
         assertTrue(pending.sendingText)
         val sending = pending.applyOutgoingTextSend(send(id, "sending"))
         assertTrue(sending.sendingText)
         val waiting = sending.applyOutgoingTextSend(send(id, "awaiting_confirmation"))
-        assertTrue(waiting.sendingText)
+        assertFalse(waiting.sendingText)
+        assertEquals("awaiting_confirmation", waiting.outbox[id]?.status)
+        assertFalse(waiting.outbox[id]?.canRetry == true)
         val confirmed = waiting.applyOutgoingTextSend(send(id, "sent"))
         assertFalse(confirmed.sendingText)
         assertNull(confirmed.failedTextSendText)
