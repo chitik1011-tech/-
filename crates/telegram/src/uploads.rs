@@ -383,4 +383,3 @@ mod tests {
         assert!(!sending.try_begin_send());
     }
 }
-
