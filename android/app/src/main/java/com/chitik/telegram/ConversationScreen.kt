@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.lazy.LazyColumn
@@ -31,6 +32,8 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
@@ -124,10 +127,26 @@ data class ConversationMessageUi(
     val poll: ConversationPollUi? = null,
     val pollVoting: Boolean = false,
     val pollError: String? = null,
+    val reactions: List<ConversationReactionUi> = emptyList(),
+    val reactionRevision: ReactionRevisionUi? = null,
     val forwardedFrom: String? = null,
     val serviceAction: ServiceActionUi? = null,
     val location: ConversationLocationUi? = null,
 )
+
+data class ReactionRevisionUi(val generation: Long, val epoch: Long, val sequence: Long) : Comparable<ReactionRevisionUi> {
+    override fun compareTo(other: ReactionRevisionUi): Int =
+        compareValuesBy(this, other, ReactionRevisionUi::generation, ReactionRevisionUi::epoch, ReactionRevisionUi::sequence)
+}
+
+data class ConversationReactionUi(
+    val type: String,
+    val value: String,
+    val count: Int,
+    val chosenByMe: Boolean,
+) {
+    val display: String get() = if (type == "emoji") value else "✨"
+}
 
 data class ConversationScreenState(
     val chatId: String,
@@ -137,6 +156,8 @@ data class ConversationScreenState(
     val loading: Boolean = false,
     val sending: Boolean = false,
     val error: String? = null,
+    val pendingReactionKeys: Set<String> = emptySet(),
+    val reactionErrors: Map<String, String> = emptyMap(),
     val forwardingError: String? = null,
     val forwardSuccessCount: Long = 0,
     val selectionGeneration: Long = 0,
@@ -184,6 +205,7 @@ fun ConversationScreen(
     onDraftChange: (String) -> Unit,
     onSend: (chatId: String, text: String) -> Unit,
     onPollVote: (poll: ConversationPollUi, optionIds: List<List<Int>>) -> Unit,
+    onReaction: (chatId: String, messageId: String, reaction: ConversationReactionUi?) -> Unit,
     onSendLocation: (chatId: String) -> Unit,
     onOpenLocation: (ConversationLocationUi) -> Unit,
     onForward: (chatId: Long, messageIds: List<Long>) -> Unit,
@@ -421,6 +443,9 @@ fun ConversationScreen(
                                     viewerKey = "${message.id}:${attachment.index}"
                                 },
                                 onOpenDocument = onOpenDocument,
+                                reactionPending = "${message.chatId}:${message.id}" in state.pendingReactionKeys,
+                                reactionError = state.reactionErrors["${message.chatId}:${message.id}"],
+                                onReaction = { reaction -> onReaction(message.chatId, message.id, reaction) },
                                 selected = message.id.toLongOrNull()?.let { it in selectedMessageIds } == true,
                                 onClick = {
                                     message.id.toLongOrNull()?.let { id ->
@@ -511,6 +536,9 @@ private fun MessageBubble(
     onCancelMedia: (attachmentIndex: Int) -> Unit,
     onOpenViewer: (MediaAttachmentUi) -> Unit,
     onOpenDocument: (MediaAttachmentUi) -> Unit,
+    reactionPending: Boolean,
+    reactionError: String?,
+    onReaction: (ConversationReactionUi?) -> Unit,
     selected: Boolean,
     onClick: () -> Unit,
     onLongPress: () -> Unit,
@@ -595,6 +623,7 @@ private fun MessageBubble(
                         onVote = { optionIds -> onPollVote(poll, optionIds) },
                     )
                 }
+                ReactionRow(message.reactions, reactionPending, reactionError, onReaction)
                 if (message.timestamp.isNotBlank()) {
                     Spacer(Modifier.height(5.dp))
                     Row(
@@ -618,6 +647,60 @@ private fun MessageBubble(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun ReactionRow(
+    reactions: List<ConversationReactionUi>,
+    pending: Boolean,
+    error: String?,
+    onReaction: (ConversationReactionUi?) -> Unit,
+) {
+    var pickerOpen by remember { mutableStateOf(false) }
+    val common = listOf("👍", "❤️", "😂", "😮", "😢", "🔥")
+
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        reactions.forEach { reaction ->
+            Surface(
+                modifier = Modifier.clickable(enabled = !pending) {
+                    onReaction(if (reaction.chosenByMe) null else reaction)
+                },
+                shape = RoundedCornerShape(16.dp),
+                color = if (reaction.chosenByMe) MaterialTheme.colorScheme.secondaryContainer
+                else MaterialTheme.colorScheme.surface,
+                contentColor = MaterialTheme.colorScheme.onSurface,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            ) {
+                Text(
+                    text = "${reaction.display} ${reaction.count}",
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                    style = MaterialTheme.typography.labelMedium,
+                )
+            }
+        }
+        TextButton(onClick = { pickerOpen = true }, enabled = !pending) { Text("+") }
+        DropdownMenu(expanded = pickerOpen, onDismissRequest = { pickerOpen = false }) {
+            common.forEach { emoji ->
+                DropdownMenuItem(
+                    text = { Text(emoji) },
+                    onClick = {
+                        pickerOpen = false
+                        onReaction(ConversationReactionUi("emoji", emoji, 0, false))
+                    },
+                )
+            }
+        }
+        if (pending) {
+            CircularProgressIndicator(modifier = Modifier.width(14.dp), strokeWidth = 2.dp)
+        }
+    }
+    if (error != null) {
+        Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall)
     }
 }
 

@@ -100,6 +100,9 @@ fn empty_attachment_list_keeps_old_message_wire_shape() {
         service: None,
         media_caption: None,
         reply_to: None,
+
+        reactions: Vec::new(),
+        reaction_revision: None,
     };
     let encoded = serde_json::to_value(message).ok();
 

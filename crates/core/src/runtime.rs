@@ -743,6 +743,21 @@ fn operation_error_events(command: &CoreCommand, error: CoreError) -> Vec<CoreEv
             poll_id: *poll_id,
             error: error.to_string(),
         }],
+        CoreCommand::AddReaction {
+            chat_id,
+            message_id,
+            ..
+        }
+        | CoreCommand::RemoveReaction {
+            chat_id,
+            message_id,
+        } => {
+            vec![CoreEvent::ReactionOperationFailed {
+                chat_id: *chat_id,
+                message_id: *message_id,
+                error: error.to_string(),
+            }]
+        }
         CoreCommand::ForwardMessages(request) => vec![CoreEvent::MessagesForwarded(
             crate::forwarding::ForwardMessagesResult {
                 request_id: request.request_id.clone(),
