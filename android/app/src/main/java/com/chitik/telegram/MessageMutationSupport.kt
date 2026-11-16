@@ -19,6 +19,3 @@ internal fun messageMutationAvailability(action: MessageMutationAction): Message
             MessageMutationAction.Delete -> "Удаление пока не поддерживается серверной частью."
         },
     )
-
-internal fun messageMutationUnavailableReason(action: MessageMutationAction): String =
-    messageMutationAvailability(action).explanation
