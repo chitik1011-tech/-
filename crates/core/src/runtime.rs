@@ -330,53 +330,14 @@ where
                         });
                         let pending = reduced_state.outbox.values().cloned().collect::<Vec<_>>();
                         for send in pending {
-                            match (&send.state, send.media.clone()) {
-                                (OutgoingSendState::Sending, Some(media)) => {
-                                    apply_event(
-                                        CoreEvent::MessageSendStateChanged(OutgoingSend::awaiting_confirmation_media(
-                                            send.client_id,
-                                            send.chat_id,
-                                            media,
-                                            send.text,
-                                            "shutdown interrupted the backend request; delivery is unknown",
-                                            send.transfer_generation,
-                                        ).with_session_token(send.session_generation, send.session_epoch)),
-                                        &mut reduced_state,
-                                        &state_tx,
-                                        &event_tx_task,
-                                        &mut activity_tracker,
-                                    );
-                                }
-                                (OutgoingSendState::Sending, None) => {
-                                    apply_event(CoreEvent::MessageSendStateChanged(OutgoingSend::awaiting_confirmation(
-                                        send.client_id, send.chat_id, send.text,
-                                        "shutdown interrupted the backend request; delivery is unknown",
-                                    )), &mut reduced_state, &state_tx, &event_tx_task, &mut activity_tracker);
-                                }
-                                (OutgoingSendState::Uploading { .. }, Some(media)) => {
-                                    apply_event(
-                                        CoreEvent::MessageSendStateChanged(
-                                            OutgoingSend::failed_media(
-                                                send.client_id,
-                                                send.chat_id,
-                                                media,
-                                                send.text,
-                                                "shutdown interrupted the media upload",
-                                                true,
-                                                send.transfer_generation,
-                                            )
-                                            .with_session_token(
-                                                send.session_generation,
-                                                send.session_epoch,
-                                            ),
-                                        ),
-                                        &mut reduced_state,
-                                        &state_tx,
-                                        &event_tx_task,
-                                        &mut activity_tracker,
-                                    );
-                                }
-                                _ => {}
+                            if let Some(recovered) = recover_interrupted_send(&send, "shutdown") {
+                                apply_event(
+                                    CoreEvent::MessageSendStateChanged(recovered),
+                                    &mut reduced_state,
+                                    &state_tx,
+                                    &event_tx_task,
+                                    &mut activity_tracker,
+                                );
                             }
                         }
                         for history in reduced_state.message_history.values_mut() {
@@ -1455,6 +1416,47 @@ async fn next_runtime_input(
     }
 }
 
+fn recover_interrupted_send(send: &OutgoingSend, cause: &str) -> Option<OutgoingSend> {
+    match (&send.state, send.media.clone()) {
+        (OutgoingSendState::Uploading { .. }, Some(media)) => Some(
+            OutgoingSend::failed_media(
+                send.client_id,
+                send.chat_id,
+                media,
+                send.text.clone(),
+                format!("{cause} interrupted the media upload"),
+                true,
+                send.transfer_generation,
+            )
+            .with_session_token(send.session_generation, send.session_epoch),
+        ),
+        (OutgoingSendState::Sending, Some(media)) => Some(
+            OutgoingSend::failed_media(
+                send.client_id,
+                send.chat_id,
+                media,
+                send.text.clone(),
+                format!(
+                    "{cause} interrupted the media send; delivery is unknown. Retry with the same Telegram send ID to reconcile it"
+                ),
+                true,
+                send.transfer_generation,
+            )
+            .with_session_token(send.session_generation, send.session_epoch),
+        ),
+        (OutgoingSendState::Sending, None) => Some(
+            OutgoingSend::awaiting_confirmation(
+                send.client_id,
+                send.chat_id,
+                send.text.clone(),
+                format!("{cause} interrupted the send; delivery is unknown"),
+            )
+            .with_session_token(send.session_generation, send.session_epoch),
+        ),
+        _ => None,
+    }
+}
+
 async fn restore_state<S: StateStore>(
     store: &S,
     state_tx: &watch::Sender<CoreState>,
@@ -1493,38 +1495,8 @@ async fn restore_state<S: StateStore>(
             let mut recovered_any = false;
             for client_id in recovering {
                 if let Some(send) = state.outbox.get(&client_id).cloned() {
-                    let recovered = match (send.state, send.media.clone()) {
-                        (OutgoingSendState::Uploading { .. }, Some(media)) => {
-                            OutgoingSend::failed_media(
-                                send.client_id,
-                                send.chat_id,
-                                media,
-                                send.text,
-                                "process restarted during media upload",
-                                true,
-                                send.transfer_generation,
-                            )
-                            .with_session_token(send.session_generation, send.session_epoch)
-                        }
-                        (OutgoingSendState::Sending, Some(media)) => {
-                            OutgoingSend::awaiting_confirmation_media(
-                                send.client_id,
-                                send.chat_id,
-                                media,
-                                send.text,
-                                "process restarted while the send outcome was unknown",
-                                send.transfer_generation,
-                            )
-                            .with_session_token(send.session_generation, send.session_epoch)
-                        }
-                        (OutgoingSendState::Sending, None) => OutgoingSend::awaiting_confirmation(
-                            send.client_id,
-                            send.chat_id,
-                            send.text,
-                            "process restarted while the send outcome was unknown",
-                        )
-                        .with_session_token(send.session_generation, send.session_epoch),
-                        _ => continue,
+                    let Some(recovered) = recover_interrupted_send(&send, "process restart") else {
+                        continue;
                     };
                     state.outbox.insert(client_id, recovered.clone());
                     state.send_ledger.insert(client_id, recovered);
@@ -1765,6 +1737,73 @@ mod pin_failure_tests {
                 error: "backend returned without confirming the pin change".into(),
             }]
         );
+    }
+}
+
+#[cfg(test)]
+mod interrupted_send_recovery_tests {
+    use super::recover_interrupted_send;
+    use crate::send::{OutgoingMediaAttachment, OutgoingMediaKind, OutgoingSend, OutgoingSendState};
+
+    fn video_media() -> OutgoingMediaAttachment {
+        OutgoingMediaAttachment {
+            kind: OutgoingMediaKind::Video,
+            path: "/private/outgoing/video.mp4".into(),
+            file_name: "video.mp4".into(),
+            mime_type: "video/mp4".into(),
+            size_bytes: 4096,
+            video_duration_ms: Some(1250),
+            video_width: Some(640),
+            video_height: Some(360),
+        }
+    }
+
+    #[test]
+    fn interrupted_media_send_becomes_retryable_and_keeps_the_same_id() {
+        let send = OutgoingSend::sending_media(41, 7, video_media(), "caption", 3)
+            .with_session_token(8, 12);
+
+        let recovered = recover_interrupted_send(&send, "process restart").unwrap();
+
+        assert_eq!(recovered.client_id, 41);
+        assert_eq!(recovered.chat_id, 7);
+        assert_eq!(recovered.media, send.media);
+        assert_eq!(recovered.transfer_generation, 3);
+        assert_eq!(recovered.session_generation, 8);
+        assert_eq!(recovered.session_epoch, 12);
+        assert!(matches!(
+            recovered.state,
+            OutgoingSendState::Failed { retryable: true, .. }
+        ));
+    }
+
+    #[test]
+    fn interrupted_upload_keeps_a_retryable_private_file_reference() {
+        let send = OutgoingSend::uploading_media(42, 7, video_media(), "caption", 1024, 4)
+            .with_session_token(8, 12);
+
+        let recovered = recover_interrupted_send(&send, "shutdown").unwrap();
+
+        assert_eq!(recovered.media, send.media);
+        assert_eq!(recovered.transfer_generation, 4);
+        assert!(matches!(
+            recovered.state,
+            OutgoingSendState::Failed { retryable: true, .. }
+        ));
+    }
+
+    #[test]
+    fn interrupted_text_send_still_requires_confirmation() {
+        let send = OutgoingSend::sending(43, 7, "hello").with_session_token(8, 12);
+
+        let recovered = recover_interrupted_send(&send, "process restart").unwrap();
+
+        assert!(matches!(
+            recovered.state,
+            OutgoingSendState::AwaitingConfirmation { .. }
+        ));
+        assert_eq!(recovered.session_generation, 8);
+        assert_eq!(recovered.session_epoch, 12);
     }
 }
 
