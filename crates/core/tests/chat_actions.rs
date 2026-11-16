@@ -77,6 +77,27 @@ fn old_chat_payload_defaults_new_action_flags() {
     assert_eq!(chat.muted, None);
     assert_eq!(chat.pinned, None);
     assert_eq!(chat.is_unread, None);
+    assert_eq!(chat.kind, None);
+}
+
+#[test]
+fn chat_kind_survives_json_round_trip_without_breaking_legacy() {
+    use tg_mobile_core::model::ChatKind;
+
+    for kind in [
+        ChatKind::Private,
+        ChatKind::Group,
+        ChatKind::Supergroup,
+        ChatKind::Channel,
+    ] {
+        let encoded = serde_json::to_string(&kind).expect("encode chat kind");
+        let decoded: ChatKind = serde_json::from_str(&encoded).expect("decode chat kind");
+        assert_eq!(decoded, kind);
+    }
+    assert_eq!(
+        serde_json::to_string(&ChatKind::Channel).expect("serialize channel"),
+        "\"channel\""
+    );
 }
 
 #[test]
