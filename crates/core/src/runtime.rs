@@ -1666,13 +1666,21 @@ async fn restore_state<S: StateStore>(
 fn normalize_restored_media_downloads(state: &mut CoreState) {
     fn normalize_message(message: &mut crate::model::MessageSummary) {
         for attachment in &mut message.attachments {
-            if matches!(
-                &attachment.download_state,
-                crate::model::AttachmentDownloadState::Queued
-                    | crate::model::AttachmentDownloadState::Downloading { .. }
-            ) {
-                attachment.download_state = crate::model::AttachmentDownloadState::NotDownloaded;
-                attachment.download_generation = 0;
+            use crate::model::AttachmentDownloadState as DownloadState;
+
+            match &attachment.download_state {
+                DownloadState::Queued | DownloadState::Downloading { .. } => {
+                    attachment.download_state = DownloadState::NotDownloaded;
+                    attachment.download_generation = 0;
+                }
+                // TransferManager is process-local, so every persisted generation
+                // is stale after restart. Keep terminal UI state (including a
+                // failure reason and downloaded path) but reset its generation so
+                // fresh callbacks and retries are accepted.
+                _ if attachment.download_generation > 0 => {
+                    attachment.download_generation = 0;
+                }
+                _ => {}
             }
         }
     }
@@ -2053,6 +2061,19 @@ mod media_restore_generation_tests {
     };
 
     fn message() -> MessageSummary {
+        message_with_download(
+            AttachmentDownloadState::Downloading {
+                bytes_transferred: 128,
+                total_bytes: Some(512),
+            },
+            7,
+        )
+    }
+
+    fn message_with_download(
+        download_state: AttachmentDownloadState,
+        download_generation: u64,
+    ) -> MessageSummary {
         MessageSummary {
             id: 23,
             chat_id: 7,
@@ -2072,11 +2093,8 @@ mod media_restore_generation_tests {
                 voice_waveform: None,
                 filename: None,
                 thumbnail: None,
-                download_generation: 7,
-                download_state: AttachmentDownloadState::Downloading {
-                    bytes_transferred: 128,
-                    total_bytes: Some(512),
-                },
+                download_generation,
+                download_state,
             }],
             forwarded_from: None,
             edited: false,
@@ -2141,5 +2159,93 @@ mod media_restore_generation_tests {
             last.attachments[0].download_state,
             AttachmentDownloadState::Queued
         );
+    }
+
+    #[tokio::test]
+    async fn restored_terminal_downloads_keep_visible_state_and_accept_fresh_update() {
+        for (persisted_state, expected_state) in [
+            (
+                AttachmentDownloadState::Failed {
+                    reason: Some("network interrupted".into()),
+                },
+                AttachmentDownloadState::Failed {
+                    reason: Some("network interrupted".into()),
+                },
+            ),
+            (
+                AttachmentDownloadState::Cancelled,
+                AttachmentDownloadState::Cancelled,
+            ),
+            (
+                AttachmentDownloadState::Downloaded {
+                    local_path: std::path::PathBuf::from("/cache/attachment"),
+                },
+                AttachmentDownloadState::Downloaded {
+                    local_path: std::path::PathBuf::from("/cache/attachment"),
+                },
+            ),
+        ] {
+            let store = crate::storage::MemoryStateStore::default();
+            let persisted_message = message_with_download(persisted_state, 3);
+            let mut persisted = CoreState::default();
+            persisted
+                .messages
+                .insert(7, vec![persisted_message.clone()]);
+            persisted.account = AccountState {
+                authorization: crate::model::AuthorizationState::Ready,
+                chats: vec![ChatSummary {
+                    id: 7,
+                    title: "chat".into(),
+                    unread_count: 0,
+                    archived: None,
+                    muted: None,
+                    pinned: None,
+                    is_unread: None,
+                    unread_mentions_count: None,
+                    unread_reactions_count: None,
+                    last_message: Some(persisted_message),
+                }],
+            };
+            store.save(&persisted).await.unwrap();
+
+            let (state_tx, _) = watch::channel(CoreState::default());
+            let (event_tx, _) = broadcast::channel(8);
+            let mut state = restore_state(&store, &state_tx, &event_tx).await;
+
+            let cached = &state.messages[&7][0].attachments[0];
+            assert_eq!(cached.download_generation, 0);
+            assert_eq!(cached.download_state, expected_state);
+            let last = state.account.chats[0].last_message.as_ref().unwrap();
+            assert_eq!(last.attachments[0].download_generation, 0);
+            assert_eq!(last.attachments[0].download_state, expected_state);
+
+            let (state_tx, _) = watch::channel(state.clone());
+            let (event_tx, _) = broadcast::channel(8);
+            apply_event(
+                CoreEvent::MediaTransferUpdated {
+                    chat_id: 7,
+                    message_id: 23,
+                    attachment_index: 0,
+                    generation: 1,
+                    state: AttachmentDownloadState::Queued,
+                },
+                &mut state,
+                &state_tx,
+                &event_tx,
+                &mut ChatActivityTracker::default(),
+            );
+
+            assert_eq!(state.messages[&7][0].attachments[0].download_generation, 1);
+            assert_eq!(
+                state.messages[&7][0].attachments[0].download_state,
+                AttachmentDownloadState::Queued
+            );
+            let last = state.account.chats[0].last_message.as_ref().unwrap();
+            assert_eq!(last.attachments[0].download_generation, 1);
+            assert_eq!(
+                last.attachments[0].download_state,
+                AttachmentDownloadState::Queued
+            );
+        }
     }
 }
