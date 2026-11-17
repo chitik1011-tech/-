@@ -30,11 +30,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
 
 /**
  * Renders an incoming voice attachment from the existing media cache. The caller owns and
@@ -48,21 +45,11 @@ fun VoiceAttachmentCard(
     onCancelDownload: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val lifecycleOwner = LocalLifecycleOwner.current
     var playback by remember(coordinator) { mutableStateOf(coordinator.state) }
 
     DisposableEffect(coordinator) {
         val removeObserver = coordinator.observe { playback = it }
-        val lifecycleObserver = LifecycleEventObserver { _, event ->
-            when (event) {
-                Lifecycle.Event.ON_STOP -> coordinator.onHostStop()
-                Lifecycle.Event.ON_START -> coordinator.onHostStart()
-                else -> Unit
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(lifecycleObserver)
         onDispose {
-            lifecycleOwner.lifecycle.removeObserver(lifecycleObserver)
             removeObserver()
         }
     }

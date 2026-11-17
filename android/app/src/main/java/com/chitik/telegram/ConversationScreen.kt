@@ -59,12 +59,15 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.chitik.telegram.nativebridge.OutgoingTextSendUi
 import java.util.Locale
 import kotlin.math.roundToInt
@@ -276,8 +279,20 @@ fun ConversationScreen(
     val voicePlaybackCoordinator = remember(state.chatId) {
         VoicePlaybackCoordinator.create(context.applicationContext)
     }
-    DisposableEffect(voicePlaybackCoordinator) {
-        onDispose { voicePlaybackCoordinator.release() }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(voicePlaybackCoordinator, lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_STOP -> voicePlaybackCoordinator.onHostStop()
+                Lifecycle.Event.ON_START -> voicePlaybackCoordinator.onHostStart()
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            voicePlaybackCoordinator.release()
+        }
     }
 
     val listState = rememberLazyListState()

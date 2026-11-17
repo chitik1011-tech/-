@@ -62,11 +62,14 @@ class VoiceAttachmentTest {
         val audio = File(dir, "voice.ogg").apply { writeBytes(byteArrayOf(1)) }
         val player = FakeVoicePlayer()
         val coordinator = VoicePlaybackCoordinator(player, FakeScheduler())
+        val removeCardObserver = coordinator.observe { }
         try {
             coordinator.toggle(audio)
             player.currentListener?.onPlayingChanged(true)
+            removeCardObserver() // The voice bubble scrolled out of the lazy list.
             coordinator.onHostStop()
             coordinator.onHostStop()
+            assertEquals(1, player.pauseCalls)
             coordinator.onHostStart()
             coordinator.onHostStart()
             assertEquals("resumes only once", 2, player.playCalls)
@@ -86,9 +89,13 @@ class VoiceAttachmentTest {
         var currentListener: VoicePlayerPort.Listener? = null
         var playCalls = 0
         var stopCalls = 0
+        var pauseCalls = 0
         var released = false
         override fun play(file: File) { playCalls++ }
-        override fun pause() { currentListener?.onPlayingChanged(false) }
+        override fun pause() {
+            pauseCalls++
+            currentListener?.onPlayingChanged(false)
+        }
         override fun stop() { stopCalls++ }
         override fun seekTo(positionMs: Long) = Unit
         override fun currentPositionMs(): Long = 0L
