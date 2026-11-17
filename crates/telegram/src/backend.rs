@@ -1839,11 +1839,7 @@ mod sqlite_session_persistence_tests {
         sync::atomic::{AtomicU64, Ordering},
     };
 
-    use grammers_client::session::{
-        Session,
-        storages::SqliteSession,
-        types::DcOption,
-    };
+    use grammers_client::session::{Session, storages::SqliteSession, types::DcOption};
 
     static NEXT_TEMP_DIR: AtomicU64 = AtomicU64::new(0);
 
