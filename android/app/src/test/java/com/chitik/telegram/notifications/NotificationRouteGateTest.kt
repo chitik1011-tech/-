@@ -5,7 +5,7 @@ import org.junit.Test
 
 class NotificationRouteGateTest {
     @Test
-    fun waitsForAuthorizationAndDelayedChatRestoreBeforeConsumingTap() {
+    fun waitsForAuthorizationAndEmptyInitialSnapshotBeforeConsumingTap() {
         assertEquals(
             NotificationRouteResolution.Wait,
             resolveNotificationRoute(
@@ -24,35 +24,84 @@ class NotificationRouteGateTest {
                 availableChatIds = emptyList(),
             ),
         )
+    }
+
+    @Test
+    fun targetFoundOnLaterPageOpensEvenWhileTheListRemainsPartial() {
+        assertEquals(
+            NotificationRouteResolution.Wait,
+            resolveNotificationRoute(
+                chatId = 5L,
+                authorized = true,
+                chatsLoaded = true,
+                availableChatIds = listOf(1L, 2L),
+                chatListExhausted = false,
+            ),
+        )
         assertEquals(
             NotificationRouteResolution.OpenChat(5L),
             resolveNotificationRoute(
-                5L,
+                chatId = 5L,
                 authorized = true,
                 chatsLoaded = true,
-                availableChatIds = listOf(5L, -7L),
+                availableChatIds = listOf(3L, 5L),
+                chatListExhausted = false,
             ),
         )
     }
 
     @Test
-    fun discardsOnlyAfterTheCurrentAccountChatListIsLoaded() {
+    fun missingTargetStaysPendingUntilAllPagesAreConfirmedExhausted() {
+        // Existing call sites without the pagination signal must fail closed and keep the tap.
         assertEquals(
-            NotificationRouteResolution.Discard,
+            NotificationRouteResolution.Wait,
             resolveNotificationRoute(
-                5L,
+                chatId = 5L,
                 authorized = true,
                 chatsLoaded = true,
                 availableChatIds = listOf(-7L),
             ),
         )
         assertEquals(
-            NotificationRouteResolution.Discard,
+            NotificationRouteResolution.Wait,
             resolveNotificationRoute(
-                0L,
+                chatId = 5L,
                 authorized = true,
                 chatsLoaded = true,
-                availableChatIds = listOf(5L),
+                availableChatIds = listOf(-7L),
+                chatListExhausted = false,
+            ),
+        )
+        assertEquals(
+            NotificationRouteResolution.Discard,
+            resolveNotificationRoute(
+                chatId = 5L,
+                authorized = true,
+                chatsLoaded = true,
+                availableChatIds = listOf(-7L),
+                chatListExhausted = true,
+            ),
+        )
+    }
+
+    @Test
+    fun staleOrMalformedRouteIsDiscardedWithoutWaitingForPagination() {
+        assertEquals(
+            NotificationRouteResolution.Discard,
+            resolveNotificationRoute(
+                chatId = 0L,
+                authorized = false,
+                chatsLoaded = false,
+                availableChatIds = emptyList(),
+            ),
+        )
+        assertEquals(
+            NotificationRouteResolution.Discard,
+            resolveNotificationRoute(
+                chatId = null,
+                authorized = true,
+                chatsLoaded = true,
+                availableChatIds = emptyList(),
             ),
         )
     }
