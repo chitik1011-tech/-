@@ -54,6 +54,7 @@ import com.chitik.telegram.nativebridge.textSendStatusForChat
 import com.chitik.telegram.notifications.NotificationPermissionRequester
 import com.chitik.telegram.notifications.NotificationRouteResolution
 import com.chitik.telegram.notifications.TelegramNotificationRoute
+import com.chitik.telegram.notifications.restorePendingNotificationChatId
 import com.chitik.telegram.deeplink.TelegramDeepLinkRouter
 import com.chitik.telegram.deeplink.TelegramJoinInviteIntent
 import com.chitik.telegram.deeplink.TelegramLinkAppRouter
@@ -61,6 +62,10 @@ import com.chitik.telegram.deeplink.TelegramLinkIntent
 import com.chitik.telegram.deeplink.TelegramLinkTarget
 
 class MainActivity : ComponentActivity() {
+    private companion object {
+        const val STATE_PENDING_NOTIFICATION_CHAT_ID = "pending_notification_chat_id"
+    }
+
     private var pendingTelegramLink by mutableStateOf<TelegramLinkIntent?>(null)
     private var pendingNotificationChatId by mutableStateOf<Long?>(null)
     private var notificationPermissionGranted by mutableStateOf(true)
@@ -74,7 +79,12 @@ class MainActivity : ComponentActivity() {
         notificationPermissionGranted = notificationPermissionRequester.isGranted()
         enableEdgeToEdge()
         pendingTelegramLink = TelegramDeepLinkRouter.parseIntent(intent?.action, intent?.dataString)
-        pendingNotificationChatId = TelegramNotificationRoute.parse(intent)?.chatId
+        pendingNotificationChatId = restorePendingNotificationChatId(
+            savedChatId = savedInstanceState
+                ?.takeIf { it.containsKey(STATE_PENDING_NOTIFICATION_CHAT_ID) }
+                ?.getLong(STATE_PENDING_NOTIFICATION_CHAT_ID),
+            freshIntentChatId = TelegramNotificationRoute.parse(intent)?.chatId,
+        )
         setContent {
             TelegramAppTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
@@ -95,7 +105,17 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         pendingTelegramLink = TelegramDeepLinkRouter.parseIntent(intent.action, intent.dataString)
-        pendingNotificationChatId = TelegramNotificationRoute.parse(intent)?.chatId
+        pendingNotificationChatId = restorePendingNotificationChatId(
+            savedChatId = pendingNotificationChatId,
+            freshIntentChatId = TelegramNotificationRoute.parse(intent)?.chatId,
+        )
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        pendingNotificationChatId?.let { chatId ->
+            outState.putLong(STATE_PENDING_NOTIFICATION_CHAT_ID, chatId)
+        }
+        super.onSaveInstanceState(outState)
     }
 
     override fun onResume() {
