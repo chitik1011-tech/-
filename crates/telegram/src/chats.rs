@@ -1,7 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use grammers_client::{Client, session::types::PeerRef, tl};
-use tg_mobile_core::{ChatCapabilities, ChatSummary};
+use tg_mobile_core::{ChatCapabilities, ChatPage, ChatSummary};
 use tokio::sync::RwLock;
 
 use crate::{
@@ -48,19 +48,92 @@ pub(crate) async fn load_chats(
         remember_peer(registry, chat_id, dialog.peer_ref()).await;
         capabilities.push(from_peer(dialog.peer(), chat_id));
 
-        result.push(ChatSummary {
-            id: chat_id,
-            title: dialog.peer().name().unwrap_or_default().to_owned(),
-            unread_count: unread_count(&dialog.raw),
-            archived: None,
-            muted: None,
-            pinned: None,
-            is_unread: None,
-            last_message: dialog.last_message.as_ref().map(message_to_summary),
-        });
+        result.push(chat_summary(&dialog, chat_id));
     }
 
     Ok((result, capabilities))
+}
+
+/// Loads a cursor page using Grammers' real `messages.getDialogs` iterator.
+/// Grammers 0.12 does not expose the iterator's internal MTProto offsets, so the
+/// opaque cursor anchors the page after the last returned peer. The iterator
+/// advances through real Telegram dialog results until it finds that peer.
+pub(crate) async fn load_chats_page(
+    client: &Client,
+    registry: &PeerRegistry,
+    cursor: Option<&str>,
+    limit: usize,
+) -> tg_mobile_core::Result<(ChatPage, Vec<ChatCapabilities>)> {
+    let anchor = cursor
+        .map(|value| value.parse::<i64>())
+        .transpose()
+        .map_err(|_| crate::error::TelegramBackendError::InvalidInput("invalid chat cursor".into()))?;
+    if anchor == Some(0) {
+        return Err(crate::error::TelegramBackendError::InvalidInput(
+            "invalid chat cursor".into(),
+        )
+        .into());
+    }
+
+    const MAX_DIALOG_SCAN: usize = 100_000;
+    let mut dialogs = client.iter_dialogs().limit(MAX_DIALOG_SCAN);
+    let mut chats = Vec::with_capacity(limit);
+    let mut capabilities = Vec::with_capacity(limit);
+    let mut anchor_found = anchor.is_none();
+    let mut has_more = false;
+    while let Some(dialog) = dialogs
+        .next()
+        .await
+        .map_err(|error| api_error("load chat page", error))?
+    {
+        let chat_id = peer_id_to_core(dialog.peer_id());
+        if !anchor_found {
+            if Some(chat_id) == anchor {
+                anchor_found = true;
+            }
+            continue;
+        }
+        if chats.len() == limit {
+            has_more = true;
+            break;
+        }
+        remember_peer(registry, chat_id, dialog.peer_ref()).await;
+        capabilities.push(from_peer(dialog.peer(), chat_id));
+        chats.push(chat_summary(&dialog, chat_id));
+    }
+
+    if !anchor_found {
+        return Err(crate::error::TelegramBackendError::InvalidInput(
+            "chat page cursor is stale; reload the dialog list".into(),
+        )
+        .into());
+    }
+    let next_cursor = has_more.then(|| {
+        chats
+            .last()
+            .map_or_else(String::new, |chat| chat.id.to_string())
+    });
+    Ok((
+        ChatPage {
+            requested_cursor: cursor.map(str::to_owned),
+            chats,
+            next_cursor,
+        },
+        capabilities,
+    ))
+}
+
+fn chat_summary(dialog: &grammers_client::peer::Dialog, chat_id: i64) -> ChatSummary {
+    ChatSummary {
+        id: chat_id,
+        title: dialog.peer().name().unwrap_or_default().to_owned(),
+        unread_count: unread_count(&dialog.raw),
+        archived: None,
+        muted: None,
+        pinned: None,
+        is_unread: None,
+        last_message: dialog.last_message.as_ref().map(message_to_summary),
+    }
 }
 
 fn unread_count(dialog: &tl::enums::Dialog) -> u32 {
