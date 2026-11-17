@@ -3,6 +3,7 @@
 pub mod activity;
 pub mod backend;
 pub mod capabilities;
+pub mod chat_pagination;
 pub mod command;
 pub mod connection;
 pub mod connection_machine;
@@ -30,6 +31,7 @@ pub use backend::{
     TelegramBackend, DEFAULT_BACKEND_UPDATE_CAPACITY,
 };
 pub use capabilities::{CapabilityValue, ChatAction, ChatCapabilities, ChatKind};
+pub use chat_pagination::{ChatPage, ChatPaginationState, MAX_CHAT_CURSOR_BYTES, MAX_CHAT_PAGE_LIMIT};
 pub use command::{
     CoreCommand, MAX_CHAT_LOAD_LIMIT, MAX_EDIT_MESSAGE_TEXT_BYTES, MAX_MESSAGE_LOAD_LIMIT,
     MAX_REACTION_BYTES,
