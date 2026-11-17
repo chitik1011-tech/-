@@ -35,6 +35,8 @@ impl Default for MockTelegramBackend {
                     muted: Some(false),
                     pinned: Some(false),
                     is_unread: Some(false),
+                    unread_mentions_count: None,
+                    unread_reactions_count: None,
                     last_message: None,
                 },
                 ChatSummary {
@@ -45,6 +47,8 @@ impl Default for MockTelegramBackend {
                     muted: Some(false),
                     pinned: Some(false),
                     is_unread: Some(true),
+                    unread_mentions_count: None,
+                    unread_reactions_count: None,
                     last_message: Some(MessageSummary {
                         id: 1,
                         chat_id: 2,

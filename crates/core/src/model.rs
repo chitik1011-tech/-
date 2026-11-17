@@ -49,6 +49,13 @@ pub struct ChatSummary {
     pub id: i64,
     pub title: String,
     pub unread_count: u32,
+    /// Unread mentions reported in Telegram's dialog snapshot. `None` means
+    /// the server did not supply this field; reducers preserve known values.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unread_mentions_count: Option<u32>,
+    /// Unread reactions to the current user's messages reported by Telegram.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unread_reactions_count: Option<u32>,
     /// Whether this chat is archived in the Telegram chat list.
     #[serde(default)]
     pub archived: Option<bool>,

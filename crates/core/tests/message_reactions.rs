@@ -53,6 +53,8 @@ fn loaded_state() -> CoreState {
         muted: None,
         pinned: None,
         is_unread: None,
+        unread_mentions_count: None,
+        unread_reactions_count: None,
         last_message: None,
     });
     state.reduce(&CoreEvent::MessageAdded(message()));

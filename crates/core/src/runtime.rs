@@ -2106,6 +2106,8 @@ mod media_restore_generation_tests {
                 muted: None,
                 pinned: None,
                 is_unread: None,
+                unread_mentions_count: None,
+                unread_reactions_count: None,
                 last_message: Some(last_message),
             }],
         };

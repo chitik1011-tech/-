@@ -343,7 +343,32 @@ impl CoreState {
                 // Untagged connection callbacks cannot be made generation-safe.
             }
             CoreEvent::ChatsLoaded(chats) => {
-                self.account.chats = chats.clone();
+                let known_counters = self
+                    .account
+                    .chats
+                    .iter()
+                    .map(|chat| {
+                        (
+                            chat.id,
+                            (chat.unread_mentions_count, chat.unread_reactions_count),
+                        )
+                    })
+                    .collect::<BTreeMap<_, _>>();
+                self.account.chats = chats
+                    .iter()
+                    .cloned()
+                    .map(|mut incoming| {
+                        if let Some((mentions, reactions)) = known_counters.get(&incoming.id) {
+                            if incoming.unread_mentions_count.is_none() {
+                                incoming.unread_mentions_count = *mentions;
+                            }
+                            if incoming.unread_reactions_count.is_none() {
+                                incoming.unread_reactions_count = *reactions;
+                            }
+                        }
+                        incoming
+                    })
+                    .collect();
                 let chat_ids = chats.iter().map(|chat| chat.id).collect::<BTreeSet<_>>();
                 self.chat_capabilities
                     .retain(|chat_id, _| chat_ids.contains(chat_id));
@@ -387,6 +412,12 @@ impl CoreState {
                 };
                 for mut incoming in page.chats.iter().cloned() {
                     if let Some(existing) = old_chats.iter().find(|chat| chat.id == incoming.id) {
+                        if incoming.unread_mentions_count.is_none() {
+                            incoming.unread_mentions_count = existing.unread_mentions_count;
+                        }
+                        if incoming.unread_reactions_count.is_none() {
+                            incoming.unread_reactions_count = existing.unread_reactions_count;
+                        }
                         if existing.last_message.as_ref().is_some_and(|old| {
                             incoming
                                 .last_message
@@ -1427,6 +1458,8 @@ mod message_ordering_tests {
             muted: None,
             pinned: None,
             is_unread: None,
+            unread_mentions_count: None,
+            unread_reactions_count: None,
             last_message: None,
         });
     }

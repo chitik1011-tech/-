@@ -68,6 +68,8 @@ fn incoming_message_increments_unread_only_when_first_inserted() {
         muted: Some(false),
         pinned: Some(false),
         is_unread: Some(false),
+        unread_mentions_count: None,
+        unread_reactions_count: None,
         last_message: None,
     });
 
@@ -92,6 +94,8 @@ fn outgoing_message_does_not_increment_unread() {
         muted: Some(false),
         pinned: Some(false),
         is_unread: Some(false),
+        unread_mentions_count: None,
+        unread_reactions_count: None,
         last_message: None,
     });
 
@@ -113,6 +117,8 @@ fn unread_increment_saturates_at_u32_max() {
         muted: Some(false),
         pinned: Some(false),
         is_unread: Some(false),
+        unread_mentions_count: None,
+        unread_reactions_count: None,
         last_message: None,
     });
 
@@ -146,6 +152,8 @@ fn state_query_helpers_return_chat_messages_and_unread_total() {
             muted: Some(false),
             pinned: Some(false),
             is_unread: Some(false),
+            unread_mentions_count: None,
+            unread_reactions_count: None,
             last_message: None,
         },
         ChatSummary {
@@ -156,6 +164,8 @@ fn state_query_helpers_return_chat_messages_and_unread_total() {
             muted: Some(false),
             pinned: Some(false),
             is_unread: Some(false),
+            unread_mentions_count: None,
+            unread_reactions_count: None,
             last_message: None,
         },
     ];

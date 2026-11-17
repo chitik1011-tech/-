@@ -129,11 +129,27 @@ fn chat_summary(dialog: &grammers_client::peer::Dialog, chat_id: i64) -> ChatSum
         id: chat_id,
         title: dialog.peer().name().unwrap_or_default().to_owned(),
         unread_count: unread_count(&dialog.raw),
+        unread_mentions_count: unread_mentions_count(&dialog.raw),
+        unread_reactions_count: unread_reactions_count(&dialog.raw),
         archived: None,
         muted: None,
         pinned: None,
         is_unread: None,
         last_message: dialog.last_message.as_ref().map(message_to_summary),
+    }
+}
+
+fn unread_mentions_count(dialog: &tl::enums::Dialog) -> Option<u32> {
+    match dialog {
+        tl::enums::Dialog::Dialog(dialog) => Some(normalize_unread(dialog.unread_mentions_count)),
+        tl::enums::Dialog::Folder(_) | tl::enums::Dialog::Community(_) => None,
+    }
+}
+
+fn unread_reactions_count(dialog: &tl::enums::Dialog) -> Option<u32> {
+    match dialog {
+        tl::enums::Dialog::Dialog(dialog) => Some(normalize_unread(dialog.unread_reactions_count)),
+        tl::enums::Dialog::Folder(_) | tl::enums::Dialog::Community(_) => None,
     }
 }
 

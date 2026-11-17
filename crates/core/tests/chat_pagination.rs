@@ -9,6 +9,8 @@ fn chat(id: i64, title: &str, message_id: i64) -> ChatSummary {
         muted: None,
         pinned: None,
         is_unread: None,
+        unread_mentions_count: None,
+        unread_reactions_count: None,
         last_message: (message_id > 0).then(|| tg_mobile_core::MessageSummary {
             id: message_id,
             chat_id: id,
