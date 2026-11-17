@@ -452,11 +452,12 @@ where
                     if let CoreCommand::SendTextReliable {
                         client_id,
                         chat_id,
+                        reply_to_message_id,
                         text,
                     } = &command
                     {
                         if let Some(existing) = reduced_state.send_ledger.get(client_id) {
-                            if !existing.same_request(*chat_id, text) {
+                            if !existing.same_request(*chat_id, text, *reply_to_message_id) {
                                 apply_event(
                                     CoreEvent::Error(format!(
                                         "client message id {client_id} was reused for a different outgoing message"
@@ -494,11 +495,10 @@ where
                             // Write-ahead: publish and save the idempotency key before the
                             // backend can make a network request.
                             apply_event(
-                                CoreEvent::MessageSendStateChanged(OutgoingSend::sending(
-                                    *client_id,
-                                    *chat_id,
-                                    text.clone(),
-                                )),
+                                CoreEvent::MessageSendStateChanged(
+                                    OutgoingSend::sending(*client_id, *chat_id, text.clone())
+                                        .with_reply_target(*reply_to_message_id),
+                                ),
                                 &mut reduced_state,
                                 &state_tx,
                                 &event_tx_task,
@@ -878,11 +878,13 @@ fn operation_error_events(command: &CoreCommand, error: CoreError) -> Vec<CoreEv
         CoreCommand::SendTextReliable {
             client_id,
             chat_id,
+            reply_to_message_id,
             text,
         } => vec![CoreEvent::MessageSendStateChanged(send_error_state(
             *client_id,
             *chat_id,
             text.clone(),
+            *reply_to_message_id,
             error,
         ))],
         CoreCommand::SendMediaReliable {
@@ -1264,11 +1266,12 @@ fn complete_operation_events(command: &CoreCommand, events: &mut Vec<CoreEvent>)
     if let CoreCommand::SendTextReliable {
         client_id,
         chat_id,
+        reply_to_message_id,
         text,
     } = command
     {
-        if !events.iter().any(|event| matches!(event, CoreEvent::MessageSendStateChanged(send) if send.client_id == *client_id && send.same_request(*chat_id, text) && !matches!(send.state, OutgoingSendState::Sending))) {
-            events.push(CoreEvent::MessageSendStateChanged(OutgoingSend::awaiting_confirmation(*client_id, *chat_id, text.clone(), "backend returned without confirming the send outcome")));
+        if !events.iter().any(|event| matches!(event, CoreEvent::MessageSendStateChanged(send) if send.client_id == *client_id && send.same_request(*chat_id, text, *reply_to_message_id) && !matches!(send.state, OutgoingSendState::Sending))) {
+            events.push(CoreEvent::MessageSendStateChanged(OutgoingSend::awaiting_confirmation(*client_id, *chat_id, text.clone(), "backend returned without confirming the send outcome").with_reply_target(*reply_to_message_id)));
         }
     }
 }
@@ -1312,14 +1315,18 @@ fn recover_interrupted_operation(
         CoreCommand::SendTextReliable {
             client_id,
             chat_id,
+            reply_to_message_id,
             text,
         } => apply_event(
-            CoreEvent::MessageSendStateChanged(OutgoingSend::awaiting_confirmation(
-                *client_id,
-                *chat_id,
-                text.clone(),
-                "connection changed while send outcome was unknown",
-            )),
+            CoreEvent::MessageSendStateChanged(
+                OutgoingSend::awaiting_confirmation(
+                    *client_id,
+                    *chat_id,
+                    text.clone(),
+                    "connection changed while send outcome was unknown",
+                )
+                .with_reply_target(*reply_to_message_id),
+            ),
             state,
             state_tx,
             event_tx,
@@ -1582,8 +1589,14 @@ fn send_media_error_state(
     send.with_session_token(session_generation, session_epoch)
 }
 
-fn send_error_state(client_id: i64, chat_id: i64, text: String, error: CoreError) -> OutgoingSend {
-    match error {
+fn send_error_state(
+    client_id: i64,
+    chat_id: i64,
+    text: String,
+    reply_to_message_id: Option<i64>,
+    error: CoreError,
+) -> OutgoingSend {
+    let send = match error {
         CoreError::SendOutcomeUnknown(reason) => {
             OutgoingSend::awaiting_confirmation(client_id, chat_id, text, reason)
         }
@@ -1595,7 +1608,8 @@ fn send_error_state(client_id: i64, chat_id: i64, text: String, error: CoreError
         }
         CoreError::SendRejected(reason) => OutgoingSend::rejected(client_id, chat_id, text, reason),
         other => OutgoingSend::rejected(client_id, chat_id, text, other.to_string()),
-    }
+    };
+    send.with_reply_target(reply_to_message_id)
 }
 
 async fn persist_send_intent<S: StateStore>(

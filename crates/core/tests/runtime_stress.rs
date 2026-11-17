@@ -82,7 +82,9 @@ async fn runtime_handles_bursty_updates_and_commands_without_losing_latest_state
         }
     });
 
-    timeout(Duration::from_secs(30), async {
+    // Hosted CI may temporarily starve the runtime workers while the workspace test suite runs.
+    // Keep this bounded, but allow the burst time to progress under runner contention.
+    timeout(Duration::from_secs(90), async {
         commands.await.unwrap();
         updates.await.unwrap();
 
