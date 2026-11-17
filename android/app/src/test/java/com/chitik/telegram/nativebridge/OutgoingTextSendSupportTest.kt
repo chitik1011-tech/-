@@ -29,6 +29,27 @@ class OutgoingTextSendSupportTest {
     }
 
     @Test
+    fun voiceRecordingUsesReliableMediaCommandWithTelegramVoiceMetadata() {
+        val media = PickedOutgoingMedia(
+            kind = "voice",
+            path = "/private/outgoing-media/voice-1.ogg",
+            fileName = "voice-1.ogg",
+            mimeType = "audio/ogg",
+            sizeBytes = 4096L,
+            voiceDurationMs = 1_275L,
+        )
+        val wire = org.json.JSONObject(reliableMediaCommand(123L, -99L, media))
+        val payload = wire.getJSONObject("payload")
+        val attachment = payload.getJSONObject("media")
+        assertEquals("send_media_reliable", wire.getString("type"))
+        assertEquals("voice", attachment.getString("kind"))
+        assertEquals("audio/ogg", attachment.getString("mime_type"))
+        assertEquals("voice-1.ogg", attachment.getString("file_name"))
+        assertEquals(1_275L, attachment.getLong("voice_duration_ms"))
+        assertEquals(-99L, payload.getLong("chat_id"))
+    }
+
+    @Test
     fun generatedClientIdsArePositiveAndDistinct() {
         val ids = (0 until 2000).map { nextPositiveClientMessageId() }
         assertTrue(ids.all { it > 0L })
@@ -87,9 +108,34 @@ class OutgoingTextSendSupportTest {
     }
 
     @Test
+    fun voiceOutboxPreservesDurationAndRejectsMissingVoiceMetadata() {
+        val event = """{"type":"message_send_state_changed","payload":{"client_id":43,"chat_id":99,"text":"","media":{"kind":"voice","path":"/private/voice.ogg","file_name":"voice.ogg","mime_type":"audio/ogg","size_bytes":4096,"voice_duration_ms":1275},"state":{"status":"uploading","bytes_transferred":2048,"total_bytes":4096}}}"""
+        val send = parseOutgoingTextSendEvent(event)
+        assertEquals("voice", send?.media?.kind)
+        assertEquals(1_275L, send?.media?.voiceDurationMs)
+        assertEquals(50, send?.progressPercent)
+        assertTrue(send?.canCancel == true)
+
+        val malformed = event.replace("\"voice_duration_ms\":1275", "")
+        assertNull(parseOutgoingTextSendEvent(malformed)?.media)
+    }
+
+    @Test
     fun mediaImportBlocksComposerUntilQueued() {
         assertTrue(NativeUiState(mediaImportInProgress = true).sendingText)
         assertFalse(NativeUiState(mediaImportInProgress = false).sendingText)
+    }
+
+    @Test
+    fun voiceRecordingErrorsStayScopedToTheirChat() {
+        val recording = VoiceRecordingUiState(chatId = 99L)
+        assertTrue(recording.isRecording)
+        assertNull(recording.errorChatId)
+
+        val failure = VoiceRecordingUiState(error = "microphone unavailable", errorChatId = 99L)
+        assertFalse(failure.isRecording)
+        assertNull(failure.chatId)
+        assertEquals(99L, failure.errorChatId)
     }
 
     @Test

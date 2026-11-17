@@ -32,6 +32,10 @@ import com.chitik.telegram.notifications.NotificationEventGate
 import com.chitik.telegram.notifications.NotificationWireParser
 import com.chitik.telegram.notifications.TelegramNotificationPublisher
 import com.chitik.telegram.MediaAttachmentUi
+import com.chitik.telegram.RecordedVoiceMessage
+import com.chitik.telegram.VoiceMessageRecorder
+import com.chitik.telegram.VoiceRecorderFailure
+import com.chitik.telegram.VoiceRecorderResult
 import com.chitik.telegram.matchesMutationTarget
 import com.chitik.telegram.mutationEventAcknowledges
 import com.chitik.telegram.messageMutationStateAfterSessionChange
@@ -42,6 +46,8 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -50,6 +56,16 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import android.os.SystemClock
+
+data class VoiceRecordingUiState(
+    val chatId: Long? = null,
+    val durationMs: Long = 0L,
+    val error: String? = null,
+    val errorChatId: Long? = null,
+) {
+    val isRecording: Boolean get() = chatId != null
+}
 
 data class NativeUiState(
     val libraryLoaded: Boolean = false,
@@ -105,6 +121,7 @@ data class NativeUiState(
     val failedTextSendText: String? = null,
     val textSendError: String? = null,
     val mediaImportInProgress: Boolean = false,
+    val voiceRecording: VoiceRecordingUiState = VoiceRecordingUiState(),
     val deleteError: String? = null,
     val busy: Boolean = false,
     val lastEventType: String = "none",
@@ -287,6 +304,10 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
     val state: StateFlow<NativeUiState> = _state.asStateFlow()
 
     private val lifecycle = NativeSessionLifecycle()
+    private val voiceRecorder = VoiceMessageRecorder(application)
+    private var voiceRecordingJob: Job? = null
+    private var voiceRecordingStartedAtMs = 0L
+    private var voiceRecordingEpoch = 0L
     private val notifications = TelegramNotificationPublisher(application)
     private val notificationEventGate = NotificationEventGate()
     private val liveReadReceiptPolicy = LiveReadReceiptPolicy()
@@ -839,6 +860,154 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         }
     }
 
+    /** Starts a real Ogg/Opus recording for a chat after Android has granted RECORD_AUDIO. */
+    fun startVoiceRecording(chatId: Long): Boolean {
+        val current = _state.value
+        if (chatId == 0L || current.authorization != AuthorizationUiStep.Ready ||
+            current.sendingText || current.voiceRecording.isRecording ||
+            current.chatCapabilities[chatId]?.canSendMedia == false
+        ) return false
+
+        _state.update { state ->
+            if (state.voiceRecording.errorChatId == chatId) {
+                state.copy(voiceRecording = VoiceRecordingUiState())
+            } else state
+        }
+
+        when (val result = voiceRecorder.start()) {
+            VoiceRecorderResult.RecordingStarted -> {
+                voiceRecordingJob?.cancel()
+                voiceRecordingStartedAtMs = SystemClock.elapsedRealtime()
+                val epoch = ++voiceRecordingEpoch
+                _state.update { it.copy(voiceRecording = VoiceRecordingUiState(chatId = chatId)) }
+                voiceRecordingJob = viewModelScope.launch {
+                    while (true) {
+                        delay(250L)
+                        if (epoch != voiceRecordingEpoch) break
+                        val recording = _state.value.voiceRecording
+                        if (recording.chatId != chatId) break
+                        val elapsed = (SystemClock.elapsedRealtime() - voiceRecordingStartedAtMs)
+                            .coerceAtLeast(0L)
+                        _state.update { currentState ->
+                            if (currentState.voiceRecording.chatId == chatId) {
+                                currentState.copy(
+                                    voiceRecording = currentState.voiceRecording.copy(durationMs = elapsed),
+                                )
+                            } else currentState
+                        }
+                    }
+                }
+                return true
+            }
+            is VoiceRecorderResult.Failed -> {
+                _state.update {
+                    it.copy(
+                        voiceRecording = VoiceRecordingUiState(
+                            error = voiceRecorderFailureMessage(result.reason),
+                            errorChatId = chatId,
+                        ),
+                    )
+                }
+                return false
+            }
+            is VoiceRecorderResult.RecordingReady -> return false
+        }
+    }
+
+    /** Finalizes and queues the recording through the same durable MTProto media outbox as uploads. */
+    fun stopAndSendVoiceRecording(chatId: Long): Boolean {
+        if (chatId == 0L || _state.value.voiceRecording.chatId != chatId) return false
+        voiceRecordingEpoch++
+        voiceRecordingJob?.cancel()
+        voiceRecordingJob = null
+
+        val result = voiceRecorder.stop()
+        _state.update { it.copy(voiceRecording = VoiceRecordingUiState()) }
+        if (result !is VoiceRecorderResult.RecordingReady) {
+            val failure = (result as? VoiceRecorderResult.Failed)?.reason
+                ?: VoiceRecorderFailure.FINALIZATION_FAILED
+            _state.update {
+                it.copy(
+                    voiceRecording = VoiceRecordingUiState(
+                        error = voiceRecorderFailureMessage(failure),
+                        errorChatId = chatId,
+                    ),
+                )
+            }
+            return false
+        }
+
+        val current = _state.value
+        if (current.authorization != AuthorizationUiStep.Ready ||
+            current.chatCapabilities[chatId]?.canSendMedia == false
+        ) {
+            deletePickedMedia(getApplication(), result.voice.path)
+            _state.update {
+                it.copy(
+                    voiceRecording = VoiceRecordingUiState(
+                        error = "Голосовое сообщение нельзя отправить в этот чат",
+                        errorChatId = chatId,
+                    ),
+                )
+            }
+            return false
+        }
+
+        val media = result.voice.toPickedOutgoingMedia()
+        val accepted = queueMediaSend(nextPositiveClientMessageId(), chatId, media, caption = "")
+        if (!accepted) {
+            deletePickedMedia(getApplication(), media.path)
+            _state.update {
+                it.copy(
+                    voiceRecording = VoiceRecordingUiState(
+                        error = "Не удалось добавить голосовое сообщение в отправку",
+                        errorChatId = chatId,
+                    ),
+                )
+            }
+        }
+        return accepted
+    }
+
+    /** Cancel the active microphone capture and remove its partial app-private file. */
+    fun cancelVoiceRecording(chatId: Long? = null): Boolean {
+        val recording = _state.value.voiceRecording
+        val activeChatId = recording.chatId
+        if (activeChatId == null) {
+            val errorChatId = recording.errorChatId
+            if (errorChatId == null || (chatId != null && chatId != errorChatId)) return false
+            _state.update { it.copy(voiceRecording = VoiceRecordingUiState()) }
+            return true
+        }
+        if (chatId != null && chatId != activeChatId) return false
+        voiceRecordingEpoch++
+        voiceRecordingJob?.cancel()
+        voiceRecordingJob = null
+        voiceRecorder.cancel()
+        _state.update { it.copy(voiceRecording = VoiceRecordingUiState()) }
+        return true
+    }
+
+    private fun RecordedVoiceMessage.toPickedOutgoingMedia() = PickedOutgoingMedia(
+        kind = "voice",
+        path = path,
+        fileName = fileName,
+        mimeType = mimeType,
+        sizeBytes = sizeBytes,
+        voiceDurationMs = durationMs,
+    )
+
+    private fun voiceRecorderFailureMessage(failure: VoiceRecorderFailure): String = when (failure) {
+        VoiceRecorderFailure.UNSUPPORTED_ANDROID_VERSION -> "Для голосовых сообщений нужен Android 10 или новее"
+        VoiceRecorderFailure.MICROPHONE_PERMISSION_REQUIRED -> "Разрешите доступ к микрофону"
+        VoiceRecorderFailure.ALREADY_RECORDING -> "Запись уже выполняется"
+        VoiceRecorderFailure.NOT_RECORDING -> "Нет активной записи"
+        VoiceRecorderFailure.CLOSED -> "Запись недоступна после закрытия экрана"
+        VoiceRecorderFailure.OGG_OPUS_UNAVAILABLE -> "Устройство не смогло начать запись Ogg/Opus"
+        VoiceRecorderFailure.FINALIZATION_FAILED -> "Не удалось завершить запись"
+        VoiceRecorderFailure.DURATION_OUT_OF_RANGE -> "Голосовое сообщение должно длиться не меньше секунды"
+    }
+
     fun retryMediaSend(clientId: Long): Boolean {
         val send = _state.value.outbox[clientId] ?: return false
         val media = send.media ?: return false
@@ -876,27 +1045,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 mediaImportInProgress = false,
             )
         }
-        val mediaPayload = JSONObject()
-            .put("kind", media.kind)
-            .put("path", media.path)
-            .put("file_name", media.fileName)
-            .put("mime_type", media.mimeType)
-            .put("size_bytes", media.sizeBytes)
-        media.videoDurationMs?.let { mediaPayload.put("video_duration_ms", it) }
-        media.videoWidth?.let { mediaPayload.put("video_width", it) }
-        media.videoHeight?.let { mediaPayload.put("video_height", it) }
-        val command = JSONObject()
-            .put("type", "send_media_reliable")
-            .put(
-                "payload",
-                JSONObject()
-                    .put("client_id", clientId)
-                    .put("chat_id", chatId)
-                    .put("media", mediaPayload)
-                    .put("caption", caption),
-            )
-            .toString()
-        val accepted = sendCommand(command)
+        val accepted = sendCommand(reliableMediaCommand(clientId, chatId, media, caption))
         if (!accepted) {
             _state.update {
                 if (it.activeTextSendId == clientId) it.copy(
@@ -935,6 +1084,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         videoDurationMs = videoDurationMs,
         videoWidth = videoWidth,
         videoHeight = videoHeight,
+        voiceDurationMs = voiceDurationMs,
     )
 
     private fun submitMessageMutation(
@@ -1746,6 +1896,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         }.getOrDefault(AuthorizationUiStep.Closed)
 
         val loggedOut = authorization == AuthorizationUiStep.Closed
+        if (authorization != AuthorizationUiStep.Ready) cancelVoiceRecording()
         val mediaPathsToDeleteOnLogout = if (loggedOut) {
             _state.value.outbox.values.mapNotNull { it.media?.path }.distinct()
         } else {
@@ -2425,6 +2576,9 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
     }
 
     override fun onCleared() {
+        cancelVoiceRecording()
+        voiceRecorder.close()
+        voiceRecordingJob?.cancel()
         val currentHandle = lifecycle.close()
         _state.update { it.copy(nativeHandle = 0L) }
         if (currentHandle != null && NativeLibrary.isLoaded) {
