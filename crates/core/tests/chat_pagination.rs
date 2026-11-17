@@ -170,10 +170,7 @@ fn first_page_refresh_clears_consumed_cursors_before_accepting_new_snapshot() {
         chats: vec![chat(2, "two", 0)],
         next_cursor: Some("peer-2".into()),
     }));
-    assert!(state
-        .chat_pagination
-        .consumed_cursors
-        .contains("peer-1"));
+    assert!(state.chat_pagination.consumed_cursors.contains("peer-1"));
 
     // A `None` cursor is a refresh request even after pagination has begun.
     state.reduce(&CoreEvent::ChatsPageLoading { cursor: None });
