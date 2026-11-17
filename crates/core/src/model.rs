@@ -10,6 +10,7 @@ use std::collections::BTreeSet;
 pub enum ChatActivityKind {
     Typing,
     RecordingVoice,
+    RecordingVideo,
     UploadingMedia,
 }
 

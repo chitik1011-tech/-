@@ -288,6 +288,9 @@ private fun TelegramRustApp(
                     chatId = selectedChatId.toString(),
                     chatTitle = chat?.title ?: contact?.displayName.orEmpty(),
                     messages = messages,
+                    activityStatus = com.chitik.telegram.nativebridge.chatActivityStatus(
+                        state.chatActivities[selectedChatId].orEmpty(),
+                    ),
                     draft = draft,
                     loading = state.busy,
                     sending = state.mediaImportInProgress ||

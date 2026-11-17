@@ -157,6 +157,7 @@ data class ConversationScreenState(
     val chatTitle: String,
     val messages: List<ConversationMessageUi>,
     val draft: String,
+    val activityStatus: String? = null,
     val loading: Boolean = false,
     val sending: Boolean = false,
     val sendStatus: String? = null,
@@ -383,6 +384,15 @@ fun ConversationScreen(
                                     text = "Обновление…",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            state.activityStatus?.let { status ->
+                                Text(
+                                    text = status,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary,
                                 )
                             }
                         }
