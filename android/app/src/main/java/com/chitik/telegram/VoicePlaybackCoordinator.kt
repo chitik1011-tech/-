@@ -4,6 +4,8 @@ import android.content.Context
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
@@ -167,7 +169,18 @@ class VoicePlaybackCoordinator internal constructor(
 }
 
 private class Media3VoicePlayer(context: Context) : VoicePlayerPort {
-    private val player = ExoPlayer.Builder(context).build()
+    private val player = ExoPlayer.Builder(context)
+        .setHandleAudioBecomingNoisy(true)
+        .build()
+        .apply {
+            setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(C.USAGE_MEDIA)
+                    .setContentType(C.AUDIO_CONTENT_TYPE_SPEECH)
+                    .build(),
+                true,
+            )
+        }
     private var listener: VoicePlayerPort.Listener? = null
     private var failed = false
     private val mediaListener = object : Player.Listener {
