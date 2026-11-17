@@ -80,13 +80,13 @@ class TelegramNotificationPublisher(context: Context) {
         } else {
             message.senderName?.takeIf(String::isNotBlank) ?: message.chatTitle
         }.ifBlank { "Telegram" }
-        val body = message.body.ifBlank { "New message" }
+        val presentation = notificationPresentation(title = title, body = message.body)
 
         val notification = Notification.Builder(appContext, channelId)
             .setSmallIcon(android.R.drawable.sym_action_chat)
-            .setContentTitle(title)
-            .setContentText(body)
-            .setStyle(Notification.BigTextStyle().bigText(body))
+            .setContentTitle(presentation.title)
+            .setContentText(presentation.body)
+            .setStyle(Notification.BigTextStyle().bigText(presentation.body))
             .setWhen(message.timestampMillis)
             .setShowWhen(true)
             .setCategory(Notification.CATEGORY_MESSAGE)
