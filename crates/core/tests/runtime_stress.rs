@@ -64,6 +64,7 @@ async fn runtime_handles_bursty_updates_and_commands_without_losing_latest_state
         },
         store.clone(),
     );
+    let mut state_updates = core.subscribe_state();
 
     let command_core = core.clone();
     let commands = tokio::spawn(async move {
@@ -86,7 +87,7 @@ async fn runtime_handles_bursty_updates_and_commands_without_losing_latest_state
         updates.await.unwrap();
 
         loop {
-            let state = core.state();
+            let state = state_updates.borrow_and_update().clone();
             let messages = state.messages_for_chat(77);
 
             if state.account.authorization == AuthorizationState::WaitingForPhoneNumber
@@ -96,7 +97,10 @@ async fn runtime_handles_bursty_updates_and_commands_without_losing_latest_state
                 break;
             }
 
-            tokio::task::yield_now().await;
+            state_updates
+                .changed()
+                .await
+                .expect("core stopped before publishing the final stress-test state");
         }
     })
     .await
