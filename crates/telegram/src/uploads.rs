@@ -77,47 +77,6 @@ pub(crate) fn spawn_media_send(
             Err(_) => return,
         };
 
-        let metadata = match tokio::fs::metadata(&media.path).await {
-            Ok(metadata) if metadata.is_file() && metadata.len() == media.size_bytes => metadata,
-            Ok(_) => {
-                fail_attempt(
-                    &transfers,
-                    active,
-                    &updates,
-                    client_id,
-                    chat_id,
-                    media,
-                    caption,
-                    "Selected file changed after it was queued",
-                    false,
-                    transfer_generation,
-                    session_generation,
-                    session_epoch,
-                )
-                .await;
-                return;
-            }
-            Err(_) => {
-                fail_attempt(
-                    &transfers,
-                    active,
-                    &updates,
-                    client_id,
-                    chat_id,
-                    media,
-                    caption,
-                    "Selected file is no longer available",
-                    false,
-                    transfer_generation,
-                    session_generation,
-                    session_epoch,
-                )
-                .await;
-                return;
-            }
-        };
-        let _ = metadata;
-
         let file = match File::open(&media.path).await {
             Ok(file) => file,
             Err(_) => {
@@ -130,6 +89,69 @@ pub(crate) fn spawn_media_send(
                     media,
                     caption,
                     "Selected file could not be opened",
+                    false,
+                    transfer_generation,
+                    session_generation,
+                    session_epoch,
+                )
+                .await;
+                return;
+            }
+        };
+        // Validate the same opened file that will be streamed. Checking the path
+        // first leaves a replace-between-stat-and-open race that can upload a
+        // different file (or a truncated file) than the queued outbox payload.
+        let metadata = match file.metadata().await {
+            Ok(metadata) => metadata,
+            Err(_) => {
+                fail_attempt(
+                    &transfers,
+                    active,
+                    &updates,
+                    client_id,
+                    chat_id,
+                    media,
+                    caption,
+                    "Selected file could not be verified",
+                    false,
+                    transfer_generation,
+                    session_generation,
+                    session_epoch,
+                )
+                .await;
+                return;
+            }
+        };
+        if !metadata.is_file() || metadata.len() != media.size_bytes {
+            fail_attempt(
+                &transfers,
+                active,
+                &updates,
+                client_id,
+                chat_id,
+                media,
+                caption,
+                "Selected file changed after it was queued",
+                false,
+                transfer_generation,
+                session_generation,
+                session_epoch,
+            )
+            .await;
+            return;
+        }
+        let upload_size = match usize::try_from(media.size_bytes) {
+            Ok(size) => size,
+            Err(_) => {
+                fail_attempt(
+                    &transfers,
+                    active,
+                    &updates,
+                    client_id,
+                    chat_id,
+                    media,
+                    caption,
+                    "Selected file exceeds this device's upload size limit",
                     false,
                     transfer_generation,
                     session_generation,
@@ -164,11 +186,7 @@ pub(crate) fn spawn_media_send(
             session_epoch,
         };
         let uploaded: Uploaded = match client
-            .upload_stream(
-                &mut reader,
-                media.size_bytes as usize,
-                media.file_name.clone(),
-            )
+            .upload_stream(&mut reader, upload_size, media.file_name.clone())
             .await
         {
             Ok(uploaded) => uploaded,
