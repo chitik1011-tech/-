@@ -85,8 +85,12 @@ impl MediaCache {
             }),
         };
         if is_new_state {
-            let _state = cache.lock_state()?;
+            let state = cache.lock_state()?;
             cache.recover_temporary_files()?;
+            // Completed entries survive process restarts. Reapply the current
+            // bound before serving any cache hits, including after a config or
+            // app-version change lowers `max_bytes`.
+            cache.enforce_limit(&state)?;
         }
         Ok(cache)
     }
@@ -521,6 +525,34 @@ mod tests {
         .expect("reopen");
         assert!(!stale.exists());
         assert_eq!(reopened.used_bytes().expect("size"), 0);
+    }
+
+    #[test]
+    fn reopening_applies_the_current_limit_to_persisted_completed_entries() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path().join("private-cache");
+        let cache = MediaCache::new(CacheConfig {
+            root: root.clone(),
+            max_bytes: 16,
+        })
+        .expect("initial cache");
+
+        for (reference, bytes) in [("first", b"1234".as_slice()), ("second", b"5678")] {
+            let mut writer = cache.begin_write(reference).expect("writer");
+            writer.write_all(bytes).expect("write");
+            drop(writer.commit().expect("commit"));
+        }
+        assert_eq!(cache.used_bytes().expect("initial size"), 8);
+        drop(cache);
+
+        let reopened = MediaCache::new(CacheConfig {
+            root,
+            max_bytes: 3,
+        })
+        .expect("reopen with smaller cache limit");
+
+        assert!(reopened.used_bytes().expect("recovered size") <= 3);
+        assert!(reopened.entries().expect("entries").len() <= 1);
     }
 
     #[test]
