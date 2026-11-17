@@ -1834,7 +1834,7 @@ mod initial_connection_timeout_tests {
     #[tokio::test]
     async fn completed_initial_authorization_check_preserves_its_result() {
         let result = with_initial_connection_timeout(async { Ok(true) }).await;
-        assert_eq!(result, Ok(true));
+        assert!(matches!(result, Ok(true)));
     }
 }
 
