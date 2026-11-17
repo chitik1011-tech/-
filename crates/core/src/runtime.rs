@@ -377,7 +377,9 @@ where
                             &event_tx_task,
                             &mut activity_tracker,
                         );
-                        persist_state(&store, &mut reduced_state, &state_tx, &event_tx_task).await;
+                        let _ =
+                            persist_state(&store, &mut reduced_state, &state_tx, &event_tx_task)
+                                .await;
                         stop_backend_worker(&shutdown_signal_tx, &mut worker).await;
                         break;
                     }
@@ -727,7 +729,8 @@ where
                         &event_tx_task,
                         &mut activity_tracker,
                     );
-                    persist_state(&store, &mut reduced_state, &state_tx, &event_tx_task).await;
+                    let _ =
+                        persist_state(&store, &mut reduced_state, &state_tx, &event_tx_task).await;
                     stop_backend_worker(&shutdown_signal_tx, &mut worker).await;
                     break;
                 }
@@ -815,7 +818,13 @@ where
                     persistence_dirty |= event_is_persistent;
 
                     if stopped {
-                        persist_state(&store, &mut reduced_state, &state_tx, &event_tx_task).await;
+                        let _ = persist_state(
+                            &store,
+                            &mut reduced_state,
+                            &state_tx,
+                            &event_tx_task,
+                        )
+                        .await;
                         stop_backend_worker(&shutdown_signal_tx, &mut worker).await;
                         break;
                     }
@@ -845,8 +854,13 @@ where
                     }
                 }
                 RuntimeInput::Persist => {
-                    persist_state(&store, &mut reduced_state, &state_tx, &event_tx_task).await;
-                    persistence_dirty = false;
+                    persistence_dirty = !persist_state(
+                        &store,
+                        &mut reduced_state,
+                        &state_tx,
+                        &event_tx_task,
+                    )
+                    .await;
                 }
             }
         }
@@ -1851,12 +1865,100 @@ async fn persist_state<S: StateStore>(
     state: &mut CoreState,
     state_tx: &watch::Sender<CoreState>,
     event_tx: &broadcast::Sender<CoreEvent>,
-) {
-    if let Err(error) = store.save(&state_for_persistence(state)).await {
-        let message = error.to_string();
-        state.last_error = Some(message.clone());
-        let _ = state_tx.send(state.clone());
-        let _ = event_tx.send(CoreEvent::Error(message));
+) -> bool {
+    match store.save(&state_for_persistence(state)).await {
+        Ok(()) => true,
+        Err(error) => {
+            let message = error.to_string();
+            state.last_error = Some(message.clone());
+            let _ = state_tx.send(state.clone());
+            let _ = event_tx.send(CoreEvent::Error(message));
+            false
+        }
+    }
+}
+
+#[cfg(test)]
+mod persistence_retry_tests {
+    use super::spawn_core_with_store;
+    use crate::{
+        command::CoreCommand,
+        error::CoreError,
+        mock::MockTelegramBackend,
+        model::Draft,
+        state::CoreState,
+        storage::{StateStore, StoreFuture},
+    };
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex,
+    };
+    use tokio::sync::Notify;
+
+    #[derive(Clone, Default)]
+    struct FailOnceStore {
+        saves: Arc<AtomicUsize>,
+        saved_state: Arc<Mutex<Option<CoreState>>>,
+        second_save: Arc<Notify>,
+    }
+
+    impl StateStore for FailOnceStore {
+        fn load<'a>(&'a self) -> StoreFuture<'a, Option<CoreState>> {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn save<'a>(&'a self, state: &'a CoreState) -> StoreFuture<'a, ()> {
+            Box::pin(async move {
+                let attempt = self.saves.fetch_add(1, Ordering::SeqCst);
+                if attempt == 0 {
+                    return Err(CoreError::Storage("transient test write failure".into()));
+                }
+
+                *self
+                    .saved_state
+                    .lock()
+                    .map_err(|_| CoreError::Storage("test state lock poisoned".into()))? =
+                    Some(state.persistence_snapshot());
+                if attempt == 1 {
+                    self.second_save.notify_one();
+                }
+                Ok(())
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn transient_flush_failure_is_retried_without_another_state_change() {
+        let store = FailOnceStore::default();
+        let core = spawn_core_with_store(MockTelegramBackend::default(), store.clone());
+        let draft = Draft {
+            chat_id: 7,
+            text: "persist after transient failure".into(),
+            reply_to_message_id: None,
+            edit_message_id: None,
+            updated_at_unix: 1,
+        };
+
+        core.send(CoreCommand::UpdateDraft(draft.clone()))
+            .await
+            .unwrap();
+
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            store.second_save.notified(),
+        )
+        .await
+        .expect("dirty state should be retried after a transient save failure");
+
+        let persisted = store
+            .saved_state
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("retry should persist the latest state");
+        assert_eq!(persisted.drafts.get(&draft.chat_id), Some(&draft));
+
+        core.shutdown().await.unwrap();
     }
 }
 
