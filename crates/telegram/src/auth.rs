@@ -1,4 +1,5 @@
 use grammers_client::{
+    sender::InvocationError,
     Client, SignInError,
     client::{LoginToken, PasswordToken},
 };
@@ -52,6 +53,12 @@ impl AuthFlow {
         self.login_token = None;
         self.password_token = None;
         self.phase = AuthPhase::Closed;
+    }
+
+    fn reset_to_phone_entry(&mut self) {
+        self.login_token = None;
+        self.password_token = None;
+        self.phase = AuthPhase::WaitingForPhoneNumber;
     }
 
     pub(crate) async fn start(
@@ -122,7 +129,7 @@ impl AuthFlow {
                 ))
             }
             Err(SignInError::SignUpRequired) => {
-                self.phase = AuthPhase::WaitingForPhoneNumber;
+                self.reset_to_phone_entry();
                 Err(TelegramBackendError::Authorization(
                     "account sign-up must be completed in an official Telegram client".into(),
                 )
@@ -136,8 +143,12 @@ impl AuthFlow {
                 ))
             }
             Err(SignInError::Other(error)) => {
-                self.login_token = Some(token);
-                self.phase = AuthPhase::WaitingForCode;
+                if login_token_invalidated(&error) {
+                    self.reset_to_phone_entry();
+                } else {
+                    self.login_token = Some(token);
+                    self.phase = AuthPhase::WaitingForCode;
+                }
                 Err(auth_api_error("sign in with code", error))
             }
         }
@@ -177,19 +188,25 @@ impl AuthFlow {
                     "Telegram still requires a 2FA password".into(),
                 ))
             }
-            Err(SignInError::InvalidCode) => Err(TelegramBackendError::Authorization(
-                "Telegram returned an unexpected invalid-code error during 2FA".into(),
-            )
-            .into()),
-            Err(SignInError::SignUpRequired) => Err(TelegramBackendError::Authorization(
-                "account sign-up must be completed in an official Telegram client".into(),
-            )
-            .into()),
+            Err(SignInError::InvalidCode) => {
+                self.reset_to_phone_entry();
+                Err(TelegramBackendError::Authorization(
+                    "Telegram returned an unexpected invalid-code error during 2FA".into(),
+                )
+                .into())
+            }
+            Err(SignInError::SignUpRequired) => {
+                self.reset_to_phone_entry();
+                Err(TelegramBackendError::Authorization(
+                    "account sign-up must be completed in an official Telegram client".into(),
+                )
+                .into())
+            }
             Err(SignInError::Other(error)) => {
                 // `check_password` consumes the password token. Generic transport/RPC
                 // failures do not return a replacement token, so restart the login
                 // flow rather than pretending a retry can succeed with stale state.
-                self.phase = AuthPhase::WaitingForPhoneNumber;
+                self.reset_to_phone_entry();
                 Err(auth_api_error(
                     "sign in with 2FA password; restart login",
                     error,
@@ -197,6 +214,23 @@ impl AuthFlow {
             }
         }
     }
+}
+
+/// A code cannot be retried with its LoginToken after these RPC responses.
+/// Grammers reports ordinary wrong codes as `SignInError::InvalidCode`, which
+/// remains retryable and is handled separately above.
+fn login_token_invalidated(error: &InvocationError) -> bool {
+    matches!(
+        error,
+        InvocationError::Rpc(rpc)
+            if matches!(
+                rpc.name.as_str(),
+                "PHONE_CODE_EXPIRED"
+                    | "PHONE_CODE_HASH_EMPTY"
+                    | "PHONE_CODE_HASH_INVALID"
+                    | "AUTH_RESTART"
+            )
+    )
 }
 
 /// Accept country-code numbers and common visual separators, but never guess a
@@ -220,7 +254,8 @@ fn normalize_phone_number(input: &str) -> tg_mobile_core::Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{AuthPhase, normalize_phone_number};
+    use super::{AuthFlow, AuthPhase, login_token_invalidated, normalize_phone_number};
+    use grammers_client::sender::{InvocationError, RpcError};
     use tg_mobile_core::AuthorizationState;
 
     #[test]
@@ -261,5 +296,49 @@ mod tests {
             AuthorizationState::WaitingForPassword
         );
         assert_eq!(AuthPhase::Ready.core_state(), AuthorizationState::Ready);
+    }
+
+    #[test]
+    fn invalid_or_expired_login_hashes_require_a_fresh_phone_entry() {
+        for name in [
+            "PHONE_CODE_EXPIRED",
+            "PHONE_CODE_HASH_EMPTY",
+            "PHONE_CODE_HASH_INVALID",
+            "AUTH_RESTART",
+        ] {
+            assert!(
+                login_token_invalidated(&InvocationError::Rpc(RpcError {
+                    code: 400,
+                    name: name.into(),
+                    value: None,
+                    caused_by: None,
+                })),
+                "{name} should invalidate its LoginToken"
+            );
+        }
+
+        for retryable_name in ["PHONE_CODE_INVALID", "FLOOD_WAIT_30"] {
+            assert!(
+                !login_token_invalidated(&InvocationError::Rpc(RpcError {
+                    code: 400,
+                    name: retryable_name.into(),
+                    value: None,
+                    caused_by: None,
+                })),
+                "{retryable_name} should not invalidate its LoginToken"
+            );
+        }
+    }
+
+    #[test]
+    fn consumed_password_token_recovery_does_not_leave_password_stage_active() {
+        let mut flow = AuthFlow::default();
+        flow.phase = AuthPhase::WaitingForPassword;
+
+        flow.reset_to_phone_entry();
+
+        assert_eq!(flow.state(), AuthorizationState::WaitingForPhoneNumber);
+        assert!(flow.login_token.is_none());
+        assert!(flow.password_token.is_none());
     }
 }
