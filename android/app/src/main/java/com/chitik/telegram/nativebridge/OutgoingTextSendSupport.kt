@@ -34,6 +34,37 @@ internal fun reliableTextCommand(
         .toString()
 }
 
+/** Builds the established reliable media command, preserving the metadata required for a voice note. */
+internal fun reliableMediaCommand(
+    clientId: Long,
+    chatId: Long,
+    media: PickedOutgoingMedia,
+    caption: String = "",
+): String {
+    require(clientId > 0L && chatId != 0L && media.sizeBytes > 0L)
+    val attachment = JSONObject()
+        .put("kind", media.kind)
+        .put("path", media.path)
+        .put("file_name", media.fileName)
+        .put("mime_type", media.mimeType)
+        .put("size_bytes", media.sizeBytes)
+    media.voiceDurationMs?.let { attachment.put("voice_duration_ms", it) }
+    media.videoDurationMs?.let { attachment.put("video_duration_ms", it) }
+    media.videoWidth?.let { attachment.put("video_width", it) }
+    media.videoHeight?.let { attachment.put("video_height", it) }
+    return JSONObject()
+        .put("type", "send_media_reliable")
+        .put(
+            "payload",
+            JSONObject()
+                .put("client_id", clientId)
+                .put("chat_id", chatId)
+                .put("media", attachment)
+                .put("caption", caption),
+        )
+        .toString()
+}
+
 data class OutgoingMediaUi(
     val kind: String,
     val path: String,
@@ -43,6 +74,7 @@ data class OutgoingMediaUi(
     val videoDurationMs: Long? = null,
     val videoWidth: Int? = null,
     val videoHeight: Int? = null,
+    val voiceDurationMs: Long? = null,
 )
 
 data class OutgoingTextSendUi(
@@ -98,12 +130,18 @@ internal fun parseOutgoingTextSend(value: JSONObject?): OutgoingTextSendUi? {
             .takeIf { kind == "video" && it in 1..32768 }
         val videoHeight = item.optInt("video_height", -1)
             .takeIf { kind == "video" && it in 1..32768 }
+        val voiceDurationMs = item.optLong("voice_duration_ms", -1L)
+            .takeIf { kind == "voice" && it in 1_000L..172_800_000L }
         val dimensions = if (videoWidth != null && videoHeight != null) {
             videoWidth to videoHeight
         } else {
             null
         }
-        if (kind in setOf("photo", "video", "document") && path.isNotBlank() &&
+        val voiceMetadataValid = kind != "voice" || (
+            mimeType.equals("audio/ogg", ignoreCase = true) &&
+                fileName.endsWith(".ogg", ignoreCase = true) && voiceDurationMs != null
+            )
+        if (kind in setOf("photo", "video", "voice", "document") && voiceMetadataValid && path.isNotBlank() &&
             fileName.isNotBlank() && mimeType.isNotBlank() && sizeBytes > 0L
         ) OutgoingMediaUi(
             kind,
@@ -114,6 +152,7 @@ internal fun parseOutgoingTextSend(value: JSONObject?): OutgoingTextSendUi? {
             videoDurationMs,
             dimensions?.first,
             dimensions?.second,
+            voiceDurationMs,
         ) else null
     }
     if (status == "uploading" && media == null) return null
