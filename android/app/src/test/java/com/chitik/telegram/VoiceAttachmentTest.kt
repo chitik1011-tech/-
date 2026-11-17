@@ -10,6 +10,57 @@ import org.junit.Test
 
 class VoiceAttachmentTest {
     @Test
+    fun playbackAccessibilityReportsStatusDurationErrorAndBoundedProgress() {
+        val playing = voicePlaybackAccessibility(
+            playing = true,
+            positionMs = 15_000L,
+            durationMs = 10_000L,
+            error = null,
+        )
+        assertEquals("Пауза голосового сообщения", playing.buttonLabel)
+        assertEquals("Воспроизводится, 0:10 из 0:10", playing.stateDescription)
+        assertEquals(1f, playing.progress, 0f)
+
+        val failed = voicePlaybackAccessibility(
+            playing = false,
+            positionMs = -1L,
+            durationMs = 20_000L,
+            error = "Декодер недоступен",
+        )
+        assertEquals(
+            "Ошибка воспроизведения: Декодер недоступен. 0:00 из 0:20",
+            failed.stateDescription,
+        )
+        assertEquals(0f, failed.progress, 0f)
+        assertEquals(
+            "Воспроизвести голосовое сообщение",
+            failed.buttonLabel,
+        )
+    }
+
+    @Test
+    fun downloadAccessibilityDescribesRetryAndExposesOnlyBoundedProgress() {
+        val downloading = voiceDownloadAccessibility(
+            MediaDownloadUiState.Downloading(bytesTransferred = 150, totalBytes = 100),
+        )
+        assertEquals("Загрузка голосового сообщения, 100% загружено", downloading.description)
+        assertEquals(1f, downloading.progress!!, 0f)
+
+        val retry = voiceDownloadAccessibility(MediaDownloadUiState.Cancelled)
+        assertEquals(
+            "Загрузка отменена. Повторить загрузку голосового сообщения",
+            retry.description,
+        )
+        assertEquals(null, retry.progress)
+
+        val failed = voiceDownloadAccessibility(MediaDownloadUiState.Failed("Нет соединения"))
+        assertEquals(
+            "Ошибка загрузки голосового сообщения: Нет соединения. Повторить загрузку",
+            failed.description,
+        )
+    }
+
+    @Test
     fun packedTelegramWaveformDecodesFiveBitSamplesWithoutInventingMissingData() {
         assertEquals(listOf(31, 31, 0), decodeTelegramVoiceWaveform(listOf(255, 3)))
         assertEquals(emptyList<Int>(), decodeTelegramVoiceWaveform(null))
