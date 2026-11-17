@@ -1,5 +1,12 @@
 package com.chitik.telegram
 
+import android.content.ActivityNotFoundException
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -20,6 +27,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -57,6 +65,7 @@ fun PeerProfileDialog(
     onMessage: () -> Unit = onDismiss,
 ) {
     val presentation = profile?.toPeerProfilePresentation()
+    val context = LocalContext.current
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
@@ -79,6 +88,24 @@ fun PeerProfileDialog(
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 presentation?.let { details ->
                     details.username?.let { ProfileInfoRow(label = "Username", value = "@$it") }
+                    details.usernameActions?.let { actions ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            TextButton(onClick = { copyProfileUsername(context, actions.copyText) }) {
+                                Text("Copy username")
+                            }
+                            TextButton(onClick = {
+                                if (!openProfileUsername(context, actions.uri)) {
+                                    Toast.makeText(
+                                        context,
+                                        "No app can open Telegram links",
+                                        Toast.LENGTH_SHORT,
+                                    ).show()
+                                }
+                            }) {
+                                Text("Open in Telegram")
+                            }
+                        }
+                    }
                     details.bio?.let { ProfileInfoRow(label = "Bio", value = it) }
                     details.memberCount?.let { ProfileInfoRow(label = "Members", value = it.toString()) }
                     if (details.badges.isNotEmpty()) {
@@ -113,6 +140,21 @@ fun PeerProfileDialog(
             }
         },
     )
+}
+
+private fun copyProfileUsername(context: Context, username: String) {
+    val clipboard = context.getSystemService(ClipboardManager::class.java) ?: return
+    clipboard.setPrimaryClip(ClipData.newPlainText("Telegram username", username))
+    Toast.makeText(context, "Username copied", Toast.LENGTH_SHORT).show()
+}
+
+private fun openProfileUsername(context: Context, uri: String): Boolean = try {
+    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(uri)))
+    true
+} catch (_: ActivityNotFoundException) {
+    false
+} catch (_: SecurityException) {
+    false
 }
 
 @Composable
