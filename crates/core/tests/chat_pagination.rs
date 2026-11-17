@@ -1,6 +1,4 @@
-use tg_mobile_core::{
-    ChatPage, ChatSummary, CoreCommand, CoreEvent, CoreState, decode_command,
-};
+use tg_mobile_core::{decode_command, ChatPage, ChatSummary, CoreCommand, CoreEvent, CoreState};
 
 fn chat(id: i64, title: &str, message_id: i64) -> ChatSummary {
     ChatSummary {
@@ -67,7 +65,15 @@ fn pages_merge_in_server_order_deduplicate_and_keep_newer_live_messages() {
         chats: vec![chat(1, "one", 5), chat(3, "three", 0)],
         next_cursor: Some("2".into()),
     }));
-    assert_eq!(state.account.chats.iter().map(|chat| chat.id).collect::<Vec<_>>(), vec![1, 3]);
+    assert_eq!(
+        state
+            .account
+            .chats
+            .iter()
+            .map(|chat| chat.id)
+            .collect::<Vec<_>>(),
+        vec![1, 3]
+    );
     assert_eq!(state.account.chats[0].last_message.as_ref().unwrap().id, 20);
 
     state.reduce(&CoreEvent::ChatsPageLoading {
@@ -78,7 +84,15 @@ fn pages_merge_in_server_order_deduplicate_and_keep_newer_live_messages() {
         chats: vec![chat(3, "three refreshed", 0), chat(4, "four", 0)],
         next_cursor: None,
     }));
-    assert_eq!(state.account.chats.iter().map(|chat| chat.id).collect::<Vec<_>>(), vec![1, 3, 4]);
+    assert_eq!(
+        state
+            .account
+            .chats
+            .iter()
+            .map(|chat| chat.id)
+            .collect::<Vec<_>>(),
+        vec![1, 3, 4]
+    );
     assert_eq!(state.account.chats[1].title, "three refreshed");
     assert!(!state.chat_pagination.can_load_next());
 }
