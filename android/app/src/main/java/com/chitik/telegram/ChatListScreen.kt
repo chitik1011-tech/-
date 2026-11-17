@@ -40,6 +40,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Logout
+import androidx.compose.material.icons.filled.ManageSearch
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.runtime.Composable
@@ -93,6 +94,7 @@ fun ChatListScreen(
     chatPageError: String? = null,
     onLoadMoreChats: () -> Unit = {},
     onRetryChatPage: () -> Unit = {},
+    onOpenMessageSearch: (() -> Unit)? = null,
     showEnableNotifications: Boolean = false,
     onEnableNotifications: () -> Unit = {},
     modifier: Modifier = Modifier,
@@ -201,6 +203,11 @@ fun ChatListScreen(
                     }
                     IconButton(onClick = { searching = !searching; if (!searching) query = "" }) {
                         Icon(if (searching) Icons.Default.Close else Icons.Default.Search, contentDescription = if (searching) "Close chat search" else "Search loaded chats")
+                    }
+                    chatListMessageSearchAction(onOpenMessageSearch)?.let { action ->
+                        IconButton(onClick = action.onClick) {
+                            Icon(Icons.Default.ManageSearch, contentDescription = "Search messages")
+                        }
                     }
                     IconButton(onClick = onRefresh, enabled = !isLoading) {
                         if (isLoading) CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
@@ -379,6 +386,12 @@ private fun ChatListRow(chat: ChatListEntry, selected: Boolean, onClick: () -> U
         }
     }
 }
+
+internal data class ChatListMessageSearchAction(val onClick: () -> Unit)
+
+internal fun chatListMessageSearchAction(
+    onOpenMessageSearch: (() -> Unit)?,
+): ChatListMessageSearchAction? = onOpenMessageSearch?.let(::ChatListMessageSearchAction)
 
 /** Search only currently loaded, real Rust-backed chats; no server query is implied. */
 internal fun filterLoadedChats(chats: List<ChatListEntry>, query: String): List<ChatListEntry> {
