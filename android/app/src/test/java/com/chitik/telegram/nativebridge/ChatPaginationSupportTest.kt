@@ -46,6 +46,55 @@ class ChatPaginationSupportTest {
     }
 
     @Test
+    fun unreadCountersAreParsedAndMissingPageValuesPreserveKnownCounters() {
+        val current = NativeUiState(
+            chats = listOf(
+                chat(1L, "one").copy(unreadMentionsCount = 3, unreadReactionsCount = 4),
+            ),
+            chatsLoaded = true,
+            chatPagination = ChatPaginationUiState(
+                loaded = true,
+                loading = true,
+                requestedCursor = "1",
+                nextCursor = "1",
+            ),
+        )
+
+        val updated = current.reduceChatPageLoaded(
+            page(
+                requestedCursor = "1",
+                nextCursor = null,
+                chats = """[
+                    {"id":1,"title":"one refreshed","unread_count":2,"unread_mentions_count":0},
+                    {"id":2,"title":"two","unread_reactions_count":4294967296}
+                ]""",
+            ),
+        )
+
+        assertEquals(0L, updated.chats[0].unreadMentionsCount)
+        assertEquals(4L, updated.chats[0].unreadReactionsCount)
+        assertEquals(4_294_967_295L, updated.chats[1].unreadReactionsCount)
+        assertNull(updated.chats[1].unreadMentionsCount)
+    }
+
+    @Test
+    fun chatListRefreshPreservesMissingCountersButAcceptsReportedZero() {
+        val existing = listOf(
+            chat(1L, "one").copy(unreadMentionsCount = 3, unreadReactionsCount = 4),
+        )
+        val updated = mergeChatListRefresh(
+            existing = existing,
+            incomingChats = listOf(
+                chat(1L, "one refreshed").copy(unreadMentionsCount = 0),
+            ),
+            currentCapabilities = emptyMap(),
+        )
+
+        assertEquals(0L, updated.single().unreadMentionsCount)
+        assertEquals(4L, updated.single().unreadReactionsCount)
+    }
+
+    @Test
     fun laterPageAppendsAndDeduplicatesInServerOrderThenMarksExhaustion() {
         val current = NativeUiState(
             chats = listOf(chat(1L, "one"), chat(3L, "three", preview = ChatListPreview("kept", 7L, true))),

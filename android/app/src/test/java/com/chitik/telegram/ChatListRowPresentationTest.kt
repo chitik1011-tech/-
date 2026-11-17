@@ -28,6 +28,35 @@ class ChatListRowPresentationTest {
     }
 
     @Test
+    fun mentionsAndReactionsHaveBoundedLabelsAndAccessibleDescriptions() {
+        val row = chat(
+            unreadMentionsCount = 1_000,
+            unreadReactionsCount = 2,
+            lastMessage = ChatListPreview("Ping", now.epochSecond, false),
+        ).toChatListRowPresentation(now, ZoneOffset.UTC, Locale.US)
+
+        assertEquals("999+", row.unreadMentionsLabel)
+        assertEquals("2", row.unreadReactionsLabel)
+        assertTrue(row.accessibilityLabel.contains("999+ unread mentions"))
+        assertTrue(row.accessibilityLabel.contains("2 unread reactions"))
+    }
+
+    @Test
+    fun absentZeroAndNegativeCounterValuesDoNotShowBadges() {
+        val defaults = chat(lastMessage = null).toChatListRowPresentation(now, ZoneOffset.UTC, Locale.US)
+        assertNull(defaults.unreadMentionsLabel)
+        assertNull(defaults.unreadReactionsLabel)
+
+        val noUnread = chat(
+            unreadMentionsCount = 0,
+            unreadReactionsCount = -1,
+            lastMessage = null,
+        ).toChatListRowPresentation(now, ZoneOffset.UTC, Locale.US)
+        assertNull(noUnread.unreadMentionsLabel)
+        assertNull(noUnread.unreadReactionsLabel)
+    }
+
+    @Test
     fun outgoingPreviewAddsOnlyTheAvailableSentCheck() {
         val row = chat(
             lastMessage = ChatListPreview("Got it", now.epochSecond, true),
@@ -56,11 +85,15 @@ class ChatListRowPresentationTest {
 
     private fun chat(
         unreadCount: Long = 0,
+        unreadMentionsCount: Long? = null,
+        unreadReactionsCount: Long? = null,
         lastMessage: ChatListPreview?,
     ) = ChatListEntry(
         id = 45,
         title = "Morgan",
         unreadCount = unreadCount,
         lastMessage = lastMessage,
+        unreadMentionsCount = unreadMentionsCount,
+        unreadReactionsCount = unreadReactionsCount,
     )
 }
