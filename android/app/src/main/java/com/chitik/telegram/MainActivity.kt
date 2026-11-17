@@ -54,6 +54,8 @@ import com.chitik.telegram.nativebridge.textSendStatusForChat
 import com.chitik.telegram.notifications.NotificationPermissionRequester
 import com.chitik.telegram.notifications.NotificationRouteResolution
 import com.chitik.telegram.notifications.TelegramNotificationRoute
+import com.chitik.telegram.notifications.PendingNotificationSessionDecision
+import com.chitik.telegram.notifications.decidePendingNotificationSessionRestore
 import com.chitik.telegram.notifications.restorePendingNotificationChatId
 import com.chitik.telegram.deeplink.TelegramDeepLinkRouter
 import com.chitik.telegram.deeplink.TelegramJoinInviteIntent
@@ -149,6 +151,17 @@ private fun TelegramRustApp(
     var replySelectionGeneration by rememberSaveable { mutableLongStateOf(state.selectionGeneration) }
     var pendingLocationChatId by rememberSaveable { mutableLongStateOf(0L) }
     var activeLocationRequest by remember { mutableStateOf<LocationRequestHandle?>(null) }
+    LaunchedEffect(incomingNotificationChatId, state.sessionRestoreComplete, state.authorization) {
+        val sessionDecision = decidePendingNotificationSessionRestore(
+            restoreComplete = state.sessionRestoreComplete,
+            authorizationReady = state.authorization == AuthorizationUiStep.Ready,
+        )
+        if (incomingNotificationChatId != null &&
+            sessionDecision == PendingNotificationSessionDecision.Discard
+        ) {
+            onDismissNotification()
+        }
+    }
     LaunchedEffect(incomingNotificationChatId, state.authorization, state.chatsLoaded, state.chats) {
         val resolution = com.chitik.telegram.notifications.resolveNotificationRoute(
             chatId = incomingNotificationChatId,
@@ -333,6 +346,7 @@ private fun TelegramRustApp(
                 viewModel.loadContacts(offset = 0)
             },
             onLogout = {
+                onDismissNotification()
                 selectedChatId = 0L
                 showContacts = false
                 draft = ""
