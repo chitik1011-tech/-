@@ -629,11 +629,7 @@ pub(crate) async fn run_update_worker(mut input: UpdateWorkerInput) {
                     }
                 }
                 let recovered_transport = transient_seen.load(std::sync::atomic::Ordering::SeqCst);
-                if !update_token_is_current(
-                    operation_token,
-                    observed_token,
-                    recovered_transport,
-                ) {
+                if !update_token_is_current(operation_token, observed_token, recovered_transport) {
                     continue;
                 }
                 // The first update returned after a transient stream failure belongs to
@@ -671,11 +667,8 @@ pub(crate) async fn run_update_worker(mut input: UpdateWorkerInput) {
                     }
                     Err(error) => {
                         let current_token = *input.connection_token.borrow();
-                        if update_token_is_current(
-                            event_token,
-                            current_token,
-                            recovered_transport,
-                        ) {
+                        if update_token_is_current(event_token, current_token, recovered_transport)
+                        {
                             emit_error(
                                 &input.events,
                                 &input.core_updates,
@@ -1033,16 +1026,16 @@ mod tests {
         ActivityGenerations, ActivitySignal, MAX_TRACKED_CHAT_ACTIVITIES, NextOutcome,
         RetryBackoff, UPDATE_RETRY_INITIAL_DELAY, UPDATE_RETRY_MAX_DELAY, UpdateSource,
         activity_signal, emit_lifecycle, emit_update, is_transient_update_error,
-        map_raw_activity_update, message_added_if_new, next_with_recovery,
-        update_token_is_current, wait_for_current_attempt,
+        map_raw_activity_update, message_added_if_new, next_with_recovery, update_token_is_current,
+        wait_for_current_attempt,
     };
     use super::{ConnectionState, TelegramUpdate, map_raw_pinned_update};
+    use crate::messages::MessageDeduplicator;
     use tg_mobile_core::{
         ChatActivityKind, ChatActivityTracker, ConnectionMachine, CoreEvent,
         DEFAULT_CHAT_ACTIVITY_TTL_MS, LinkEvent, MessageSummary, ReadDirection,
         backend_update_channel,
     };
-    use crate::messages::MessageDeduplicator;
 
     fn sample_message(id: i64, chat_id: i64) -> MessageSummary {
         MessageSummary {
@@ -1398,29 +1391,19 @@ mod tests {
         let mut backoff = RetryBackoff::default();
         let core_for_retry = core_tx.clone();
         let native_for_retry = native_tx.clone();
-        let result = next_with_recovery(
-            &mut source,
-            &mut shutdown_rx,
-            &mut backoff,
-            move |_| {
-                let core = Some(core_for_retry.clone());
-                let native = native_for_retry.clone();
-                let token_tx = token_tx.clone();
-                let transient_flag = Arc::clone(&transient_flag);
-                async move {
-                    let recovered = emit_lifecycle(
-                        &native,
-                        &core,
-                        initial,
-                        LinkEvent::TransportLost,
-                    )
+        let result = next_with_recovery(&mut source, &mut shutdown_rx, &mut backoff, move |_| {
+            let core = Some(core_for_retry.clone());
+            let native = native_for_retry.clone();
+            let token_tx = token_tx.clone();
+            let transient_flag = Arc::clone(&transient_flag);
+            async move {
+                let recovered = emit_lifecycle(&native, &core, initial, LinkEvent::TransportLost)
                     .await
                     .unwrap();
-                    token_tx.send_replace(Some(recovered));
-                    transient_flag.store(true, std::sync::atomic::Ordering::SeqCst);
-                }
-            },
-        )
+                token_tx.send_replace(Some(recovered));
+                transient_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        })
         .await;
 
         assert!(matches!(result, NextOutcome::Item(42)));
@@ -1502,7 +1485,10 @@ mod tests {
         assert_eq!(replay, None);
         assert!(matches!(
             same_id_other_chat,
-            Some(TelegramUpdate::MessageAdded(MessageSummary { chat_id: -5, .. }))
+            Some(TelegramUpdate::MessageAdded(MessageSummary {
+                chat_id: -5,
+                ..
+            }))
         ));
     }
 
@@ -1548,7 +1534,8 @@ mod tests {
 
         fn next(
             &mut self,
-        ) -> Pin<Box<dyn Future<Output = Result<Self::Item, InvocationError>> + Send + '_>> {
+        ) -> Pin<Box<dyn Future<Output = Result<Self::Item, InvocationError>> + Send + '_>>
+        {
             self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Box::pin(std::future::pending())
         }
