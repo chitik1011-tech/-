@@ -111,6 +111,7 @@ internal fun resolveSafeMimeType(declared: String?, filename: String?): String {
     return when (sanitizeDisplayFilename(filename).substringAfterLast('.', "").lowercase(Locale.ROOT)) {
         "jpg", "jpeg" -> "image/jpeg"
         "png" -> "image/png"
+        "bmp" -> "image/bmp"
         "webp" -> "image/webp"
         "gif" -> "image/gif"
         "mp4" -> "video/mp4"
@@ -125,6 +126,22 @@ internal fun resolveSafeMimeType(declared: String?, filename: String?): String {
         else -> "application/octet-stream"
     }
 }
+
+/** True when an attachment can use the existing inline image preview and viewer. */
+internal fun isInlineImageMedia(attachment: MediaAttachmentUi): Boolean =
+    attachment.kind == MediaKindUi.Photo ||
+        (attachment.kind == MediaKindUi.Document && resolveSafeMimeType(
+            attachment.mimeType,
+            attachment.filename,
+        ) in INLINE_IMAGE_MIME_TYPES)
+
+private val INLINE_IMAGE_MIME_TYPES = setOf(
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    "image/bmp",
+    "image/gif",
+)
 
 data class OpenIntentSpec(
     val action: String,

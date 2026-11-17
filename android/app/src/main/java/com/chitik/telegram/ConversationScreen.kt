@@ -1290,6 +1290,22 @@ private fun MediaAttachmentCard(
             onOpen = onOpenViewer,
         )
 
+        MediaKindUi.Document -> if (isInlineImageMedia(attachment)) {
+            PhotoAttachmentCard(
+                attachment = attachment,
+                onDownload = onDownload,
+                onCancel = onCancel,
+                onOpen = onOpenViewer,
+            )
+        } else {
+            DocumentAttachmentCard(
+                attachment = attachment,
+                onDownload = onDownload,
+                onCancel = onCancel,
+                onOpen = onOpenDocument,
+            )
+        }
+
         MediaKindUi.Video,
         MediaKindUi.VideoNote,
         -> VideoAttachmentCard(
