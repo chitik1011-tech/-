@@ -15,6 +15,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
@@ -258,6 +260,7 @@ fun ChatListScreen(
 
 @Composable
 private fun ChatListRow(chat: ChatListEntry, selected: Boolean, onClick: () -> Unit) {
+    val presentation = chat.toChatListRowPresentation()
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -266,26 +269,29 @@ private fun ChatListRow(chat: ChatListEntry, selected: Boolean, onClick: () -> U
                 else MaterialTheme.colorScheme.surface
             )
             .clickable(onClick = onClick)
+            .semantics(mergeDescendants = true) {
+                contentDescription = presentation.accessibilityLabel
+            }
             .heightIn(min = TelegramUiTokens.chatRowHeight)
             .padding(horizontal = TelegramUiTokens.horizontalInset, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        AvatarPlaceholder(chat.title, size = TelegramUiTokens.avatar, selected = selected)
+        AvatarPlaceholder(presentation.title, size = TelegramUiTokens.avatar, selected = selected)
         Spacer(Modifier.width(TelegramUiTokens.rowGap))
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = chat.title,
+                    text = presentation.title,
                     modifier = Modifier.weight(1f),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                chat.lastMessage?.let { preview ->
+                presentation.timestamp?.let { timestamp ->
                     Spacer(Modifier.width(8.dp))
                     Text(
-                        text = MessageTimestampFormatter.format(preview.timestampUnix),
+                        text = timestamp,
                         style = MaterialTheme.typography.labelSmall,
                         color = if (chat.unreadCount > 0) MaterialTheme.colorScheme.primary
                             else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -294,20 +300,23 @@ private fun ChatListRow(chat: ChatListEntry, selected: Boolean, onClick: () -> U
                 }
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
-                val preview = chat.lastMessage
+                if (presentation.outgoingPreview) {
+                    Text(
+                        text = "✓",
+                        color = MaterialTheme.colorScheme.primary,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Spacer(Modifier.width(4.dp))
+                }
                 Text(
-                    text = when {
-                        preview == null -> ""
-                        preview.outgoing -> "You: ${preview.text}"
-                        else -> preview.text
-                    },
+                    text = presentation.preview.orEmpty(),
                     modifier = Modifier.weight(1f),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
-                if (chat.unreadCount > 0) {
+                if (presentation.unreadLabel != null) {
                     Spacer(Modifier.width(8.dp))
                     UnreadCounterBadge(count = chat.unreadCount)
                 }
