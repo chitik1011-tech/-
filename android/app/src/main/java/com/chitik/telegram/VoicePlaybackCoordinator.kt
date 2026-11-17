@@ -45,6 +45,10 @@ internal interface VoicePlaybackScheduler {
     fun remove(task: Runnable)
 }
 
+internal fun interface VoicePlayerFactory {
+    fun create(): VoicePlayerPort
+}
+
 private class MainLooperVoicePlaybackScheduler : VoicePlaybackScheduler {
     private val handler = Handler(Looper.getMainLooper())
     override fun postDelayed(task: Runnable, delayMs: Long) { handler.postDelayed(task, delayMs) }
@@ -52,14 +56,21 @@ private class MainLooperVoicePlaybackScheduler : VoicePlaybackScheduler {
 }
 
 /**
- * Coordinates one player across voice cards. The owner should retain one instance for the
- * conversation/session and call [release] when that owner is permanently disposed.
+ * Coordinates one active player across voice cards. A new player is created for each playback
+ * epoch so callbacks from a released item cannot update its replacement. The owner should retain
+ * one coordinator for the conversation/session and call [release] when permanently disposed.
  */
 class VoicePlaybackCoordinator internal constructor(
-    private val player: VoicePlayerPort,
+    private val playerFactory: VoicePlayerFactory,
     private val scheduler: VoicePlaybackScheduler,
     private val publishIntervalMs: Long = 250L,
 ) {
+    internal constructor(
+        player: VoicePlayerPort,
+        scheduler: VoicePlaybackScheduler,
+        publishIntervalMs: Long = 250L,
+    ) : this(VoicePlayerFactory { player }, scheduler, publishIntervalMs)
+
     private val observers = CopyOnWriteArraySet<(VoicePlaybackState) -> Unit>()
     @Volatile
     var state: VoicePlaybackState = VoicePlaybackState()
@@ -67,36 +78,9 @@ class VoicePlaybackCoordinator internal constructor(
     private var resumeOnForeground = false
     private var hostStopped = false
     private var released = false
-
-    private val playerListener = object : VoicePlayerPort.Listener {
-        override fun onPlayingChanged(playing: Boolean) {
-            update(state.copy(isPlaying = playing, error = null))
-            if (playing) scheduler.postDelayed(progressTick, publishIntervalMs) else scheduler.remove(progressTick)
-        }
-
-        override fun onCompleted() {
-            scheduler.remove(progressTick)
-            update(state.copy(isPlaying = false, positionMs = state.durationMs))
-        }
-
-        override fun onError(message: String) {
-            scheduler.remove(progressTick)
-            update(state.copy(isPlaying = false, error = message))
-        }
-    }
-
-    private val progressTick = object : Runnable {
-        override fun run() {
-            if (released || !state.isPlaying) return
-            update(state.copy(
-                positionMs = player.currentPositionMs().coerceAtLeast(0L),
-                durationMs = player.durationMs().coerceAtLeast(0L),
-            ))
-            scheduler.postDelayed(this, publishIntervalMs)
-        }
-    }
-
-    init { player.setListener(playerListener) }
+    private var playbackEpoch = 0L
+    private var player: VoicePlayerPort? = null
+    private var progressTick: Runnable? = null
 
     fun observe(observer: (VoicePlaybackState) -> Unit): () -> Unit {
         observers += observer
@@ -105,27 +89,37 @@ class VoicePlaybackCoordinator internal constructor(
     }
 
     fun toggle(file: File) {
-        if (released || !file.isFile) return
-        if (state.filePath == file.absolutePath && state.isPlaying) {
-            player.pause()
+        if (released) return
+        if (!file.isFile) {
+            retirePlayer(stop = true)
+            update(VoicePlaybackState(
+                filePath = file.absolutePath,
+                error = "Аудиофайл больше недоступен",
+            ))
             return
         }
-        if (state.filePath == file.absolutePath) {
-            player.play(file)
+        val currentPlayer = player
+        val currentEpoch = playbackEpoch
+        if (state.filePath == file.absolutePath && currentPlayer != null && state.isPlaying) {
+            runPlayerAction(currentPlayer, currentEpoch) { it.pause() }
             return
         }
-        val replacingActiveFile = state.filePath != null
-        scheduler.remove(progressTick)
-        update(VoicePlaybackState(filePath = file.absolutePath))
-        if (replacingActiveFile) player.stop()
-        player.play(file)
+        if (state.filePath == file.absolutePath && currentPlayer != null) {
+            runPlayerAction(currentPlayer, currentEpoch) { it.play(file) }
+            return
+        }
+        startPlayback(file)
     }
 
     fun seekTo(positionMs: Long) {
+        val currentPlayer = player ?: return
         if (released || state.filePath == null) return
         val bounded = positionMs.coerceIn(0L, state.durationMs.takeIf { it > 0L } ?: Long.MAX_VALUE)
-        player.seekTo(bounded)
-        update(state.copy(positionMs = bounded))
+        val currentEpoch = playbackEpoch
+        runPlayerAction(currentPlayer, currentEpoch) {
+            it.seekTo(bounded)
+            update(state.copy(positionMs = bounded))
+        }
     }
 
     /** Pause on background and only resume if playback was active before the transition. */
@@ -133,7 +127,9 @@ class VoicePlaybackCoordinator internal constructor(
         if (released || hostStopped) return
         hostStopped = true
         resumeOnForeground = state.isPlaying
-        if (resumeOnForeground) player.pause()
+        if (resumeOnForeground) player?.let { current ->
+            runPlayerAction(current, playbackEpoch) { it.pause() }
+        }
     }
 
     fun onHostStart() {
@@ -141,7 +137,11 @@ class VoicePlaybackCoordinator internal constructor(
         hostStopped = false
         if (resumeOnForeground) state.filePath?.let { path ->
             val file = File(path)
-            if (file.isFile) player.play(file)
+            if (file.isFile) player?.let { current ->
+                runPlayerAction(current, playbackEpoch) { it.play(file) }
+            } else {
+                toggle(file)
+            }
         }
         resumeOnForeground = false
     }
@@ -149,11 +149,106 @@ class VoicePlaybackCoordinator internal constructor(
     fun release() {
         if (released) return
         released = true
-        scheduler.remove(progressTick)
-        player.setListener(null)
-        player.release()
+        retirePlayer(stop = true)
         update(VoicePlaybackState())
         observers.clear()
+    }
+
+    private fun startPlayback(file: File) {
+        retirePlayer(stop = true)
+        update(VoicePlaybackState(filePath = file.absolutePath))
+        val nextPlayer = try {
+            playerFactory.create()
+        } catch (_: RuntimeException) {
+            update(state.copy(error = "Не удалось инициализировать аудиоплеер"))
+            return
+        }
+        val epoch = playbackEpoch
+        player = nextPlayer
+        try {
+            nextPlayer.setListener(listenerFor(nextPlayer, epoch))
+            nextPlayer.play(file)
+        } catch (_: RuntimeException) {
+            failPlayback(nextPlayer, epoch, "Не удалось воспроизвести голосовое сообщение")
+        }
+    }
+
+    private fun listenerFor(source: VoicePlayerPort, epoch: Long) = object : VoicePlayerPort.Listener {
+        override fun onPlayingChanged(playing: Boolean) {
+            if (!isCurrent(source, epoch)) return
+            update(state.copy(isPlaying = playing, error = null))
+            if (playing) startProgressTick(source, epoch) else stopProgressTick()
+        }
+
+        override fun onCompleted() {
+            if (!isCurrent(source, epoch)) return
+            stopProgressTick()
+            update(state.copy(isPlaying = false, positionMs = state.durationMs))
+        }
+
+        override fun onError(message: String) {
+            failPlayback(source, epoch, message)
+        }
+    }
+
+    private fun startProgressTick(source: VoicePlayerPort, epoch: Long) {
+        stopProgressTick()
+        val tick = object : Runnable {
+            override fun run() {
+                if (!isCurrent(source, epoch) || !state.isPlaying) return
+                runPlayerAction(source, epoch) { current ->
+                    update(state.copy(
+                        positionMs = current.currentPositionMs().coerceAtLeast(0L),
+                        durationMs = current.durationMs().coerceAtLeast(0L),
+                    ))
+                }
+                if (isCurrent(source, epoch) && state.isPlaying) {
+                    scheduler.postDelayed(this, publishIntervalMs)
+                }
+            }
+        }
+        progressTick = tick
+        scheduler.postDelayed(tick, publishIntervalMs)
+    }
+
+    private fun stopProgressTick() {
+        progressTick?.let(scheduler::remove)
+        progressTick = null
+    }
+
+    private fun runPlayerAction(
+        source: VoicePlayerPort,
+        epoch: Long,
+        action: (VoicePlayerPort) -> Unit,
+    ) {
+        if (!isCurrent(source, epoch)) return
+        try {
+            action(source)
+        } catch (_: RuntimeException) {
+            failPlayback(source, epoch, "Не удалось воспроизвести голосовое сообщение")
+        }
+    }
+
+    private fun failPlayback(source: VoicePlayerPort, epoch: Long, message: String) {
+        if (!isCurrent(source, epoch)) return
+        val failedState = state.copy(isPlaying = false, error = message)
+        retirePlayer(stop = false)
+        update(failedState)
+    }
+
+    private fun isCurrent(source: VoicePlayerPort, epoch: Long): Boolean =
+        !released && playbackEpoch == epoch && player === source
+
+    private fun retirePlayer(stop: Boolean) {
+        playbackEpoch++
+        val previous = player
+        player = null
+        stopProgressTick()
+        if (previous != null) {
+            runCatching { previous.setListener(null) }
+            if (stop) runCatching { previous.stop() }
+            runCatching { previous.release() }
+        }
     }
 
     private fun update(next: VoicePlaybackState) {
@@ -162,9 +257,12 @@ class VoicePlaybackCoordinator internal constructor(
     }
 
     companion object {
-        /** Creates a coordinator backed by one Media3 player. */
+        /** Creates a coordinator backed by at most one active Media3 player. */
         fun create(context: Context): VoicePlaybackCoordinator =
-            VoicePlaybackCoordinator(Media3VoicePlayer(context.applicationContext), MainLooperVoicePlaybackScheduler())
+            VoicePlaybackCoordinator(
+                VoicePlayerFactory { Media3VoicePlayer(context.applicationContext) },
+                MainLooperVoicePlaybackScheduler(),
+            )
     }
 }
 
@@ -172,17 +270,8 @@ private class Media3VoicePlayer(context: Context) : VoicePlayerPort {
     private val player = ExoPlayer.Builder(context)
         .setHandleAudioBecomingNoisy(true)
         .build()
-        .apply {
-            setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(C.USAGE_MEDIA)
-                    .setContentType(C.AUDIO_CONTENT_TYPE_SPEECH)
-                    .build(),
-                true,
-            )
-        }
     private var listener: VoicePlayerPort.Listener? = null
-    private var failed = false
+    private var released = false
     private val mediaListener = object : Player.Listener {
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             listener?.onPlayingChanged(isPlaying)
@@ -193,18 +282,30 @@ private class Media3VoicePlayer(context: Context) : VoicePlayerPort {
         }
 
         override fun onPlayerError(error: PlaybackException) {
-            failed = true
             listener?.onError("Не удалось воспроизвести голосовое сообщение")
         }
     }
 
-    init { player.addListener(mediaListener) }
+    init {
+        try {
+            player.setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(C.USAGE_MEDIA)
+                    .setContentType(C.AUDIO_CONTENT_TYPE_SPEECH)
+                    .build(),
+                true,
+            )
+            player.addListener(mediaListener)
+        } catch (error: RuntimeException) {
+            runCatching { player.release() }
+            throw error
+        }
+    }
 
     override fun play(file: File) {
-        if (!file.isFile) return
+        check(file.isFile) { "Voice file is not available" }
         val sameFile = player.currentMediaItem?.localConfiguration?.uri == Uri.fromFile(file)
-        if (!sameFile || failed) {
-            failed = false
+        if (!sameFile) {
             player.setMediaItem(MediaItem.fromUri(Uri.fromFile(file)))
             player.prepare()
         }
@@ -217,5 +318,11 @@ private class Media3VoicePlayer(context: Context) : VoicePlayerPort {
     override fun currentPositionMs(): Long = player.currentPosition.coerceAtLeast(0L)
     override fun durationMs(): Long = player.duration.takeIf { it >= 0L } ?: 0L
     override fun setListener(listener: VoicePlayerPort.Listener?) { this.listener = listener }
-    override fun release() { player.removeListener(mediaListener); player.release() }
+    override fun release() {
+        if (released) return
+        released = true
+        listener = null
+        runCatching { player.removeListener(mediaListener) }
+        player.release()
+    }
 }
