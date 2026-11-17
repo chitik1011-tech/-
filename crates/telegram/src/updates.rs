@@ -979,15 +979,16 @@ mod tests {
     use tokio::sync::watch;
 
     use super::{
-        ActivityGenerations, ActivitySignal, NextOutcome, RetryBackoff, UPDATE_RETRY_INITIAL_DELAY,
-        UPDATE_RETRY_MAX_DELAY, UpdateSource, activity_signal, is_transient_update_error,
-        map_raw_activity_update, next_with_recovery, wait_for_current_attempt,
-        MAX_TRACKED_CHAT_ACTIVITIES,
+        ActivityGenerations, ActivitySignal, MAX_TRACKED_CHAT_ACTIVITIES, NextOutcome,
+        RetryBackoff, UPDATE_RETRY_INITIAL_DELAY, UPDATE_RETRY_MAX_DELAY, UpdateSource,
+        activity_signal, is_transient_update_error, map_raw_activity_update, next_with_recovery,
+        wait_for_current_attempt,
     };
     use super::{ConnectionState, TelegramUpdate, map_raw_pinned_update};
     use tg_mobile_core::{
-        ChatActivityKind, ChatActivityTracker, ConnectionMachine, CoreEvent, LinkEvent,
-        DEFAULT_CHAT_ACTIVITY_TTL_MS, MessageSummary, ReadDirection, backend_update_channel,
+        ChatActivityKind, ChatActivityTracker, ConnectionMachine, CoreEvent,
+        DEFAULT_CHAT_ACTIVITY_TTL_MS, LinkEvent, MessageSummary, ReadDirection,
+        backend_update_channel,
     };
 
     #[test]
@@ -1112,7 +1113,11 @@ mod tests {
         let mut generations = ActivityGenerations::default();
         for user_id in 1..=(MAX_TRACKED_CHAT_ACTIVITIES as i64 + 1) {
             generations
-                .update(12, user_id, ActivitySignal::Started(ChatActivityKind::Typing))
+                .update(
+                    12,
+                    user_id,
+                    ActivitySignal::Started(ChatActivityKind::Typing),
+                )
                 .unwrap();
         }
         assert_eq!(generations.active.len(), MAX_TRACKED_CHAT_ACTIVITIES);
