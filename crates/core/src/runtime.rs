@@ -2134,6 +2134,9 @@ mod media_restore_generation_tests {
         assert_eq!(cached.download_state, AttachmentDownloadState::Queued);
         let last = state.account.chats[0].last_message.as_ref().unwrap();
         assert_eq!(last.attachments[0].download_generation, 1);
-        assert_eq!(last.attachments[0].download_state, AttachmentDownloadState::Queued);
+        assert_eq!(
+            last.attachments[0].download_state,
+            AttachmentDownloadState::Queued
+        );
     }
 }
