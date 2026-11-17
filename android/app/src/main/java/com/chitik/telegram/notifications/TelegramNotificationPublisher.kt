@@ -82,7 +82,7 @@ class TelegramNotificationPublisher(context: Context) {
         }.ifBlank { "Telegram" }
         val presentation = notificationPresentation(title = title, body = message.body)
 
-        val notification = Notification.Builder(appContext, channelId)
+        val notificationBuilder = Notification.Builder(appContext, channelId)
             .setSmallIcon(android.R.drawable.sym_action_chat)
             .setContentTitle(presentation.title)
             .setContentText(presentation.body)
@@ -91,6 +91,11 @@ class TelegramNotificationPublisher(context: Context) {
             .setShowWhen(true)
             .setCategory(Notification.CATEGORY_MESSAGE)
             .setVisibility(Notification.VISIBILITY_PRIVATE)
+        TelegramMessageNotificationGrouping.groupKeyForChat(message.chatId)?.let {
+            notificationBuilder.setGroup(it)
+        }
+
+        val notification = notificationBuilder
             .setPublicVersion(
                 Notification.Builder(appContext, channelId)
                     .setSmallIcon(android.R.drawable.sym_action_chat)
