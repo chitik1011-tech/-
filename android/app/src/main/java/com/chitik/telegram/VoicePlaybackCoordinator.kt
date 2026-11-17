@@ -112,9 +112,10 @@ class VoicePlaybackCoordinator internal constructor(
             player.play(file)
             return
         }
+        val replacingActiveFile = state.filePath != null
         scheduler.remove(progressTick)
         update(VoicePlaybackState(filePath = file.absolutePath))
-        player.stop()
+        if (replacingActiveFile) player.stop()
         player.play(file)
     }
 
