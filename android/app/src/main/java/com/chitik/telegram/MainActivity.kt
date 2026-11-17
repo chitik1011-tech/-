@@ -54,6 +54,9 @@ import com.chitik.telegram.nativebridge.textSendStatusForChat
 import com.chitik.telegram.notifications.NotificationPermissionRequester
 import com.chitik.telegram.notifications.NotificationRouteResolution
 import com.chitik.telegram.notifications.TelegramNotificationRoute
+import com.chitik.telegram.notifications.PendingNotificationSessionDecision
+import com.chitik.telegram.notifications.decidePendingNotificationSessionRestore
+import com.chitik.telegram.notifications.restorePendingNotificationChatId
 import com.chitik.telegram.deeplink.TelegramDeepLinkRouter
 import com.chitik.telegram.deeplink.TelegramJoinInviteIntent
 import com.chitik.telegram.deeplink.TelegramLinkAppRouter
@@ -61,6 +64,10 @@ import com.chitik.telegram.deeplink.TelegramLinkIntent
 import com.chitik.telegram.deeplink.TelegramLinkTarget
 
 class MainActivity : ComponentActivity() {
+    private companion object {
+        const val STATE_PENDING_NOTIFICATION_CHAT_ID = "pending_notification_chat_id"
+    }
+
     private var pendingTelegramLink by mutableStateOf<TelegramLinkIntent?>(null)
     private var pendingNotificationChatId by mutableStateOf<Long?>(null)
     private var notificationPermissionGranted by mutableStateOf(true)
@@ -74,7 +81,12 @@ class MainActivity : ComponentActivity() {
         notificationPermissionGranted = notificationPermissionRequester.isGranted()
         enableEdgeToEdge()
         pendingTelegramLink = TelegramDeepLinkRouter.parseIntent(intent?.action, intent?.dataString)
-        pendingNotificationChatId = TelegramNotificationRoute.parse(intent)?.chatId
+        pendingNotificationChatId = restorePendingNotificationChatId(
+            savedChatId = savedInstanceState
+                ?.takeIf { it.containsKey(STATE_PENDING_NOTIFICATION_CHAT_ID) }
+                ?.getLong(STATE_PENDING_NOTIFICATION_CHAT_ID),
+            freshIntentChatId = TelegramNotificationRoute.parse(intent)?.chatId,
+        )
         setContent {
             TelegramAppTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
@@ -95,7 +107,17 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         pendingTelegramLink = TelegramDeepLinkRouter.parseIntent(intent.action, intent.dataString)
-        pendingNotificationChatId = TelegramNotificationRoute.parse(intent)?.chatId
+        pendingNotificationChatId = restorePendingNotificationChatId(
+            savedChatId = pendingNotificationChatId,
+            freshIntentChatId = TelegramNotificationRoute.parse(intent)?.chatId,
+        )
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        pendingNotificationChatId?.let { chatId ->
+            outState.putLong(STATE_PENDING_NOTIFICATION_CHAT_ID, chatId)
+        }
+        super.onSaveInstanceState(outState)
     }
 
     override fun onResume() {
@@ -129,6 +151,17 @@ private fun TelegramRustApp(
     var replySelectionGeneration by rememberSaveable { mutableLongStateOf(state.selectionGeneration) }
     var pendingLocationChatId by rememberSaveable { mutableLongStateOf(0L) }
     var activeLocationRequest by remember { mutableStateOf<LocationRequestHandle?>(null) }
+    LaunchedEffect(incomingNotificationChatId, state.sessionRestoreComplete, state.authorization) {
+        val sessionDecision = decidePendingNotificationSessionRestore(
+            restoreComplete = state.sessionRestoreComplete,
+            authorizationReady = state.authorization == AuthorizationUiStep.Ready,
+        )
+        if (incomingNotificationChatId != null &&
+            sessionDecision == PendingNotificationSessionDecision.Discard
+        ) {
+            onDismissNotification()
+        }
+    }
     LaunchedEffect(incomingNotificationChatId, state.authorization, state.chatsLoaded, state.chats) {
         val resolution = com.chitik.telegram.notifications.resolveNotificationRoute(
             chatId = incomingNotificationChatId,
@@ -313,6 +346,7 @@ private fun TelegramRustApp(
                 viewModel.loadContacts(offset = 0)
             },
             onLogout = {
+                onDismissNotification()
                 selectedChatId = 0L
                 showContacts = false
                 draft = ""
