@@ -151,16 +151,22 @@ private fun TelegramRustApp(
     var jumpToMessageId by rememberSaveable { mutableStateOf<String?>(null) }
     var replySelectionGeneration by rememberSaveable { mutableLongStateOf(state.selectionGeneration) }
     var pendingLocationChatId by rememberSaveable { mutableLongStateOf(0L) }
-    var pendingVoiceRecordingChatId by rememberSaveable { mutableLongStateOf(0L) }
+    var pendingVoiceRecordingChatId by remember { mutableLongStateOf(0L) }
+    var pendingVoiceRecordingSelectionGeneration by remember { mutableLongStateOf(-1L) }
     var activeLocationRequest by remember { mutableStateOf<LocationRequestHandle?>(null) }
     val currentSelectedChatId by rememberUpdatedState(selectedChatId)
+    val currentSelectionGeneration by rememberUpdatedState(state.selectionGeneration)
     val activeVoiceRecordingChatId by rememberUpdatedState(state.voiceRecording.chatId)
     val voiceRecordingPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
         val chatId = pendingVoiceRecordingChatId
+        val requestGeneration = pendingVoiceRecordingSelectionGeneration
         pendingVoiceRecordingChatId = 0L
-        voiceRecordingChatAfterPermission(granted, chatId, currentSelectedChatId)?.let {
+        pendingVoiceRecordingSelectionGeneration = -1L
+        voiceRecordingChatAfterPermission(
+            granted, chatId, currentSelectedChatId, requestGeneration, currentSelectionGeneration,
+        )?.let {
             viewModel.startVoiceRecording(it)
         }
         if (!granted && chatId != 0L && currentSelectedChatId == chatId) {
@@ -174,6 +180,7 @@ private fun TelegramRustApp(
                 viewModel.startVoiceRecording(chatId)
             } else {
                 pendingVoiceRecordingChatId = chatId
+                pendingVoiceRecordingSelectionGeneration = state.selectionGeneration
                 voiceRecordingPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
             }
         }
@@ -183,6 +190,7 @@ private fun TelegramRustApp(
             pendingChatId = pendingVoiceRecordingChatId,
             selectedChatId = selectedChatId,
         )
+        if (pendingVoiceRecordingChatId == 0L) pendingVoiceRecordingSelectionGeneration = -1L
     }
     LaunchedEffect(selectedChatId, state.voiceRecording.chatId) {
         val recordingChatId = state.voiceRecording.chatId

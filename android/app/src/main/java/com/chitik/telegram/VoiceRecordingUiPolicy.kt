@@ -5,7 +5,12 @@ internal fun voiceRecordingChatAfterPermission(
     granted: Boolean,
     requestedChatId: Long,
     selectedChatId: Long,
-): Long? = requestedChatId.takeIf { granted && it != 0L && it == selectedChatId }
+    requestedSelectionGeneration: Long,
+    currentSelectionGeneration: Long,
+): Long? = requestedChatId.takeIf {
+    granted && it != 0L && it == selectedChatId &&
+        requestedSelectionGeneration >= 0L && requestedSelectionGeneration == currentSelectionGeneration
+}
 
 /** Invalidates an outstanding permission request as soon as navigation leaves its chat. */
 internal fun pendingVoicePermissionChatAfterNavigation(

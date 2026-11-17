@@ -19,10 +19,12 @@ class VoiceRecordingUiTest {
 
     @Test
     fun permissionResultStartsOnlyTheChatThatIsStillSelected() {
-        assertEquals(42L, voiceRecordingChatAfterPermission(true, 42L, 42L))
-        assertEquals(null, voiceRecordingChatAfterPermission(false, 42L, 42L))
-        assertEquals(null, voiceRecordingChatAfterPermission(true, 42L, -7L))
-        assertEquals(null, voiceRecordingChatAfterPermission(true, 0L, 0L))
+        assertEquals(42L, voiceRecordingChatAfterPermission(true, 42L, 42L, 5L, 5L))
+        assertEquals(null, voiceRecordingChatAfterPermission(false, 42L, 42L, 5L, 5L))
+        assertEquals(null, voiceRecordingChatAfterPermission(true, 42L, -7L, 5L, 5L))
+        assertEquals(null, voiceRecordingChatAfterPermission(true, 0L, 0L, 5L, 5L))
+        assertEquals(null, voiceRecordingChatAfterPermission(true, 42L, 42L, 5L, 6L))
+        assertEquals(null, voiceRecordingChatAfterPermission(true, 42L, 42L, -1L, 0L))
     }
 
     @Test
