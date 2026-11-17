@@ -18,6 +18,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -63,6 +64,18 @@ data class AuthorizationUiState(
     val isLoading: Boolean = false,
     val error: String? = null,
 )
+
+internal const val AUTHORIZATION_RECOVERY_ACTION_LABEL = "Change phone number"
+
+/** Show a restart path while a code or 2FA token may need to be replaced. */
+internal fun authorizationRecoveryActionLabel(state: AuthorizationUiState): String? =
+    if (!state.isTelegramConfigured) {
+        null
+    } else when (state.authorization) {
+        AuthorizationUiStep.WaitingForCode,
+        AuthorizationUiStep.WaitingForPassword -> AUTHORIZATION_RECOVERY_ACTION_LABEL
+        else -> null
+    }
 
 /**
  * Telegram sign-in form. All actions are callbacks so the caller can send canonical
@@ -339,6 +352,19 @@ fun AuthorizationScreen(
                         CircularProgressIndicator()
                     }
                 }
+                }
+            }
+
+            authorizationRecoveryActionLabel(state)?.let { label ->
+                OutlinedButton(
+                    onClick = {
+                        keyboard?.hide()
+                        onBack()
+                    },
+                    enabled = !state.isLoading,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(label)
                 }
             }
 
