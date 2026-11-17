@@ -111,6 +111,7 @@ internal fun resolveSafeMimeType(declared: String?, filename: String?): String {
     return when (sanitizeDisplayFilename(filename).substringAfterLast('.', "").lowercase(Locale.ROOT)) {
         "jpg", "jpeg" -> "image/jpeg"
         "png" -> "image/png"
+        "bmp" -> "image/bmp"
         "webp" -> "image/webp"
         "gif" -> "image/gif"
         "mp4" -> "video/mp4"

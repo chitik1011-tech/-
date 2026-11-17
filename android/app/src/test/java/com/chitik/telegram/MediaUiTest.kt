@@ -44,6 +44,7 @@ class MediaUiTest {
 
         assertTrue(isInlineImageMedia(attachment(MediaKindUi.Document, "image/png", "scan.png")))
         assertTrue(isInlineImageMedia(attachment(MediaKindUi.Document, null, "scan.webp")))
+        assertTrue(isInlineImageMedia(attachment(MediaKindUi.Document, null, "scan.bmp")))
         assertFalse(isInlineImageMedia(attachment(MediaKindUi.Document, "application/pdf", "scan.png")))
         assertFalse(isInlineImageMedia(attachment(MediaKindUi.Document, "image/svg+xml", "scan.svg")))
         assertFalse(isInlineImageMedia(attachment(MediaKindUi.Video, "image/png", "scan.png")))
