@@ -2,6 +2,7 @@ use grammers_client::{
     Client, SignInError,
     client::{LoginToken, PasswordToken},
     sender::InvocationError,
+    tl::enums::auth::SentCodeType,
 };
 use tg_mobile_core::{AuthorizationState, CoreError};
 
@@ -14,6 +15,43 @@ enum AuthPhase {
     WaitingForCode,
     WaitingForPassword,
     Ready,
+}
+
+/// Telegram's delivery option reported with `auth.sendCode`.
+///
+/// This remains backend-owned until the auth event contract is extended; it
+/// must not be inferred from a successful request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LoginCodeDeliveryMethod {
+    TelegramApp,
+    Sms,
+    VoiceCall,
+    FlashCall,
+    MissedCall,
+    FirebaseSms,
+    FragmentSms,
+    SmsWord,
+    SmsPhrase,
+    EmailCode,
+    EmailSetupRequired,
+}
+
+impl From<SentCodeType> for LoginCodeDeliveryMethod {
+    fn from(delivery: SentCodeType) -> Self {
+        match delivery {
+            SentCodeType::App(_) => Self::TelegramApp,
+            SentCodeType::Sms(_) => Self::Sms,
+            SentCodeType::Call(_) => Self::VoiceCall,
+            SentCodeType::FlashCall(_) => Self::FlashCall,
+            SentCodeType::MissedCall(_) => Self::MissedCall,
+            SentCodeType::FirebaseSms(_) => Self::FirebaseSms,
+            SentCodeType::FragmentSms(_) => Self::FragmentSms,
+            SentCodeType::SmsWord(_) => Self::SmsWord,
+            SentCodeType::SmsPhrase(_) => Self::SmsPhrase,
+            SentCodeType::EmailCode(_) => Self::EmailCode,
+            SentCodeType::SetUpEmailRequired(_) => Self::EmailSetupRequired,
+        }
+    }
 }
 
 impl AuthPhase {
@@ -32,6 +70,7 @@ pub(crate) struct AuthFlow {
     phase: AuthPhase,
     login_token: Option<LoginToken>,
     password_token: Option<PasswordToken>,
+    login_code_delivery: Option<LoginCodeDeliveryMethod>,
 }
 
 impl Default for AuthFlow {
@@ -40,6 +79,7 @@ impl Default for AuthFlow {
             phase: AuthPhase::Closed,
             login_token: None,
             password_token: None,
+            login_code_delivery: None,
         }
     }
 }
@@ -49,15 +89,21 @@ impl AuthFlow {
         self.phase.core_state()
     }
 
+    pub(crate) fn login_code_delivery(&self) -> Option<LoginCodeDeliveryMethod> {
+        self.login_code_delivery
+    }
+
     pub(crate) fn close(&mut self) {
         self.login_token = None;
         self.password_token = None;
+        self.login_code_delivery = None;
         self.phase = AuthPhase::Closed;
     }
 
     fn reset_to_phone_entry(&mut self) {
         self.login_token = None;
         self.password_token = None;
+        self.login_code_delivery = None;
         self.phase = AuthPhase::WaitingForPhoneNumber;
     }
 
@@ -85,12 +131,13 @@ impl AuthFlow {
     ) -> tg_mobile_core::Result<AuthorizationState> {
         let phone = normalize_phone_number(&phone)?;
 
-        let token = client
-            .request_login_code(&phone, api_hash)
+        let (token, delivery) = client
+            .request_login_code_with_delivery_type(&phone, api_hash)
             .await
             .map_err(|error| auth_api_error("request login code", error))?;
         self.password_token = None;
         self.login_token = Some(token);
+        self.login_code_delivery = Some(delivery.into());
         self.phase = AuthPhase::WaitingForCode;
         Ok(self.state())
     }
@@ -113,11 +160,13 @@ impl AuthFlow {
         match client.sign_in(&token, code.trim()).await {
             Ok(_) => {
                 self.password_token = None;
+                self.login_code_delivery = None;
                 self.phase = AuthPhase::Ready;
                 Ok(self.state())
             }
             Err(SignInError::PasswordRequired(password_token)) => {
                 self.password_token = Some(password_token);
+                self.login_code_delivery = None;
                 self.phase = AuthPhase::WaitingForPassword;
                 Ok(self.state())
             }
@@ -254,8 +303,12 @@ fn normalize_phone_number(input: &str) -> tg_mobile_core::Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{AuthFlow, AuthPhase, login_token_invalidated, normalize_phone_number};
+    use super::{
+        AuthFlow, AuthPhase, LoginCodeDeliveryMethod, login_token_invalidated,
+        normalize_phone_number,
+    };
     use grammers_client::sender::{InvocationError, RpcError};
+    use grammers_client::tl;
     use tg_mobile_core::AuthorizationState;
 
     #[test]
@@ -296,6 +349,33 @@ mod tests {
             AuthorizationState::WaitingForPassword
         );
         assert_eq!(AuthPhase::Ready.core_state(), AuthorizationState::Ready);
+    }
+
+    #[test]
+    fn preserves_exact_telegram_code_delivery_type() {
+        let app =
+            tl::enums::auth::SentCodeType::App(tl::types::auth::SentCodeTypeApp { length: 5 });
+        let sms =
+            tl::enums::auth::SentCodeType::Sms(tl::types::auth::SentCodeTypeSms { length: 5 });
+
+        assert_eq!(
+            LoginCodeDeliveryMethod::from(app),
+            LoginCodeDeliveryMethod::TelegramApp
+        );
+        assert_eq!(
+            LoginCodeDeliveryMethod::from(sms),
+            LoginCodeDeliveryMethod::Sms
+        );
+
+        let mut flow = AuthFlow::default();
+        assert_eq!(flow.login_code_delivery(), None);
+        flow.login_code_delivery = Some(LoginCodeDeliveryMethod::TelegramApp);
+        assert_eq!(
+            flow.login_code_delivery(),
+            Some(LoginCodeDeliveryMethod::TelegramApp)
+        );
+        flow.reset_to_phone_entry();
+        assert_eq!(flow.login_code_delivery(), None);
     }
 
     #[test]
