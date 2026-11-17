@@ -59,6 +59,7 @@ data class NativeUiState(
     val sessionRestoreComplete: Boolean = false,
     val chats: List<ChatListEntry> = emptyList(),
     val chatsLoaded: Boolean = false,
+    val chatPagination: ChatPaginationUiState = ChatPaginationUiState(),
     val profiles: Map<Long, PeerProfileUi> = emptyMap(),
     val profileLoadingPeerId: Long? = null,
     val profileError: String? = null,
@@ -233,6 +234,7 @@ private data class ParsedNativeState(
     val contacts: List<ContactListEntry>,
     val profiles: Map<Long, PeerProfileUi>,
     val chatCapabilities: Map<Long, ChatCapabilitiesUi>,
+    val chatPagination: ChatPaginationUiState?,
     val outbox: Map<Long, OutgoingTextSendUi>,
     val restoreComplete: Boolean,
 )
@@ -362,6 +364,8 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                             telegramConfigured = true,
                             authorization = AuthorizationUiStep.Closed,
                             chats = emptyList(),
+                            chatsLoaded = false,
+                            chatPagination = ChatPaginationUiState(),
                             messages = emptyMap(),
                             votingPollIds = emptySet(),
                             pollVoteErrors = emptyMap(),
@@ -449,7 +453,9 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         liveReadReceiptPolicy.reset(creation.generation)
         _state.update {
             it.copy(
+                chats = emptyList(),
                 chatsLoaded = false,
+                chatPagination = ChatPaginationUiState(),
                 loginCodeDeliveryMethod = null,
                 sessionRestoreComplete = false,
             )
@@ -581,23 +587,46 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         )
     }
 
+    /** Reloads the first page of dialogs using Rust's cursor pagination contract. */
     fun loadChats(limit: Int = 100) {
-        _state.update { it.copy(busy = true, error = null) }
-        val commandJson = JSONObject()
-            .put("type", "load_chats")
-            .put("payload", JSONObject().put("limit", limit))
-            .toString()
-
-        val result = runCatching {
-            lifecycle.dispatchLoadChats { currentHandle ->
-                NativeBridge.sendCommand(currentHandle, commandJson)
-            }
-        }.getOrElse { error ->
-            setErrorIfOpen(error.message ?: error::class.java.simpleName)
+        if (limit !in 1..100) {
+            setErrorIfOpen("Invalid chat page size")
             return
         }
+        requestChatPage(ChatPageRequest(cursor = null, limit = limit))
+    }
 
-        reportDispatchResult(result, "Rust rejected the chat request")
+    /** Loads the next server page when one is available and no page request is active. */
+    fun loadNextChatsPage() {
+        _state.value.chatPagination.nextPageRequest()?.let(::requestChatPage)
+    }
+
+    /** Retries the exact cursor that most recently failed, including a failed first-page request. */
+    fun retryChatsPage() {
+        _state.value.chatPagination.retryPageRequest()?.let(::requestChatPage)
+    }
+
+    private fun requestChatPage(request: ChatPageRequest) {
+        val current = _state.value
+        if (current.chatPagination.loading) return
+        if (request.cursor != null && (
+                request.cursor != current.chatPagination.nextCursor ||
+                    request.cursor in current.chatPagination.consumedCursors
+            )
+        ) return
+        _state.update { it.beginChatPageRequest(request) }
+        val command = JSONObject()
+            .put("type", "load_chats_page")
+            .put(
+                "payload",
+                JSONObject()
+                    .put("cursor", request.cursor ?: JSONObject.NULL)
+                    .put("limit", request.limit),
+            )
+            .toString()
+        if (!sendCommand(command)) {
+            _state.update { it.failChatPageRequest(request, it.error ?: "Rust rejected the chat page request") }
+        }
     }
 
     fun loadProfile(peerId: Long) {
@@ -1327,11 +1356,24 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                     JSONObject(payload).optJSONArray("payload")?.let(::parseChats)
                 }.getOrNull()
                 _state.update {
+                    val pagination = if (loadedChats != null) {
+                        it.chatPagination.copy(
+                            loaded = true,
+                            loading = false,
+                            requestedCursor = null,
+                            nextCursor = null,
+                            consumedCursors = emptySet(),
+                            exhausted = true,
+                            error = null,
+                            retryRequest = null,
+                        )
+                    } else it.chatPagination
                     it.copy(
                         chats = loadedChats?.map { chat ->
                             chat.copy(capabilities = it.chatCapabilities[chat.id] ?: ChatCapabilitiesUi())
                         } ?: it.chats,
                         chatsLoaded = loadedChats != null || it.chatsLoaded,
+                        chatPagination = pagination,
                         busy = false,
                         lastEventType = type,
                         lastEventPayload = payload,
@@ -1339,6 +1381,9 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                     )
                 }
             }
+            "chats_page_loading" -> _state.update { it.reduceChatPageLoading(payload) }
+            "chats_page_loaded" -> _state.update { it.reduceChatPageLoaded(payload) }
+            "chats_page_failed" -> _state.update { it.reduceChatPageFailed(payload) }
             "profile_updated" -> {
                 val profile = runCatching {
                     val root = JSONObject(payload).optJSONObject("payload") ?: JSONObject()
@@ -1693,6 +1738,11 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                     loggedOut || authorization != AuthorizationUiStep.Ready -> false
                     else -> current.chatsLoaded
                 },
+                chatPagination = if (authorization == AuthorizationUiStep.Ready) {
+                    current.chatPagination
+                } else {
+                    ChatPaginationUiState()
+                },
                 profiles = if (loggedOut) emptyMap() else current.profiles,
                 profileLoadingPeerId = if (loggedOut) null else current.profileLoadingPeerId,
                 profileError = if (loggedOut) null else current.profileError,
@@ -1797,6 +1847,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
             val profiles = parseProfiles(root.optJSONObject("profiles") ?: JSONObject())
             val contacts = parseContactListState(root.optJSONObject("contacts"))
             val capabilities = parseChatCapabilities(root.optJSONObject("chat_capabilities"))
+            val chatPagination = parseChatPaginationSnapshot(root.optJSONObject("chat_pagination"))
             val pinnedMessages = parsePinnedMessages(root.optJSONObject("pinned_messages"))
             val outbox = parseOutgoingTextOutbox(root.optJSONObject("outbox"))
             val ledger = parseOutgoingTextOutbox(root.optJSONObject("send_ledger"))
@@ -1808,6 +1859,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 contacts,
                 profiles,
                 capabilities,
+                chatPagination,
                 outbox + ledger,
                 root.optBoolean("restore_complete", false),
             )
@@ -1843,7 +1895,9 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                         )
                     },
                     chatsLoaded = it.chatsLoaded ||
+                        (parsed.chatPagination?.loaded == true) ||
                         (parsed.authorization == AuthorizationUiStep.Ready && parsed.chats.isNotEmpty()),
+                    chatPagination = parsed.chatPagination ?: it.chatPagination,
                     contacts = parsed.contacts,
                     contactTotal = maxOf(it.contactTotal, parsed.contacts.size),
                     messages = parsed.messages,
