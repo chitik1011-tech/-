@@ -547,7 +547,10 @@ impl GrammersBackend {
     fn hydrate_cached_media(&self, messages: &mut [MessageSummary]) {
         for message in messages {
             for attachment in &mut message.attachments {
-                match self.media_cache.get(&attachment.file_reference) {
+                match self
+                    .media_cache
+                    .get_with_expected_size(&attachment.file_reference, attachment.size_bytes)
+                {
                     Ok(Some(lease)) => {
                         attachment.download_generation = self
                             .transfers
@@ -632,7 +635,7 @@ impl GrammersBackend {
             let _ = self.media_cache.remove(&target.reference);
         } else if let Some(lease) = self
             .media_cache
-            .get(&target.reference)
+            .get_with_expected_size(&target.reference, target.total_bytes)
             .map_err(|error| CoreError::Backend(format!("media cache lookup failed: {error}")))?
         {
             let generation = self
