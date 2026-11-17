@@ -204,11 +204,7 @@ where
                         && reduced_state.connection_machine.phase() == LinkPhase::Synchronizing
                         && reduced_state.account.authorization
                             == crate::model::AuthorizationState::Ready;
-                    if initial_sync
-                        && !events
-                            .iter()
-                            .any(|event| matches!(event, CoreEvent::ChatsLoaded(_)))
-                    {
+                    if initial_sync && !has_initial_chat_sync_result(&events) {
                         events.push(CoreEvent::ConnectionLifecycle {
                             token: current_generation,
                             event: LinkEvent::ConnectFailed { retryable: false },
@@ -347,6 +343,12 @@ where
                                 history.error = Some("shutdown interrupted message loading".into());
                             }
                         }
+                        reduced_state.chat_pagination.loading = false;
+                        reduced_state.chat_pagination.requested_cursor = None;
+                        if reduced_state.chat_pagination.loaded {
+                            reduced_state.chat_pagination.error =
+                                Some("shutdown interrupted chat loading".into());
+                        }
                         let active_searches = reduced_state
                             .message_search
                             .chats
@@ -409,11 +411,33 @@ where
                         } => Some((*chat_id, *before_message_id)),
                         _ => None,
                     };
+                    let chat_page_request = match &command {
+                        CoreCommand::LoadChatsPage { cursor, .. } => Some(cursor.clone()),
+                        _ => None,
+                    };
                     let search_request = match &command {
                         CoreCommand::SearchMessages(request) => Some(request.clone()),
                         _ => None,
                     };
                     let mut skip_backend = false;
+                    if let Some(cursor) = chat_page_request.as_ref() {
+                        let pagination = &reduced_state.chat_pagination;
+                        if pagination.loading {
+                            // Avoid racing two pages requested with the same opaque cursor.
+                            skip_backend = true;
+                        } else if chat_page_cursor_is_stale(pagination, cursor) {
+                            apply_event(
+                                CoreEvent::Error(
+                                    "chat page cursor is stale; reload the current page".into(),
+                                ),
+                                &mut reduced_state,
+                                &state_tx,
+                                &event_tx_task,
+                                &mut activity_tracker,
+                            );
+                            skip_backend = true;
+                        }
+                    }
                     if let CoreCommand::SendMediaReliable {
                         client_id,
                         transfer_generation,
@@ -613,6 +637,18 @@ where
                         );
                         persistence_dirty = true;
                     }
+                    if let Some(cursor) = chat_page_request.as_ref() {
+                        apply_event(
+                            CoreEvent::ChatsPageLoading {
+                                cursor: cursor.clone(),
+                            },
+                            &mut reduced_state,
+                            &state_tx,
+                            &event_tx_task,
+                            &mut activity_tracker,
+                        );
+                        persistence_dirty = true;
+                    }
                     if let Some(request) = search_request.as_ref() {
                         apply_event(
                             CoreEvent::MessageSearchStarted(request.clone()),
@@ -631,8 +667,12 @@ where
                     next_op_id = next_op_id.wrapping_add(1).max(1);
                     let generation = reduced_state.connection_machine.token();
                     live_ops.insert(op_id, (generation, command.clone()));
-                    let sync_required = matches!(&command, CoreCommand::LoadChats { .. })
-                        && reduced_state.connection_machine.phase() == LinkPhase::Synchronizing
+                    let sync_required = matches!(
+                        &command,
+                        CoreCommand::LoadChats { .. }
+                            | CoreCommand::LoadChatsPage { cursor: None, .. }
+                    ) && reduced_state.connection_machine.phase()
+                        == LinkPhase::Synchronizing
                         && reduced_state.account.authorization
                             == crate::model::AuthorizationState::Ready;
                     let pinned_revision = match &command {
@@ -859,6 +899,10 @@ struct BackendResult {
 
 fn operation_error_events(command: &CoreCommand, error: CoreError) -> Vec<CoreEvent> {
     match command {
+        CoreCommand::LoadChatsPage { cursor, .. } => vec![CoreEvent::ChatsPageFailed {
+            cursor: cursor.clone(),
+            error: error.to_string(),
+        }],
         CoreCommand::LoadMessagesPage {
             chat_id,
             before_message_id,
@@ -995,6 +1039,26 @@ fn operation_error_events(command: &CoreCommand, error: CoreError) -> Vec<CoreEv
     }
 }
 
+fn has_initial_chat_sync_result(events: &[CoreEvent]) -> bool {
+    events.iter().any(|event| {
+        matches!(event, CoreEvent::ChatsLoaded(_))
+            || matches!(event, CoreEvent::ChatsPageLoaded(page) if page.requested_cursor.is_none())
+    })
+}
+
+fn chat_page_cursor_is_stale(
+    pagination: &crate::chat_pagination::ChatPaginationState,
+    cursor: &Option<String>,
+) -> bool {
+    if pagination.loaded {
+        cursor
+            .as_ref()
+            .is_some_and(|cursor| pagination.next_cursor.as_ref() != Some(cursor))
+    } else {
+        cursor.is_some()
+    }
+}
+
 fn command_capability_error(command: &CoreCommand, state: &CoreState) -> Option<String> {
     // Unauthenticated requests must retain the backend's authorization error;
     // no session-bound rights exist to consult until authorization completes.
@@ -1079,6 +1143,47 @@ mod capability_tests {
     use super::*;
     use crate::{capabilities::ChatCapabilities, command::CoreCommand};
 
+    #[test]
+    fn only_a_successful_first_chat_page_completes_initial_sync() {
+        let first_page = CoreEvent::ChatsPageLoaded(crate::chat_pagination::ChatPage {
+            requested_cursor: None,
+            chats: Vec::new(),
+            next_cursor: Some("peer-1".into()),
+        });
+        assert!(has_initial_chat_sync_result(&[first_page]));
+
+        let later_page = CoreEvent::ChatsPageLoaded(crate::chat_pagination::ChatPage {
+            requested_cursor: Some("peer-1".into()),
+            chats: Vec::new(),
+            next_cursor: None,
+        });
+        assert!(!has_initial_chat_sync_result(&[later_page]));
+        assert!(!has_initial_chat_sync_result(&[
+            CoreEvent::ChatsPageFailed {
+                cursor: None,
+                error: "network down".into(),
+            }
+        ]));
+    }
+
+    #[test]
+    fn pagination_accepts_first_page_refresh_and_rejects_stale_continuation() {
+        let pagination = crate::chat_pagination::ChatPaginationState {
+            loaded: true,
+            next_cursor: Some("current".into()),
+            ..Default::default()
+        };
+        assert!(!chat_page_cursor_is_stale(&pagination, &None));
+        assert!(!chat_page_cursor_is_stale(
+            &pagination,
+            &Some("current".into())
+        ));
+        assert!(chat_page_cursor_is_stale(
+            &pagination,
+            &Some("expired".into())
+        ));
+    }
+
     fn allowed(chat_id: i64) -> ChatCapabilities {
         let mut capabilities = ChatCapabilities {
             chat_id,
@@ -1146,6 +1251,16 @@ fn attach_pinned_snapshot_revision(events: &mut [CoreEvent], revision: Option<(i
 }
 
 fn complete_operation_events(command: &CoreCommand, events: &mut Vec<CoreEvent>) {
+    if let CoreCommand::LoadChatsPage { cursor, .. } = command {
+        if !events.iter().any(|event| matches!(event,
+            CoreEvent::ChatsPageLoaded(page) if &page.requested_cursor == cursor
+        ) || matches!(event, CoreEvent::ChatsPageFailed { cursor: event_cursor, .. } if event_cursor == cursor)) {
+            events.push(CoreEvent::ChatsPageFailed {
+                cursor: cursor.clone(),
+                error: "backend returned no chat page completion".into(),
+            });
+        }
+    }
     if let CoreCommand::PinMessage {
         chat_id,
         message_id,
@@ -1284,6 +1399,16 @@ fn recover_interrupted_operation(
     activity_tracker: &mut ChatActivityTracker,
 ) {
     match command {
+        CoreCommand::LoadChatsPage { cursor, .. } => apply_event(
+            CoreEvent::ChatsPageFailed {
+                cursor: cursor.clone(),
+                error: "connection generation changed while loading chats".into(),
+            },
+            state,
+            state_tx,
+            event_tx,
+            activity_tracker,
+        ),
         CoreCommand::LoadMessagesPage {
             chat_id,
             before_message_id,
@@ -1483,6 +1608,8 @@ async fn restore_state<S: StateStore>(
                 history.loading = false;
                 history.requested_before_message_id = None;
             }
+            state.chat_pagination.loading = false;
+            state.chat_pagination.requested_cursor = None;
             for (client_id, send) in state.outbox.clone() {
                 state.send_ledger.entry(client_id).or_insert(send);
             }

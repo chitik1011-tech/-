@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     capabilities::ChatCapabilities,
+    chat_pagination::ChatPaginationState,
     connection::ConnectionState,
     connection_machine::{ConnectionMachine, LinkEvent, LinkPhase, Outcome},
     contacts::ContactBook,
@@ -48,6 +49,9 @@ pub struct CoreState {
     pub read_receipts: BTreeMap<i64, ReadReceipt>,
     #[serde(default)]
     pub message_history: BTreeMap<i64, MessageHistoryState>,
+    /// Cursor and retry state for the account's paginated dialog list.
+    #[serde(default)]
+    pub chat_pagination: ChatPaginationState,
     #[serde(default)]
     pub message_search: MessageSearchState,
     /// Reliable sends that are still in flight or failed and can be retried.
@@ -98,6 +102,7 @@ impl Default for CoreState {
             profile_order: VecDeque::new(),
             read_receipts: BTreeMap::new(),
             message_history: BTreeMap::new(),
+            chat_pagination: ChatPaginationState::default(),
             message_search: MessageSearchState::default(),
             outbox: BTreeMap::new(),
             send_ledger: BTreeMap::new(),
@@ -350,6 +355,102 @@ impl CoreState {
                     }
                 }
                 self.last_error = None;
+            }
+            CoreEvent::ChatsPageLoading { cursor } => {
+                let pagination = &mut self.chat_pagination;
+                pagination.loading = true;
+                pagination.requested_cursor = cursor.clone();
+                pagination.error = None;
+            }
+            CoreEvent::ChatsPageLoaded(page) => {
+                let pagination = &self.chat_pagination;
+                if !pagination.loading || pagination.requested_cursor != page.requested_cursor {
+                    return;
+                }
+
+                let first_page = page.requested_cursor.is_none();
+                let old_chats = std::mem::take(&mut self.account.chats);
+                let mut merged = if first_page {
+                    Vec::new()
+                } else {
+                    old_chats.clone()
+                };
+                for mut incoming in page.chats.iter().cloned() {
+                    if let Some(existing) = old_chats.iter().find(|chat| chat.id == incoming.id) {
+                        if existing.last_message.as_ref().is_some_and(|old| {
+                            incoming
+                                .last_message
+                                .as_ref()
+                                .is_none_or(|new| old.timestamp_unix >= new.timestamp_unix)
+                        }) {
+                            incoming.last_message = existing.last_message.clone();
+                        }
+                        if let Some(existing_slot) = merged.iter_mut().find(|c| c.id == incoming.id)
+                        {
+                            *existing_slot = incoming;
+                            continue;
+                        }
+                    }
+                    if !merged.iter().any(|chat| chat.id == incoming.id) {
+                        merged.push(incoming);
+                    }
+                }
+                self.account.chats = merged;
+
+                let pagination = &mut self.chat_pagination;
+                if first_page {
+                    pagination.consumed_cursors.clear();
+                }
+                if let Some(cursor) = page.requested_cursor.as_ref() {
+                    pagination.consumed_cursors.insert(cursor.clone());
+                }
+                let next_cursor = page.next_cursor.as_ref().filter(|next| {
+                    Some(*next) != page.requested_cursor.as_ref()
+                        && !pagination.consumed_cursors.contains(*next)
+                        && !next.trim().is_empty()
+                });
+                pagination.loading = false;
+                pagination.requested_cursor = None;
+                pagination.loaded = true;
+                pagination.next_cursor = next_cursor.cloned();
+                pagination.error = None;
+                if page.next_cursor.is_some() && pagination.next_cursor.is_none() {
+                    let error = "Telegram returned a repeated chat page cursor".to_owned();
+                    pagination.error = Some(error.clone());
+                    self.last_error = Some(error);
+                } else {
+                    self.last_error = None;
+                }
+                let ids = self
+                    .account
+                    .chats
+                    .iter()
+                    .map(|chat| chat.id)
+                    .collect::<BTreeSet<_>>();
+                self.chat_capabilities.retain(|id, _| ids.contains(id));
+                if first_page && self.connection_machine.phase() == LinkPhase::Synchronizing {
+                    let token = self.connection_machine.token();
+                    if matches!(
+                        self.connection_machine
+                            .apply(token, LinkEvent::SyncCompleted),
+                        Ok(Outcome::Changed { .. })
+                    ) {
+                        self.connection_state = self.connection_machine.transport_state();
+                    }
+                }
+            }
+            CoreEvent::ChatsPageFailed { cursor, error } => {
+                let pagination = &mut self.chat_pagination;
+                if !pagination.loading || pagination.requested_cursor != *cursor {
+                    return;
+                }
+                pagination.loading = false;
+                pagination.requested_cursor = None;
+                if let Some(cursor) = cursor {
+                    pagination.next_cursor = Some(cursor.clone());
+                }
+                pagination.error = Some(error.clone());
+                self.last_error = Some(error.clone());
             }
             CoreEvent::ChatCapabilitiesUpdated(capabilities) => {
                 if capabilities.validate().is_ok() {

@@ -897,6 +897,23 @@ impl GrammersBackend {
                 );
                 events
             }
+            CoreCommand::LoadChatsPage { cursor, limit } => {
+                self.require_ready().await?;
+                let (page, capabilities) = crate::chats::load_chats_page(
+                    &self.client,
+                    &self.peers,
+                    cursor.as_deref(),
+                    limit,
+                )
+                .await?;
+                let mut events = vec![CoreEvent::ChatsPageLoaded(page)];
+                events.extend(
+                    capabilities
+                        .into_iter()
+                        .map(CoreEvent::ChatCapabilitiesUpdated),
+                );
+                events
+            }
             CoreCommand::LoadProfile { peer_id } => {
                 self.require_ready().await?;
                 let peer_ref = find_peer(&self.peers, peer_id)

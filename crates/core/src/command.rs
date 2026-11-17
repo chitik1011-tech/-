@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    chat_pagination::{MAX_CHAT_CURSOR_BYTES, MAX_CHAT_PAGE_LIMIT},
     contacts::validate_contact_page,
     error::{CoreError, Result},
     peer::parse_peer_reference,
@@ -25,6 +26,11 @@ pub enum CoreCommand {
     SubmitCode(String),
     SubmitPassword(String),
     LoadChats {
+        limit: usize,
+    },
+    /// Load one page from Telegram's dialog list using an opaque server cursor.
+    LoadChatsPage {
+        cursor: Option<String>,
         limit: usize,
     },
     LoadProfile {
@@ -211,6 +217,7 @@ impl CoreCommand {
             Self::SubmitCode(_) => "submit_code",
             Self::SubmitPassword(_) => "submit_password",
             Self::LoadChats { .. } => "load_chats",
+            Self::LoadChatsPage { .. } => "load_chats_page",
             Self::LoadProfile { .. } => "load_profile",
             Self::LoadContacts { .. } => "load_contacts",
             Self::LoadMessages { .. } => "load_messages",
@@ -283,6 +290,17 @@ impl CoreCommand {
                 }
             }
             Self::LoadChats { limit } => validate_limit("chat load", *limit, MAX_CHAT_LOAD_LIMIT),
+            Self::LoadChatsPage { cursor, limit } => {
+                validate_limit("chat page", *limit, MAX_CHAT_PAGE_LIMIT)?;
+                if cursor.as_ref().is_some_and(|value| {
+                    value.trim().is_empty() || value.len() > MAX_CHAT_CURSOR_BYTES
+                }) {
+                    return Err(CoreError::InvalidInput(
+                        "chat page cursor must be nonblank and at most 512 bytes".into(),
+                    ));
+                }
+                Ok(())
+            }
             Self::LoadProfile { peer_id } => {
                 if *peer_id == 0 {
                     Err(CoreError::InvalidInput("peer id must be non-zero".into()))
