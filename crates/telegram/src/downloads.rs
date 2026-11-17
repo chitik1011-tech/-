@@ -1,7 +1,7 @@
 use std::{io::Write, path::PathBuf, sync::Arc};
 
 use grammers_client::{Client, media::Media};
-use tg_media_cache::MediaCache;
+use tg_media_cache::{CacheLease, MediaCache};
 use tg_mobile_core::{
     AttachmentDownloadState, BackendUpdateSender, CoreEvent, DownloadState, TransferManager,
     TransferSnapshot, TransferState, TransferToken,
@@ -101,6 +101,51 @@ fn failure_state(
     })
 }
 
+/// Keeps a committed file only if its Downloaded update was accepted by the
+/// core event stream. If the task is aborted while publishing completion, its
+/// lease is released before removing the file so a cancelled transfer cannot
+/// leave an unreported cache entry behind.
+struct PendingDownloadPublication {
+    cache: MediaCache,
+    reference: String,
+    lease: Option<CacheLease>,
+    path: PathBuf,
+    published: bool,
+}
+
+impl PendingDownloadPublication {
+    fn new(cache: MediaCache, reference: String, lease: CacheLease) -> Self {
+        let path = lease.path().to_path_buf();
+        Self {
+            cache,
+            reference,
+            lease: Some(lease),
+            path,
+            published: false,
+        }
+    }
+
+    fn local_path(&self) -> PathBuf {
+        self.path.clone()
+    }
+
+    fn mark_published(&mut self) {
+        self.published = true;
+    }
+}
+
+impl Drop for PendingDownloadPublication {
+    fn drop(&mut self) {
+        // Drop the lease before removal; CacheLease intentionally protects the
+        // file from eviction and explicit removal while the completion event
+        // is being published.
+        self.lease.take();
+        if !self.published {
+            let _ = self.cache.remove(&self.reference);
+        }
+    }
+}
+
 async fn run_download(
     client: &Client,
     media: &Media,
@@ -141,7 +186,11 @@ async fn run_download(
     let lease = writer
         .commit()
         .map_err(|_| "could not commit completed media to cache".to_owned())?;
-    let local_path = lease.path().to_path_buf();
+    let mut pending_publication = PendingDownloadPublication::new(
+        cache.clone(),
+        target.reference.clone(),
+        lease,
+    );
     let completed = transfers
         .complete(active)
         .map_err(|_| "download completion state became invalid".to_owned())?;
@@ -149,13 +198,17 @@ async fn run_download(
     let snapshot = transfers
         .get(completed)
         .map_err(|_| "completed download state is unavailable".to_owned())?;
-    let _ = updates
+    if updates
         .send(Ok(event(
             target,
             snapshot.token.generation,
-            state_from_snapshot(&snapshot, Some(local_path)),
+            state_from_snapshot(&snapshot, Some(pending_publication.local_path())),
         )))
-        .await;
+        .await
+        .is_ok()
+    {
+        pending_publication.mark_published();
+    }
     Ok(())
 }
 
@@ -180,7 +233,34 @@ async fn emit_snapshot(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{
+        fs,
+        sync::atomic::{AtomicU64, Ordering},
+    };
+    use tg_media_cache::CacheConfig;
     use tg_mobile_core::{TransferDirection, TransferManager};
+
+    static TEST_CACHE_ID: AtomicU64 = AtomicU64::new(0);
+
+    fn test_cache() -> (PathBuf, MediaCache) {
+        let root = std::env::temp_dir().join(format!(
+            "tg-download-publication-{}-{}",
+            std::process::id(),
+            TEST_CACHE_ID.fetch_add(1, Ordering::Relaxed),
+        ));
+        let cache = MediaCache::new(CacheConfig {
+            root: root.clone(),
+            max_bytes: 1024,
+        })
+        .expect("cache");
+        (root, cache)
+    }
+
+    fn committed_download(cache: &MediaCache, reference: &str) -> CacheLease {
+        let mut writer = cache.begin_write(reference).expect("writer");
+        writer.write_all(b"media").expect("write");
+        writer.commit().expect("commit")
+    }
 
     #[test]
     fn maps_transfer_progress_to_attachment_state() {
@@ -239,5 +319,43 @@ mod tests {
             state_from_snapshot(&manager.get(cancelled).unwrap(), None),
             AttachmentDownloadState::Cancelled
         );
+    }
+
+    #[test]
+    fn aborting_before_completion_publication_removes_the_committed_file() {
+        let (root, cache) = test_cache();
+        let reference = "cancelled-after-cache-commit";
+        let lease = committed_download(&cache, reference);
+        let publication = PendingDownloadPublication::new(
+            cache.clone(),
+            reference.to_owned(),
+            lease,
+        );
+
+        assert!(cache.get(reference).expect("get").is_some());
+        drop(publication);
+
+        assert!(cache.get(reference).expect("get after abort").is_none());
+        drop(cache);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn published_completion_keeps_the_committed_file() {
+        let (root, cache) = test_cache();
+        let reference = "published-download";
+        let lease = committed_download(&cache, reference);
+        let mut publication = PendingDownloadPublication::new(
+            cache.clone(),
+            reference.to_owned(),
+            lease,
+        );
+
+        publication.mark_published();
+        drop(publication);
+
+        assert!(cache.get(reference).expect("get after publish").is_some());
+        drop(cache);
+        let _ = fs::remove_dir_all(root);
     }
 }
