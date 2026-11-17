@@ -368,11 +368,10 @@ impl MockTelegramBackend {
                     return Err(CoreError::InvalidInput("message text is empty".into()));
                 }
 
-                let sending = CoreEvent::MessageSendStateChanged(OutgoingSend::sending(
-                    client_id,
-                    chat_id,
-                    text.clone(),
-                ).with_reply_target(reply_to_message_id));
+                let sending = CoreEvent::MessageSendStateChanged(
+                    OutgoingSend::sending(client_id, chat_id, text.clone())
+                        .with_reply_target(reply_to_message_id),
+                );
 
                 if let Some((known_chat_id, known_text, known_reply_to, message_id)) =
                     self.reliable_sends.get(&client_id)
@@ -396,12 +395,10 @@ impl MockTelegramBackend {
                     }
                     return Ok(vec![
                         sending,
-                        CoreEvent::MessageSendStateChanged(OutgoingSend::sent(
-                            client_id,
-                            chat_id,
-                            text,
-                            *message_id,
-                        ).with_reply_target(reply_to_message_id)),
+                        CoreEvent::MessageSendStateChanged(
+                            OutgoingSend::sent(client_id, chat_id, text, *message_id)
+                                .with_reply_target(reply_to_message_id),
+                        ),
                     ]);
                 }
 
@@ -435,15 +432,18 @@ impl MockTelegramBackend {
                     chat.last_message = Some(message.clone());
                 }
 
-                self.reliable_sends
-                    .insert(client_id, (chat_id, text.clone(), reply_to_message_id, message.id));
+                self.reliable_sends.insert(
+                    client_id,
+                    (chat_id, text.clone(), reply_to_message_id, message.id),
+                );
 
                 Ok(vec![
                     sending,
                     CoreEvent::MessageAdded(message.clone()),
-                    CoreEvent::MessageSendStateChanged(OutgoingSend::sent(
-                        client_id, chat_id, text, message.id,
-                    ).with_reply_target(reply_to_message_id)),
+                    CoreEvent::MessageSendStateChanged(
+                        OutgoingSend::sent(client_id, chat_id, text, message.id)
+                            .with_reply_target(reply_to_message_id),
+                    ),
                 ])
             }
             CoreCommand::SendMediaReliable {

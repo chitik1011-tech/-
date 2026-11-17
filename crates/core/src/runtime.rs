@@ -495,11 +495,10 @@ where
                             // Write-ahead: publish and save the idempotency key before the
                             // backend can make a network request.
                             apply_event(
-                                CoreEvent::MessageSendStateChanged(OutgoingSend::sending(
-                                    *client_id,
-                                    *chat_id,
-                                    text.clone(),
-                                ).with_reply_target(*reply_to_message_id)),
+                                CoreEvent::MessageSendStateChanged(
+                                    OutgoingSend::sending(*client_id, *chat_id, text.clone())
+                                        .with_reply_target(*reply_to_message_id),
+                                ),
                                 &mut reduced_state,
                                 &state_tx,
                                 &event_tx_task,
@@ -1319,12 +1318,15 @@ fn recover_interrupted_operation(
             reply_to_message_id,
             text,
         } => apply_event(
-            CoreEvent::MessageSendStateChanged(OutgoingSend::awaiting_confirmation(
-                *client_id,
-                *chat_id,
-                text.clone(),
-                "connection changed while send outcome was unknown",
-            ).with_reply_target(*reply_to_message_id)),
+            CoreEvent::MessageSendStateChanged(
+                OutgoingSend::awaiting_confirmation(
+                    *client_id,
+                    *chat_id,
+                    text.clone(),
+                    "connection changed while send outcome was unknown",
+                )
+                .with_reply_target(*reply_to_message_id),
+            ),
             state,
             state_tx,
             event_tx,

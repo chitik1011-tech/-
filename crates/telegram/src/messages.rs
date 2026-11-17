@@ -806,19 +806,21 @@ pub(crate) async fn send_text_idempotent(
             let reply_to_msg_id = i32::try_from(message_id).map_err(|_| {
                 CoreError::InvalidInput("reply target exceeds Telegram range".into())
             })?;
-            Ok::<_, CoreError>(tl::types::InputReplyToMessage {
-                reply_to_msg_id,
-                top_msg_id: None,
-                reply_to_peer_id: None,
-                quote_text: None,
-                quote_entities: None,
-                quote_offset: None,
-                monoforum_peer_id: None,
-                todo_item_id: None,
-                poll_option: None,
-                quote_rich: None,
-            }
-            .into())
+            Ok::<_, CoreError>(
+                tl::types::InputReplyToMessage {
+                    reply_to_msg_id,
+                    top_msg_id: None,
+                    reply_to_peer_id: None,
+                    quote_text: None,
+                    quote_entities: None,
+                    quote_offset: None,
+                    monoforum_peer_id: None,
+                    todo_item_id: None,
+                    poll_option: None,
+                    quote_rich: None,
+                }
+                .into(),
+            )
         })
         .transpose()?;
 

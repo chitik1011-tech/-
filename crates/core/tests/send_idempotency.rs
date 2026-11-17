@@ -117,27 +117,40 @@ async fn reliable_reply_is_idempotent_and_reply_target_is_part_of_the_payload() 
     };
 
     let first = backend.handle(reply.clone()).await.unwrap();
-    let message_id = first.iter().find_map(|event| match event {
-        CoreEvent::MessageAdded(message) => {
-            assert_eq!(message.reply_to.as_ref().map(|reply| reply.message_id), Some(41));
-            Some(message.id)
-        }
-        _ => None,
-    }).expect("reply should create one message");
+    let message_id = first
+        .iter()
+        .find_map(|event| match event {
+            CoreEvent::MessageAdded(message) => {
+                assert_eq!(
+                    message.reply_to.as_ref().map(|reply| reply.message_id),
+                    Some(41)
+                );
+                Some(message.id)
+            }
+            _ => None,
+        })
+        .expect("reply should create one message");
     let retry = backend.handle(reply).await.unwrap();
-    assert!(!retry.iter().any(|event| matches!(event, CoreEvent::MessageAdded(_))));
+    assert!(!retry
+        .iter()
+        .any(|event| matches!(event, CoreEvent::MessageAdded(_))));
     assert!(retry.iter().any(|event| matches!(event,
         CoreEvent::MessageSendStateChanged(send)
             if matches!(&send.state, OutgoingSendState::Sent { message_id: id } if *id == message_id)
     )));
 
-    let collision = backend.handle(CoreCommand::SendTextReliable {
-        client_id: 503,
-        chat_id: 2,
-        reply_to_message_id: Some(42),
-        text: "reply once".into(),
-    }).await.unwrap();
-    assert!(!collision.iter().any(|event| matches!(event, CoreEvent::MessageAdded(_))));
+    let collision = backend
+        .handle(CoreCommand::SendTextReliable {
+            client_id: 503,
+            chat_id: 2,
+            reply_to_message_id: Some(42),
+            text: "reply once".into(),
+        })
+        .await
+        .unwrap();
+    assert!(!collision
+        .iter()
+        .any(|event| matches!(event, CoreEvent::MessageAdded(_))));
     assert!(collision.iter().any(|event| matches!(event,
         CoreEvent::MessageSendStateChanged(send)
             if matches!(&send.state, OutgoingSendState::Failed { retryable: false, .. })
@@ -667,9 +680,10 @@ impl TelegramBackend for OrderedSendBackend {
             });
 
             let message = test_message(900, chat_id, text.clone());
-            let sent = CoreEvent::MessageSendStateChanged(OutgoingSend::sent(
-                client_id, chat_id, text, message.id,
-            ).with_reply_target(reply_to_message_id));
+            let sent = CoreEvent::MessageSendStateChanged(
+                OutgoingSend::sent(client_id, chat_id, text, message.id)
+                    .with_reply_target(reply_to_message_id),
+            );
             match response_order {
                 SendResponseOrder::UpdateBeforeAck => {
                     updates_tx
@@ -785,7 +799,13 @@ fn reliable_reply_payload_is_validated_and_preserved_in_legacy_compatible_state(
         "payload": {"client_id": 903, "chat_id": 42, "text": "old wire"}
     }))
     .unwrap();
-    assert!(matches!(legacy, CoreCommand::SendTextReliable { reply_to_message_id: None, .. }));
+    assert!(matches!(
+        legacy,
+        CoreCommand::SendTextReliable {
+            reply_to_message_id: None,
+            ..
+        }
+    ));
 
     let send = OutgoingSend::sending(901, 42, "reply body").with_reply_target(Some(77));
     let encoded = serde_json::to_value(&send).unwrap();

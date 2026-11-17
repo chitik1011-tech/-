@@ -286,32 +286,29 @@ impl GrammersBackend {
         text: String,
         reply_to_message_id: Option<i64>,
     ) -> Vec<CoreEvent> {
-        let sending = CoreEvent::MessageSendStateChanged(OutgoingSend::sending(
-            client_id,
-            chat_id,
-            text.clone(),
-        ).with_reply_target(reply_to_message_id));
+        let sending = CoreEvent::MessageSendStateChanged(
+            OutgoingSend::sending(client_id, chat_id, text.clone())
+                .with_reply_target(reply_to_message_id),
+        );
 
         match self.known_reliable_send(client_id, chat_id, &text, reply_to_message_id) {
             Ok(Some(message_id)) => {
                 return vec![
                     sending,
-                    CoreEvent::MessageSendStateChanged(OutgoingSend::sent(
-                        client_id, chat_id, text, message_id,
-                    ).with_reply_target(reply_to_message_id)),
+                    CoreEvent::MessageSendStateChanged(
+                        OutgoingSend::sent(client_id, chat_id, text, message_id)
+                            .with_reply_target(reply_to_message_id),
+                    ),
                 ];
             }
             Ok(None) => {}
             Err(error) => {
                 return vec![
                     sending,
-                    CoreEvent::MessageSendStateChanged(OutgoingSend::failed(
-                        client_id,
-                        chat_id,
-                        text,
-                        error.to_string(),
-                        false,
-                    ).with_reply_target(reply_to_message_id)),
+                    CoreEvent::MessageSendStateChanged(
+                        OutgoingSend::failed(client_id, chat_id, text, error.to_string(), false)
+                            .with_reply_target(reply_to_message_id),
+                    ),
                 ];
             }
         }
@@ -346,19 +343,15 @@ impl GrammersBackend {
                 if self.dedup.should_emit(&message).await {
                     events.push(CoreEvent::MessageAdded(message.clone()));
                 }
-                events.push(CoreEvent::MessageSendStateChanged(OutgoingSend::sent(
-                    client_id, chat_id, text, message.id,
-                ).with_reply_target(reply_to_message_id)));
+                events.push(CoreEvent::MessageSendStateChanged(
+                    OutgoingSend::sent(client_id, chat_id, text, message.id)
+                        .with_reply_target(reply_to_message_id),
+                ));
                 events
             }
             Err(error) => {
-                let state = reliable_send_error_state(
-                    client_id,
-                    chat_id,
-                    text,
-                    reply_to_message_id,
-                    error,
-                );
+                let state =
+                    reliable_send_error_state(client_id, chat_id, text, reply_to_message_id, error);
                 vec![sending, CoreEvent::MessageSendStateChanged(state)]
             }
         }
@@ -1335,9 +1328,10 @@ impl GrammersBackend {
                 chat_id,
                 reply_to_message_id,
                 text,
-            } => self
-                .handle_reliable_send(client_id, chat_id, text, reply_to_message_id)
-                .await,
+            } => {
+                self.handle_reliable_send(client_id, chat_id, text, reply_to_message_id)
+                    .await
+            }
             CoreCommand::SendMediaReliable {
                 client_id,
                 chat_id,
