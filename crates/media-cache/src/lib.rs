@@ -39,6 +39,8 @@ pub enum CacheError {
     LockPoisoned,
     #[error("media item exceeds the configured cache limit")]
     ItemTooLarge,
+    #[error("downloaded media size mismatch: expected {expected} bytes, got {actual}")]
+    SizeMismatch { expected: u64, actual: u64 },
     #[error("cache limit cannot be met while all eviction candidates are in use")]
     CacheFull,
     #[error("media item is currently in use")]
@@ -99,6 +101,17 @@ impl MediaCache {
     ///
     /// The file is protected from eviction until the returned lease is dropped.
     pub fn get(&self, reference: &str) -> Result<Option<CacheLease>, CacheError> {
+        self.get_with_expected_size(reference, None)
+    }
+
+    /// Return a cache lease only when the entry also matches a known media size.
+    ///
+    /// A mismatch is treated as a cache miss so the caller can fetch a fresh copy.
+    pub fn get_with_expected_size(
+        &self,
+        reference: &str,
+        expected_size: Option<u64>,
+    ) -> Result<Option<CacheLease>, CacheError> {
         let key = cache_key(reference);
         let path = self.final_path(&key);
         let mut state = self.lock_state()?;
@@ -108,8 +121,10 @@ impl MediaCache {
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(error.into()),
         };
+        if expected_size.is_some_and(|expected| metadata.len() != expected) {
+            return Ok(None);
+        }
         self.ensure_confined(&path)?;
-        let _ = metadata;
         mark_accessed(&mut state, &key);
         *state.leases.entry(key.clone()).or_default() += 1;
         Ok(Some(CacheLease {
@@ -387,7 +402,19 @@ pub struct CacheWriter {
 
 impl CacheWriter {
     /// Atomically publish the completed file and return a lease to it.
-    pub fn commit(mut self) -> Result<CacheLease, CacheError> {
+    pub fn commit(self) -> Result<CacheLease, CacheError> {
+        self.commit_inner(None)
+    }
+
+    /// Atomically publish the completed file only if it matches a known size.
+    ///
+    /// If the write is short or long, the staging file is discarded and never
+    /// becomes visible as a cache hit.
+    pub fn commit_with_expected_size(self, expected_size: u64) -> Result<CacheLease, CacheError> {
+        self.commit_inner(Some(expected_size))
+    }
+
+    fn commit_inner(mut self, expected_size: Option<u64>) -> Result<CacheLease, CacheError> {
         let mut file = self.file.take().ok_or_else(|| {
             CacheError::Io(io::Error::new(
                 io::ErrorKind::Other,
@@ -398,6 +425,14 @@ impl CacheWriter {
         file.sync_all()?;
         let size = file.metadata()?.len();
         drop(file);
+        if let Some(expected) = expected_size {
+            if size != expected {
+                return Err(CacheError::SizeMismatch {
+                    expected,
+                    actual: size,
+                });
+            }
+        }
         if size > self.cache.inner.max_bytes {
             return Err(CacheError::ItemTooLarge);
         }
@@ -488,6 +523,42 @@ mod tests {
             .expect("hit");
         assert_eq!(lease.path(), second.path());
         assert_eq!(cache.used_bytes().expect("size"), 11);
+    }
+
+    #[test]
+    fn rejects_incomplete_staging_write_without_publishing_a_cache_hit() {
+        let (_dir, cache) = cache(128);
+        let mut writer = cache.begin_write("truncated").expect("writer");
+        writer.write_all(b"short").expect("write");
+
+        assert!(matches!(
+            writer.commit_with_expected_size(10),
+            Err(CacheError::SizeMismatch {
+                expected: 10,
+                actual: 5
+            })
+        ));
+        assert!(cache
+            .get_with_expected_size("truncated", Some(10))
+            .expect("get")
+            .is_none());
+        assert_eq!(cache.used_bytes().expect("size"), 0);
+    }
+
+    #[test]
+    fn treats_existing_wrong_size_entry_as_cache_miss() {
+        let (_dir, cache) = cache(128);
+        let key = cache_key("old-truncated-entry");
+        fs::write(cache.final_path(&key), b"short").expect("seed stale entry");
+
+        assert!(cache
+            .get_with_expected_size("old-truncated-entry", Some(10))
+            .expect("get")
+            .is_none());
+        assert!(cache
+            .get_with_expected_size("old-truncated-entry", Some(5))
+            .expect("get matching size")
+            .is_some());
     }
 
     #[test]

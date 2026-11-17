@@ -183,9 +183,11 @@ async fn run_download(
         emit_snapshot(updates, target, transfers, active).await;
     }
 
-    let lease = writer
-        .commit()
-        .map_err(|_| "could not commit completed media to cache".to_owned())?;
+    let lease = match target.total_bytes {
+        Some(expected_size) => writer.commit_with_expected_size(expected_size),
+        None => writer.commit(),
+    }
+    .map_err(|_| "could not commit completed media to cache".to_owned())?;
     let mut pending_publication =
         PendingDownloadPublication::new(cache.clone(), target.reference.clone(), lease);
     let completed = transfers
