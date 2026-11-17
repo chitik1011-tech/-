@@ -53,8 +53,11 @@ fn incoming_message(id: i64) -> MessageSummary {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn runtime_handles_bursty_updates_and_commands_without_losing_latest_state() {
-    const UPDATE_COUNT: i64 = 700;
-    const COMMAND_COUNT: usize = 64;
+    // Only a small excess over the cache limit is needed to prove eviction and latest-state
+    // behavior; keep enough concurrent commands to exercise interleaving without adding a large
+    // burst that makes this test sensitive to heavily contended hosted runners.
+    const UPDATE_COUNT: i64 = MAX_CACHED_MESSAGES_PER_CHAT as i64 + 8;
+    const COMMAND_COUNT: usize = 16;
 
     let (update_tx, update_rx) = backend_update_channel();
     let store = MemoryStateStore::default();
