@@ -820,17 +820,7 @@ impl GrammersBackend {
     }
 
     async fn logout(&mut self) -> tg_mobile_core::Result<Vec<CoreEvent>> {
-        let authorized = self
-            .client
-            .is_authorized()
-            .await
-            .map_err(|error| api_error("check authorization before logout", error))?;
-        if authorized {
-            self.client
-                .sign_out()
-                .await
-                .map_err(|error| api_error("log out of Telegram", error))?;
-        }
+        AuthFlow::logout(&self.client).await?;
 
         for (_, task) in self.media_tasks.drain() {
             task.handle.abort();

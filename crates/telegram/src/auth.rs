@@ -4,9 +4,35 @@ use grammers_client::{
     sender::InvocationError,
     tl::enums::auth::SentCodeType,
 };
+use std::{future::Future, time::Duration};
 use tg_mobile_core::{AuthorizationState, CoreError, LoginCodeDeliveryMethod};
+use tokio::time::timeout;
 
 use crate::error::{TelegramBackendError, auth_api_error};
+
+const AUTH_RPC_TIMEOUT: Duration = Duration::from_secs(30);
+
+async fn wait_for_auth_rpc<T, E>(
+    future: impl Future<Output = std::result::Result<T, E>>,
+    timeout_error: CoreError,
+) -> tg_mobile_core::Result<std::result::Result<T, E>> {
+    timeout(AUTH_RPC_TIMEOUT, future)
+        .await
+        .map_err(|_| timeout_error)
+}
+
+fn auth_timeout_error(operation: &'static str, outcome_unknown: bool) -> CoreError {
+    if outcome_unknown {
+        TelegramBackendError::Authorization(format!(
+            "{operation} timed out; Telegram may have accepted the request, so restart or verify authorization before retrying"
+        ))
+        .into()
+    } else {
+        CoreError::TransientTransport(format!(
+            "{operation} timed out; no result was received, retry only after checking whether Telegram completed it"
+        ))
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AuthPhase {
@@ -116,10 +142,12 @@ impl AuthFlow {
         self.reset_to_phone_entry();
         let phone = normalize_phone_number(&phone)?;
 
-        let (token, delivery) = client
-            .request_login_code_with_delivery_type(&phone, api_hash)
-            .await
-            .map_err(|error| auth_api_error("request login code", error))?;
+        let (token, delivery) = wait_for_auth_rpc(
+            client.request_login_code_with_delivery_type(&phone, api_hash),
+            auth_timeout_error("request login code", true),
+        )
+        .await?
+        .map_err(|error| auth_api_error("request login code", error))?;
         self.password_token = None;
         self.login_token = Some(token);
         self.login_code_delivery = Some(delivery_method_from_sent_code_type(delivery));
@@ -142,7 +170,20 @@ impl AuthFlow {
             CoreError::InvalidInput("request a login code before submitting one".into())
         })?;
 
-        match client.sign_in(&token, code.trim()).await {
+        let result = match wait_for_auth_rpc(
+            client.sign_in(&token, code.trim()),
+            auth_timeout_error("sign in with code", true),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(error) => {
+                self.reset_to_phone_entry();
+                return Err(error);
+            }
+        };
+
+        match result {
             Ok(_) => {
                 self.password_token = None;
                 self.login_code_delivery = None;
@@ -203,7 +244,20 @@ impl AuthFlow {
             CoreError::InvalidInput("Telegram did not request a 2FA password".into())
         })?;
 
-        match client.check_password(token, password.as_bytes()).await {
+        let result = match wait_for_auth_rpc(
+            client.check_password(token, password.as_bytes()),
+            auth_timeout_error("sign in with 2FA password", true),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(error) => {
+                self.reset_to_phone_entry();
+                return Err(error);
+            }
+        };
+
+        match result {
             Ok(_) => {
                 self.phase = AuthPhase::Ready;
                 Ok(self.state())
@@ -248,6 +302,24 @@ impl AuthFlow {
             }
         }
     }
+
+    pub(crate) async fn logout(client: &Client) -> tg_mobile_core::Result<()> {
+        let authorized = wait_for_auth_rpc(
+            client.is_authorized(),
+            auth_timeout_error("check authorization before logout", false),
+        )
+        .await?
+        .map_err(|error| auth_api_error("check authorization before logout", error))?;
+        if authorized {
+            wait_for_auth_rpc(
+                client.sign_out(),
+                auth_timeout_error("log out of Telegram", true),
+            )
+            .await?
+            .map_err(|error| auth_api_error("log out of Telegram", error))?;
+        }
+        Ok(())
+    }
 }
 
 /// A code cannot be retried with its LoginToken after these RPC responses.
@@ -288,13 +360,69 @@ fn normalize_phone_number(input: &str) -> tg_mobile_core::Result<String> {
 
 #[cfg(test)]
 mod tests {
+    use std::future::pending;
+
     use super::{
-        AuthFlow, AuthPhase, delivery_method_from_sent_code_type, login_token_invalidated,
-        normalize_phone_number,
+        AUTH_RPC_TIMEOUT, AuthFlow, AuthPhase, auth_timeout_error,
+        delivery_method_from_sent_code_type, login_token_invalidated, normalize_phone_number,
+        wait_for_auth_rpc,
     };
     use grammers_client::sender::{InvocationError, RpcError};
     use grammers_client::tl;
-    use tg_mobile_core::{AuthorizationState, LoginCodeDeliveryMethod};
+    use tg_mobile_core::{AuthorizationState, CoreError, LoginCodeDeliveryMethod};
+
+    #[tokio::test(start_paused = true)]
+    async fn auth_rpc_deadline_returns_ambiguous_operation_error() {
+        let task = tokio::spawn(wait_for_auth_rpc::<(), ()>(
+            pending(),
+            auth_timeout_error("sign in with code", true),
+        ));
+        tokio::task::yield_now().await;
+        tokio::time::advance(AUTH_RPC_TIMEOUT).await;
+
+        assert!(matches!(
+            task.await.unwrap(),
+            Err(CoreError::Backend(message))
+                if message.contains("sign in with code timed out")
+                    && message.contains("may have accepted")
+        ));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn authorization_probe_timeout_is_retryable_without_claiming_logout() {
+        let task = tokio::spawn(wait_for_auth_rpc::<(), ()>(
+            pending(),
+            auth_timeout_error("check authorization before logout", false),
+        ));
+        tokio::task::yield_now().await;
+        tokio::time::advance(AUTH_RPC_TIMEOUT).await;
+
+        assert!(matches!(
+            task.await.unwrap(),
+            Err(CoreError::TransientTransport(message))
+                if message.contains("check authorization before logout timed out")
+        ));
+    }
+
+    #[tokio::test]
+    async fn completed_auth_rpc_preserves_success_and_server_error() {
+        assert!(matches!(
+            wait_for_auth_rpc(
+                async { Ok::<_, ()>(true) },
+                CoreError::Backend("timeout".into())
+            )
+            .await,
+            Ok(Ok(true))
+        ));
+        assert!(matches!(
+            wait_for_auth_rpc(
+                async { Err::<(), _>(7) },
+                CoreError::Backend("timeout".into())
+            )
+            .await,
+            Ok(Err(7))
+        ));
+    }
 
     #[test]
     fn international_phone_numbers_are_normalized_and_invalid_numbers_rejected() {
