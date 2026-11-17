@@ -1673,12 +1673,11 @@ fn normalize_restored_media_downloads(state: &mut CoreState) {
                     attachment.download_state = DownloadState::NotDownloaded;
                     attachment.download_generation = 0;
                 }
-                // TransferManager is process-local, so its generation restarts
-                // at one. Keep the visible terminal outcome (including a failure
-                // reason) but reset only its generation so a user retry is accepted.
-                DownloadState::Failed { .. } | DownloadState::Cancelled
-                    if attachment.download_generation > 0 =>
-                {
+                // TransferManager is process-local, so every persisted generation
+                // is stale after restart. Keep terminal UI state (including a
+                // failure reason and downloaded path) but reset its generation so
+                // fresh callbacks and retries are accepted.
+                _ if attachment.download_generation > 0 => {
                     attachment.download_generation = 0;
                 }
                 _ => {}
@@ -2163,7 +2162,7 @@ mod media_restore_generation_tests {
     }
 
     #[tokio::test]
-    async fn restored_failed_and_cancelled_downloads_keep_visible_state_and_accept_retry() {
+    async fn restored_terminal_downloads_keep_visible_state_and_accept_fresh_update() {
         for (persisted_state, expected_state) in [
             (
                 AttachmentDownloadState::Failed {
@@ -2176,6 +2175,14 @@ mod media_restore_generation_tests {
             (
                 AttachmentDownloadState::Cancelled,
                 AttachmentDownloadState::Cancelled,
+            ),
+            (
+                AttachmentDownloadState::Downloaded {
+                    local_path: std::path::PathBuf::from("/cache/attachment"),
+                },
+                AttachmentDownloadState::Downloaded {
+                    local_path: std::path::PathBuf::from("/cache/attachment"),
+                },
             ),
         ] {
             let store = crate::storage::MemoryStateStore::default();
