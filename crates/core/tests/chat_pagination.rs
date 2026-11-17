@@ -147,7 +147,7 @@ fn repeated_cursor_stops_pagination_and_old_state_defaults_cursor_bookkeeping() 
     assert!(!state.chat_pagination.can_load_next());
     assert!(state.chat_pagination.error.is_some());
 
-    let legacy = r#"{"running":true,"account":{"authorization":"ready","chats":[]},"messages":{},"last_error":null}"#;
+    let legacy = r#"{"running":true,"account":{"authorization":"Closed","chats":[]},"messages":{},"last_error":null}"#;
     let restored: CoreState = serde_json::from_str(legacy).unwrap();
     assert!(!restored.chat_pagination.loaded);
     assert!(restored.chat_pagination.can_load_next());
