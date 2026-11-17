@@ -66,6 +66,8 @@ data class ChatListEntry(
     val unreadCount: Long,
     val lastMessage: ChatListPreview?,
     val capabilities: ChatCapabilitiesUi = ChatCapabilitiesUi(),
+    val unreadMentionsCount: Long? = null,
+    val unreadReactionsCount: Long? = null,
 )
 
 data class ChatListPreview(
@@ -364,6 +366,14 @@ private fun ChatListRow(chat: ChatListEntry, selected: Boolean, onClick: () -> U
                 if (presentation.unreadLabel != null) {
                     Spacer(Modifier.width(8.dp))
                     UnreadCounterBadge(count = chat.unreadCount)
+                }
+                presentation.unreadMentionsLabel?.let { label ->
+                    Spacer(Modifier.width(4.dp))
+                    UnreadMentionBadge(label)
+                }
+                presentation.unreadReactionsLabel?.let { label ->
+                    Spacer(Modifier.width(4.dp))
+                    UnreadReactionBadge(label)
                 }
             }
         }

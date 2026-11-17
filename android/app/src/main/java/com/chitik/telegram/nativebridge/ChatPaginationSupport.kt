@@ -211,6 +211,8 @@ private fun parseChatPageEntries(values: JSONArray): List<ChatListEntry> = build
                 title = chat.optString("title").takeIf(String::isNotBlank) ?: "Chat",
                 unreadCount = chat.numberOrNull("unread_count") ?: 0L,
                 lastMessage = lastMessage,
+                unreadMentionsCount = chat.unreadCounterOrNull("unread_mentions_count"),
+                unreadReactionsCount = chat.unreadCounterOrNull("unread_reactions_count"),
             ),
         )
     }
@@ -225,11 +227,13 @@ private fun mergeChatPage(
     val oldById = existing.associateBy(ChatListEntry::id)
     val merged = if (firstPage) mutableListOf() else existing.toMutableList()
     for (pageChat in pageChats) {
-        val previous = oldById[pageChat.id]
+        val previous = merged.firstOrNull { it.id == pageChat.id } ?: oldById[pageChat.id]
         val incoming = pageChat.copy(
             lastMessage = previous?.lastMessage?.takeIf { old ->
                 pageChat.lastMessage?.timestampUnix?.let { old.timestampUnix >= it } ?: true
             } ?: pageChat.lastMessage,
+            unreadMentionsCount = pageChat.unreadMentionsCount ?: previous?.unreadMentionsCount,
+            unreadReactionsCount = pageChat.unreadReactionsCount ?: previous?.unreadReactionsCount,
             capabilities = currentCapabilities[pageChat.id]
                 ?: previous?.capabilities
                 ?: pageChat.capabilities,
@@ -239,6 +243,22 @@ private fun mergeChatPage(
         else merged += incoming
     }
     return merged
+}
+
+internal fun mergeChatListRefresh(
+    existing: List<ChatListEntry>,
+    incomingChats: List<ChatListEntry>,
+    currentCapabilities: Map<Long, com.chitik.telegram.ChatCapabilitiesUi>,
+): List<ChatListEntry> {
+    val oldById = existing.associateBy(ChatListEntry::id)
+    return incomingChats.map { incoming ->
+        val previous = oldById[incoming.id]
+        incoming.copy(
+            unreadMentionsCount = incoming.unreadMentionsCount ?: previous?.unreadMentionsCount,
+            unreadReactionsCount = incoming.unreadReactionsCount ?: previous?.unreadReactionsCount,
+            capabilities = currentCapabilities[incoming.id] ?: com.chitik.telegram.ChatCapabilitiesUi(),
+        )
+    }
 }
 
 internal fun parseChatPaginationSnapshot(snapshot: JSONObject?): ChatPaginationUiState? {
@@ -280,3 +300,7 @@ private fun JSONObject.numberOrNull(key: String): Long? = when (val value = opt(
     is Number -> value.toLong()
     else -> null
 }
+
+/** Missing/invalid optional counters stay unknown; real values are clamped to Telegram's u32 range. */
+internal fun JSONObject.unreadCounterOrNull(key: String): Long? =
+    numberOrNull(key)?.coerceIn(0L, 4_294_967_295L)

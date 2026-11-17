@@ -1369,8 +1369,8 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                         )
                     } else it.chatPagination
                     it.copy(
-                        chats = loadedChats?.map { chat ->
-                            chat.copy(capabilities = it.chatCapabilities[chat.id] ?: ChatCapabilitiesUi())
+                        chats = loadedChats?.let { chats ->
+                            mergeChatListRefresh(it.chats, chats, it.chatCapabilities)
                         } ?: it.chats,
                         chatsLoaded = loadedChats != null || it.chatsLoaded,
                         chatPagination = pagination,
@@ -1996,6 +1996,8 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                     id = chat.optLong("id"),
                     title = chat.optString("title", "Chat"),
                     unreadCount = chat.optLong("unread_count", 0L),
+                    unreadMentionsCount = chat.unreadCounterOrNull("unread_mentions_count"),
+                    unreadReactionsCount = chat.unreadCounterOrNull("unread_reactions_count"),
                     lastMessage = lastMessage?.let {
                         ChatListPreview(
                             text = it.optString("text"),
