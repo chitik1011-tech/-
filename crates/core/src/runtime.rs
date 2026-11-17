@@ -671,8 +671,8 @@ where
                         &command,
                         CoreCommand::LoadChats { .. }
                             | CoreCommand::LoadChatsPage { cursor: None, .. }
-                    )
-                        && reduced_state.connection_machine.phase() == LinkPhase::Synchronizing
+                    ) && reduced_state.connection_machine.phase()
+                        == LinkPhase::Synchronizing
                         && reduced_state.account.authorization
                             == crate::model::AuthorizationState::Ready;
                     let pinned_revision = match &command {
@@ -1158,10 +1158,12 @@ mod capability_tests {
             next_cursor: None,
         });
         assert!(!has_initial_chat_sync_result(&[later_page]));
-        assert!(!has_initial_chat_sync_result(&[CoreEvent::ChatsPageFailed {
-            cursor: None,
-            error: "network down".into(),
-        }]));
+        assert!(!has_initial_chat_sync_result(&[
+            CoreEvent::ChatsPageFailed {
+                cursor: None,
+                error: "network down".into(),
+            }
+        ]));
     }
 
     #[test]
