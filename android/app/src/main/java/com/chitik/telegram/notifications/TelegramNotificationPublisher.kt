@@ -10,6 +10,8 @@ import android.os.Build
 import androidx.core.content.ContextCompat
 import java.util.concurrent.atomic.AtomicReference
 
+internal const val TELEGRAM_MESSAGE_NOTIFICATION_TAG_PREFIX = "telegram_chat_"
+
 /**
  * Publishes message notifications from caller-supplied Rust event data.
  *
@@ -45,6 +47,22 @@ class TelegramNotificationPublisher(context: Context) {
         visibleChatId.set(chatId)
         if (chatId != null) {
             notificationManager?.cancel(notificationTag(chatId), NOTIFICATION_ID)
+        }
+    }
+
+    /** Cancels only this publisher's tagged chat messages, including notices surviving process recreation. */
+    fun cancelPublishedNotifications() {
+        val manager = notificationManager ?: return
+        val ownNotifications = runCatching {
+            manager.activeNotifications
+                .mapNotNull { status ->
+                    status.tag
+                        ?.takeIf(::isTelegramMessageNotificationTag)
+                        ?.let { tag -> tag to status.id }
+                }
+        }.getOrDefault(emptyList())
+        ownNotifications.forEach { (tag, id) ->
+            runCatching { manager.cancel(tag, id) }
         }
     }
 
@@ -128,12 +146,20 @@ class TelegramNotificationPublisher(context: Context) {
                 Manifest.permission.POST_NOTIFICATIONS,
             ) == PackageManager.PERMISSION_GRANTED
 
-    private fun notificationTag(chatId: Long): String = "$NOTIFICATION_TAG_PREFIX$chatId"
+    private fun notificationTag(chatId: Long): String = "$TELEGRAM_MESSAGE_NOTIFICATION_TAG_PREFIX$chatId"
 
     private companion object {
         const val PRIVATE_CHANNEL_ID = "telegram_private_messages"
         const val GROUP_CHANNEL_ID = "telegram_group_messages"
-        const val NOTIFICATION_TAG_PREFIX = "telegram_chat_"
         const val NOTIFICATION_ID = 1
     }
+}
+
+/** Recognizes only the exact tag format emitted for this publisher's chat notifications. */
+internal fun isTelegramMessageNotificationTag(tag: String?): Boolean {
+    val value = tag?.takeIf { it.startsWith(TELEGRAM_MESSAGE_NOTIFICATION_TAG_PREFIX) }
+        ?.removePrefix(TELEGRAM_MESSAGE_NOTIFICATION_TAG_PREFIX)
+        ?.toLongOrNull()
+        ?: return false
+    return value != 0L && tag == "$TELEGRAM_MESSAGE_NOTIFICATION_TAG_PREFIX$value"
 }
