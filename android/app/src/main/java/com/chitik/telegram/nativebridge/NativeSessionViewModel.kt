@@ -22,7 +22,6 @@ import com.chitik.telegram.ConversationLocationUi
 import com.chitik.telegram.ConversationGeoPointUi
 import com.chitik.telegram.ContactListEntry
 import com.chitik.telegram.parseContactListState
-import com.chitik.telegram.parseContactPage
 import com.chitik.telegram.ConversationPollOptionUi
 import com.chitik.telegram.ConversationPollUi
 import com.chitik.telegram.PeerProfileUi
@@ -1361,32 +1360,13 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 }
             }
             "contacts_loaded" -> {
-                val page = parseContactPage(payload)
-                if (page == null) {
-                    _state.update {
-                        it.copy(contactsLoading = false, error = "Invalid contacts response")
-                    }
-                } else {
-                    _state.update {
-                        val contacts = if (page.offset == 0) {
-                            page.contacts
-                        } else {
-                            (it.contacts + page.contacts).distinctBy(ContactListEntry::userId)
-                                .sortedBy(ContactListEntry::userId)
-                        }
-                        it.copy(
-                            contacts = contacts,
-                            contactsLoading = false,
-                            contactTotal = page.total,
-                            lastEventType = type,
-                            // Keep contact names and usernames out of diagnostic state.
-                            lastEventPayload = "{\"offset\":${page.offset},\"count\":${page.contacts.size},\"total\":${page.total}}",
-                            error = null,
-                        )
-                    }
+                _state.update { it.reduceContactsLoaded(payload) }
+            }
+            "contacts_refresh_requested" -> {
+                contactsRefreshRequestForEvent(type)?.let { request ->
+                    loadContacts(offset = request.offset, limit = request.limit)
                 }
             }
-            "contacts_refresh_requested" -> loadContacts(offset = 0)
             "messages_loaded" -> {
                 val target = parseReadTarget(payload)
                 _state.update {
