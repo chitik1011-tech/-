@@ -699,21 +699,14 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         if (!accepted) _state.update { it.copy(contactsLoading = false) }
     }
 
-    fun replyMessage(chatId: Long, replyToMessageId: Long, text: String) {
-        if (chatId == 0L || replyToMessageId <= 0L || text.isBlank()) return
-        sendCommand(
-            JSONObject()
-                .put("type", "reply_message")
-                .put("payload", JSONObject()
-                    .put("chat_id", chatId)
-                    .put("reply_to_message_id", replyToMessageId)
-                    .put("text", text))
-                .toString(),
-        )
+    fun replyMessage(chatId: Long, replyToMessageId: Long, text: String): Boolean {
+        if (chatId == 0L || replyToMessageId <= 0L || text.isBlank()) return false
+        return sendText(chatId, text, replyToMessageId)
     }
 
-    fun sendText(chatId: Long, text: String): Boolean {
+    fun sendText(chatId: Long, text: String, replyToMessageId: Long? = null): Boolean {
         if (chatId == 0L || text.isBlank() || _state.value.sendingText) return false
+        if (replyToMessageId != null && replyToMessageId <= 0L) return false
         val clientId = nextPositiveClientMessageId()
         _state.update {
             it.copy(
@@ -726,7 +719,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 textSendError = null,
             )
         }
-        val accepted = sendCommand(reliableTextCommand(clientId, chatId, text))
+        val accepted = sendCommand(reliableTextCommand(clientId, chatId, text, replyToMessageId))
         if (!accepted) {
             _state.update {
                 if (it.activeTextSendId == clientId) it.copy(

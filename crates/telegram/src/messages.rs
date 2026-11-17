@@ -788,6 +788,7 @@ pub(crate) async fn send_text_idempotent(
     peer: PeerRef,
     text: String,
     random_id: i64,
+    reply_to_message_id: Option<i64>,
 ) -> tg_mobile_core::Result<MessageSummary> {
     if text.is_empty() {
         return Err(CoreError::InvalidInput(
@@ -800,6 +801,29 @@ pub(crate) async fn send_text_idempotent(
         ));
     }
 
+    let reply_to = reply_to_message_id
+        .map(|message_id| {
+            let reply_to_msg_id = i32::try_from(message_id).map_err(|_| {
+                CoreError::InvalidInput("reply target exceeds Telegram range".into())
+            })?;
+            Ok::<_, CoreError>(
+                tl::types::InputReplyToMessage {
+                    reply_to_msg_id,
+                    top_msg_id: None,
+                    reply_to_peer_id: None,
+                    quote_text: None,
+                    quote_entities: None,
+                    quote_offset: None,
+                    monoforum_peer_id: None,
+                    todo_item_id: None,
+                    poll_option: None,
+                    quote_rich: None,
+                }
+                .into(),
+            )
+        })
+        .transpose()?;
+
     let updates = client
         .invoke(&tl::functions::messages::SendMessage {
             no_webpage: false,
@@ -807,7 +831,7 @@ pub(crate) async fn send_text_idempotent(
             background: false,
             clear_draft: false,
             peer: peer.into(),
-            reply_to: None,
+            reply_to,
             message: text.clone(),
             random_id,
             reply_markup: None,
@@ -834,14 +858,21 @@ pub(crate) async fn send_text_idempotent(
         )
     })?;
     let date = sent_message_date(&updates).unwrap_or_default();
-    Ok(message_summary_from_fields(MessageFields {
+    let mut summary = message_summary_from_fields(MessageFields {
         id: i64::from(message_id),
         chat_id: peer_id_to_core(peer.id),
         sender_id: 0,
         text: &text,
         timestamp_unix: i64::from(date),
         outgoing: true,
-    }))
+    });
+    summary.reply_to = reply_to_message_id.map(|message_id| ReplyMetadata {
+        message_id,
+        chat_id: Some(peer_id_to_core(peer.id)),
+        sender_id: None,
+        sender_display_name: None,
+    });
+    Ok(summary)
 }
 
 fn classify_send_error(error: InvocationError) -> CoreError {

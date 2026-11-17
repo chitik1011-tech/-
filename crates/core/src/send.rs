@@ -87,6 +87,9 @@ pub struct OutgoingSend {
     pub client_id: ClientMessageId,
     pub chat_id: i64,
     pub text: String,
+    /// Optional reply target preserved so a retry after process restart keeps reply semantics.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_to_message_id: Option<i64>,
     /// Absent on older persisted text outbox entries.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub media: Option<OutgoingMediaAttachment>,
@@ -197,6 +200,7 @@ impl OutgoingSend {
             client_id,
             chat_id,
             text: caption.into(),
+            reply_to_message_id: None,
             media: Some(media.clone()),
             transfer_generation,
             session_generation: 0,
@@ -220,6 +224,7 @@ impl OutgoingSend {
             client_id,
             chat_id,
             text: caption.into(),
+            reply_to_message_id: None,
             media: Some(media),
             transfer_generation,
             session_generation: 0,
@@ -241,6 +246,7 @@ impl OutgoingSend {
             client_id,
             chat_id,
             text: caption.into(),
+            reply_to_message_id: None,
             media: Some(media),
             transfer_generation,
             session_generation: 0,
@@ -263,6 +269,7 @@ impl OutgoingSend {
             client_id,
             chat_id,
             text: caption.into(),
+            reply_to_message_id: None,
             media: Some(media),
             transfer_generation,
             session_generation: 0,
@@ -287,6 +294,7 @@ impl OutgoingSend {
             client_id,
             chat_id,
             text: caption.into(),
+            reply_to_message_id: None,
             media: Some(media),
             transfer_generation,
             session_generation: 0,
@@ -308,6 +316,7 @@ impl OutgoingSend {
             client_id,
             chat_id,
             text: text.into(),
+            reply_to_message_id: None,
             media: None,
             transfer_generation: 0,
             session_generation: 0,
@@ -323,8 +332,16 @@ impl OutgoingSend {
         self
     }
 
-    pub fn same_request(&self, chat_id: i64, text: &str) -> bool {
-        self.chat_id == chat_id && self.text == text && self.media.is_none()
+    pub fn with_reply_target(mut self, message_id: Option<i64>) -> Self {
+        self.reply_to_message_id = message_id;
+        self
+    }
+
+    pub fn same_request(&self, chat_id: i64, text: &str, reply_to_message_id: Option<i64>) -> bool {
+        self.chat_id == chat_id
+            && self.text == text
+            && self.reply_to_message_id == reply_to_message_id
+            && self.media.is_none()
     }
 
     pub fn same_media_request(
@@ -337,7 +354,10 @@ impl OutgoingSend {
     }
 
     pub fn same_payload(&self, other: &Self) -> bool {
-        self.chat_id == other.chat_id && self.text == other.text && self.media == other.media
+        self.chat_id == other.chat_id
+            && self.text == other.text
+            && self.reply_to_message_id == other.reply_to_message_id
+            && self.media == other.media
     }
 
     pub fn with_upload_progress(&self, bytes_transferred: u64, transfer_generation: u64) -> Self {
@@ -454,6 +474,7 @@ mod tests {
         });
         let send: OutgoingSend = serde_json::from_value(value).unwrap();
         assert!(send.media.is_none());
+        assert!(send.reply_to_message_id.is_none());
         assert_eq!(send.transfer_generation, 0);
         assert_eq!(send.bytes_transferred, 0);
     }

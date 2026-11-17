@@ -18,7 +18,7 @@ pub struct MockTelegramBackend {
     chats: Vec<ChatSummary>,
     next_message_id: i64,
     pinned_messages: BTreeMap<i64, Vec<i64>>,
-    reliable_sends: BTreeMap<i64, (i64, String, i64)>,
+    reliable_sends: BTreeMap<i64, (i64, String, Option<i64>, i64)>,
 }
 
 impl Default for MockTelegramBackend {
@@ -356,6 +356,7 @@ impl MockTelegramBackend {
             CoreCommand::SendTextReliable {
                 client_id,
                 chat_id,
+                reply_to_message_id,
                 text,
             } => {
                 if self.authorization != AuthorizationState::Ready {
@@ -367,16 +368,18 @@ impl MockTelegramBackend {
                     return Err(CoreError::InvalidInput("message text is empty".into()));
                 }
 
-                let sending = CoreEvent::MessageSendStateChanged(OutgoingSend::sending(
-                    client_id,
-                    chat_id,
-                    text.clone(),
-                ));
+                let sending = CoreEvent::MessageSendStateChanged(
+                    OutgoingSend::sending(client_id, chat_id, text.clone())
+                        .with_reply_target(reply_to_message_id),
+                );
 
-                if let Some((known_chat_id, known_text, message_id)) =
+                if let Some((known_chat_id, known_text, known_reply_to, message_id)) =
                     self.reliable_sends.get(&client_id)
                 {
-                    if *known_chat_id != chat_id || known_text != &text {
+                    if *known_chat_id != chat_id
+                        || known_text != &text
+                        || *known_reply_to != reply_to_message_id
+                    {
                         return Ok(vec![
                             sending,
                             CoreEvent::MessageSendStateChanged(OutgoingSend::failed(
@@ -387,17 +390,15 @@ impl MockTelegramBackend {
                                     "client message id {client_id} is already bound to another request"
                                 ),
                                 false,
-                            )),
+                            ).with_reply_target(reply_to_message_id)),
                         ]);
                     }
                     return Ok(vec![
                         sending,
-                        CoreEvent::MessageSendStateChanged(OutgoingSend::sent(
-                            client_id,
-                            chat_id,
-                            text,
-                            *message_id,
-                        )),
+                        CoreEvent::MessageSendStateChanged(
+                            OutgoingSend::sent(client_id, chat_id, text, *message_id)
+                                .with_reply_target(reply_to_message_id),
+                        ),
                     ]);
                 }
 
@@ -416,7 +417,12 @@ impl MockTelegramBackend {
                     service_message: false,
                     service: None,
                     media_caption: None,
-                    reply_to: None,
+                    reply_to: reply_to_message_id.map(|message_id| crate::model::ReplyMetadata {
+                        message_id,
+                        chat_id: Some(chat_id),
+                        sender_id: None,
+                        sender_display_name: None,
+                    }),
                     reactions: Vec::new(),
                     reaction_revision: None,
                 };
@@ -426,15 +432,18 @@ impl MockTelegramBackend {
                     chat.last_message = Some(message.clone());
                 }
 
-                self.reliable_sends
-                    .insert(client_id, (chat_id, text.clone(), message.id));
+                self.reliable_sends.insert(
+                    client_id,
+                    (chat_id, text.clone(), reply_to_message_id, message.id),
+                );
 
                 Ok(vec![
                     sending,
                     CoreEvent::MessageAdded(message.clone()),
-                    CoreEvent::MessageSendStateChanged(OutgoingSend::sent(
-                        client_id, chat_id, text, message.id,
-                    )),
+                    CoreEvent::MessageSendStateChanged(
+                        OutgoingSend::sent(client_id, chat_id, text, message.id)
+                            .with_reply_target(reply_to_message_id),
+                    ),
                 ])
             }
             CoreCommand::SendMediaReliable {
