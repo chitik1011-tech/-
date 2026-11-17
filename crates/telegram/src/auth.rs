@@ -17,21 +17,19 @@ enum AuthPhase {
     Ready,
 }
 
-impl From<SentCodeType> for LoginCodeDeliveryMethod {
-    fn from(delivery: SentCodeType) -> Self {
-        match delivery {
-            SentCodeType::App(_) => Self::TelegramApp,
-            SentCodeType::Sms(_) => Self::Sms,
-            SentCodeType::Call(_) => Self::VoiceCall,
-            SentCodeType::FlashCall(_) => Self::FlashCall,
-            SentCodeType::MissedCall(_) => Self::MissedCall,
-            SentCodeType::FirebaseSms(_) => Self::FirebaseSms,
-            SentCodeType::FragmentSms(_) => Self::FragmentSms,
-            SentCodeType::SmsWord(_) => Self::SmsWord,
-            SentCodeType::SmsPhrase(_) => Self::SmsPhrase,
-            SentCodeType::EmailCode(_) => Self::EmailCode,
-            SentCodeType::SetUpEmailRequired(_) => Self::EmailSetupRequired,
-        }
+fn delivery_method_from_sent_code_type(delivery: SentCodeType) -> LoginCodeDeliveryMethod {
+    match delivery {
+        SentCodeType::App(_) => LoginCodeDeliveryMethod::TelegramApp,
+        SentCodeType::Sms(_) => LoginCodeDeliveryMethod::Sms,
+        SentCodeType::Call(_) => LoginCodeDeliveryMethod::VoiceCall,
+        SentCodeType::FlashCall(_) => LoginCodeDeliveryMethod::FlashCall,
+        SentCodeType::MissedCall(_) => LoginCodeDeliveryMethod::MissedCall,
+        SentCodeType::FirebaseSms(_) => LoginCodeDeliveryMethod::FirebaseSms,
+        SentCodeType::FragmentSms(_) => LoginCodeDeliveryMethod::FragmentSms,
+        SentCodeType::SmsWord(_) => LoginCodeDeliveryMethod::SmsWord,
+        SentCodeType::SmsPhrase(_) => LoginCodeDeliveryMethod::SmsPhrase,
+        SentCodeType::EmailCode(_) => LoginCodeDeliveryMethod::EmailCode,
+        SentCodeType::SetUpEmailRequired(_) => LoginCodeDeliveryMethod::EmailSetupRequired,
     }
 }
 
@@ -124,7 +122,7 @@ impl AuthFlow {
             .map_err(|error| auth_api_error("request login code", error))?;
         self.password_token = None;
         self.login_token = Some(token);
-        self.login_code_delivery = Some(delivery.into());
+        self.login_code_delivery = Some(delivery_method_from_sent_code_type(delivery));
         self.phase = AuthPhase::WaitingForCode;
         Ok(self.state())
     }
@@ -290,7 +288,10 @@ fn normalize_phone_number(input: &str) -> tg_mobile_core::Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{AuthFlow, AuthPhase, login_token_invalidated, normalize_phone_number};
+    use super::{
+        AuthFlow, AuthPhase, delivery_method_from_sent_code_type, login_token_invalidated,
+        normalize_phone_number,
+    };
     use grammers_client::sender::{InvocationError, RpcError};
     use grammers_client::tl;
     use tg_mobile_core::{AuthorizationState, LoginCodeDeliveryMethod};
@@ -343,11 +344,11 @@ mod tests {
             tl::enums::auth::SentCodeType::Sms(tl::types::auth::SentCodeTypeSms { length: 5 });
 
         assert_eq!(
-            LoginCodeDeliveryMethod::from(app),
+            delivery_method_from_sent_code_type(app),
             LoginCodeDeliveryMethod::TelegramApp
         );
         assert_eq!(
-            LoginCodeDeliveryMethod::from(sms),
+            delivery_method_from_sent_code_type(sms),
             LoginCodeDeliveryMethod::Sms
         );
 
