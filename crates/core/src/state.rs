@@ -398,6 +398,9 @@ impl CoreState {
                 self.account.chats = merged;
 
                 let pagination = &mut self.chat_pagination;
+                if first_page {
+                    pagination.consumed_cursors.clear();
+                }
                 if let Some(cursor) = page.requested_cursor.as_ref() {
                     pagination.consumed_cursors.insert(cursor.clone());
                 }
