@@ -30,6 +30,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
@@ -61,6 +67,12 @@ fun VoiceAttachmentCard(
         formatVoiceWaveform(attachment.voiceWaveform.orEmpty())
     }
     val color = MaterialTheme.colorScheme.primary
+    val playbackAccessibility = voicePlaybackAccessibility(
+        playing = playing,
+        positionMs = if (active) playback.positionMs else 0L,
+        durationMs = attachment.durationMs ?: if (active) playback.durationMs else 0L,
+        error = if (active) playback.error else null,
+    )
 
     Surface(
         modifier = modifier.defaultMinSize(minWidth = 224.dp),
@@ -77,13 +89,21 @@ fun VoiceAttachmentCard(
                 IconButton(onClick = { coordinator.toggle(file) }) {
                     Icon(
                         imageVector = if (playing) Icons.Default.Pause else Icons.Default.PlayArrow,
-                        contentDescription = if (playing) "Пауза" else "Воспроизвести голосовое сообщение",
+                        contentDescription = playbackAccessibility.buttonLabel,
                     )
                 }
                 Row(
                     modifier = Modifier
                         .weight(1f)
-                        .height(34.dp),
+                        .height(34.dp)
+                        .semantics {
+                            contentDescription = "Голосовое сообщение"
+                            stateDescription = playbackAccessibility.stateDescription
+                            progressBarRangeInfo = ProgressBarRangeInfo(
+                                playbackAccessibility.progress,
+                                0f..1f,
+                            )
+                        },
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(1.dp),
                 ) {
@@ -99,6 +119,7 @@ fun VoiceAttachmentCard(
                                     .width(2.dp)
                                     .height(height.dp)
                                     .clip(CircleShape)
+                                    .clearAndSetSemantics { }
                                     .background(
                                         if (index.toFloat() / bars.size < progress) color
                                         else MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.45f),
@@ -146,7 +167,13 @@ private fun DownloadStatus(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             CircularProgressIndicator(modifier = Modifier.width(20.dp), strokeWidth = 2.dp)
-            Text("В очереди", style = MaterialTheme.typography.bodySmall)
+            Text(
+                "В очереди",
+                modifier = Modifier.semantics {
+                    contentDescription = voiceDownloadAccessibility(state).description
+                },
+                style = MaterialTheme.typography.bodySmall,
+            )
             TextButton(onClick = onCancel) { Text("Отмена") }
         }
         is MediaDownloadUiState.Downloading -> Row(
@@ -157,8 +184,22 @@ private fun DownloadStatus(
                 ?.takeIf { it > 0L }
                 ?.let { (state.bytesTransferred.toDouble() / it).coerceIn(0.0, 1.0).toFloat() }
             if (fraction != null) {
-                LinearProgressIndicator(progress = { fraction }, modifier = Modifier.width(72.dp))
-                Text("${(fraction * 100).toInt()}%", style = MaterialTheme.typography.labelSmall)
+                val accessibility = voiceDownloadAccessibility(state)
+                LinearProgressIndicator(
+                    progress = { fraction },
+                    modifier = Modifier
+                        .width(72.dp)
+                        .semantics {
+                            contentDescription = accessibility.description
+                            stateDescription = accessibility.description
+                            progressBarRangeInfo = ProgressBarRangeInfo(fraction, 0f..1f)
+                        },
+                )
+                Text(
+                    "${(fraction * 100).toInt()}%",
+                    modifier = Modifier.clearAndSetSemantics { },
+                    style = MaterialTheme.typography.labelSmall,
+                )
             } else {
                 CircularProgressIndicator(modifier = Modifier.width(20.dp), strokeWidth = 2.dp)
                 Text(formatMediaSize(state.bytesTransferred) ?: "Загрузка…", style = MaterialTheme.typography.bodySmall)
@@ -167,32 +208,45 @@ private fun DownloadStatus(
         }
         MediaDownloadUiState.NotDownloaded -> DownloadAction(
             label = "Загрузить голосовое сообщение",
+            accessibilityDescription = voiceDownloadAccessibility(state).description,
             onClick = { onDownload(false) },
         )
         is MediaDownloadUiState.Failed -> DownloadAction(
             label = state.reason ?: "Не удалось скачать · повторить",
+            accessibilityDescription = voiceDownloadAccessibility(state).description,
             onClick = { onDownload(true) },
         )
         MediaDownloadUiState.Cancelled -> DownloadAction(
             label = "Загрузка отменена · повторить",
+            accessibilityDescription = voiceDownloadAccessibility(state).description,
             onClick = { onDownload(true) },
         )
         is MediaDownloadUiState.Downloaded -> DownloadAction(
             label = "Файл удалён из кэша · скачать заново",
+            accessibilityDescription = voiceDownloadAccessibility(state).description,
             onClick = { onDownload(true) },
         )
     }
 }
 
 @Composable
-private fun DownloadAction(label: String, onClick: () -> Unit) {
+private fun DownloadAction(
+    label: String,
+    accessibilityDescription: String,
+    onClick: () -> Unit,
+) {
     Row(
         modifier = Modifier
             .clip(RoundedCornerShape(8.dp))
             .padding(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        TextButton(onClick = onClick) {
+        TextButton(
+            onClick = onClick,
+            modifier = Modifier.semantics {
+                contentDescription = accessibilityDescription
+            },
+        ) {
             Text(label, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
     }
