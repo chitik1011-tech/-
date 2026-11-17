@@ -17,4 +17,36 @@ class NotificationCleanupPolicyTest {
     fun sameAuthorizedSessionHandleRecreationPreservesNotifications() {
         assertFalse(NotificationCleanupPolicy.shouldClearOnAuthorizationChange(true, true, true))
     }
+
+    @Test
+    fun restoredStateClearsOnlyAfterFirstAuthoritativeNonReadySnapshot() {
+        assertFalse(
+            NotificationCleanupPolicy.shouldClearOnRestoredAuthorizationState(
+                restoreWasComplete = false,
+                restoreIsComplete = false,
+                isAuthorized = false,
+            ),
+        )
+        assertTrue(
+            NotificationCleanupPolicy.shouldClearOnRestoredAuthorizationState(
+                restoreWasComplete = false,
+                restoreIsComplete = true,
+                isAuthorized = false,
+            ),
+        )
+        assertFalse(
+            NotificationCleanupPolicy.shouldClearOnRestoredAuthorizationState(
+                restoreWasComplete = false,
+                restoreIsComplete = true,
+                isAuthorized = true,
+            ),
+        )
+        assertFalse(
+            NotificationCleanupPolicy.shouldClearOnRestoredAuthorizationState(
+                restoreWasComplete = true,
+                restoreIsComplete = true,
+                isAuthorized = false,
+            ),
+        )
+    }
 }

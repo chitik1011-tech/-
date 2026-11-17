@@ -25,6 +25,9 @@ pub const MAX_CACHED_PROFILES: usize = 128;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CoreState {
     pub running: bool,
+    /// Runtime-only signal: persisted state has finished loading for this handle.
+    #[serde(skip)]
+    pub restore_complete: bool,
     pub account: AccountState,
     /// Server-provided contact names and stable IDs; phone numbers are never stored here.
     #[serde(default)]
@@ -92,6 +95,7 @@ impl Default for CoreState {
     fn default() -> Self {
         Self {
             running: true,
+            restore_complete: false,
             account: AccountState::default(),
             contacts: ContactBook::default(),
             chat_capabilities: BTreeMap::new(),
@@ -127,6 +131,7 @@ impl CoreState {
         snapshot.profiles.clear();
         snapshot.profile_order.clear();
         snapshot.chat_capabilities.clear();
+        snapshot.restore_complete = false;
         snapshot
     }
 
@@ -137,11 +142,13 @@ impl CoreState {
     fn clear_authenticated_session(&mut self) {
         let connection_machine = self.connection_machine.clone();
         let running = self.running;
+        let restore_complete = self.restore_complete;
         *self = Self::default();
         let connection_state = connection_machine.transport_state();
         self.connection_machine = connection_machine;
         self.connection_state = connection_state;
         self.running = running;
+        self.restore_complete = restore_complete;
     }
     /// Validate persisted or externally constructed state invariants.
     pub fn validate(&self) -> crate::error::Result<()> {
@@ -307,6 +314,9 @@ impl CoreState {
             CoreEvent::AuthorizationChanged(authorization) => {
                 self.account.authorization = authorization.clone();
                 self.last_error = None;
+            }
+            CoreEvent::AuthorizationCodeDeliveryChanged(_) => {
+                // Login delivery metadata is transient UI state, never persisted.
             }
             CoreEvent::ConnectionSessionStarted => {
                 self.connection_machine.start_session();

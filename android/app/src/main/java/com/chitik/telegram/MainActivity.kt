@@ -260,11 +260,12 @@ private fun TelegramRustApp(
     var confirmedJoinIntent by remember(incomingLink) { mutableStateOf<TelegramJoinInviteIntent?>(null) }
 
     when {
-        !state.libraryLoaded -> StartupScreen(state)
+        !authorizationUiCanOpen(state.libraryLoaded, state.sessionRestoreComplete) -> StartupScreen(state)
 
         state.authorization != AuthorizationUiStep.Ready -> AuthorizationScreen(
             state = AuthorizationUiState(
                 authorization = state.authorization,
+                loginCodeDeliveryMethod = state.loginCodeDeliveryMethod,
                 isTelegramConfigured = state.telegramConfigured,
                 isLoading = state.busy,
                 error = state.error,

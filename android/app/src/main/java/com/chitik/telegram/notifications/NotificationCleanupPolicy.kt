@@ -8,4 +8,10 @@ internal object NotificationCleanupPolicy {
         isAuthorizedNow: Boolean,
     ): Boolean = wasAuthorized && authorizationEventParsed && !isAuthorizedNow
 
+    fun shouldClearOnRestoredAuthorizationState(
+        restoreWasComplete: Boolean,
+        restoreIsComplete: Boolean,
+        isAuthorized: Boolean,
+    ): Boolean = !restoreWasComplete && restoreIsComplete && !isAuthorized
+
 }

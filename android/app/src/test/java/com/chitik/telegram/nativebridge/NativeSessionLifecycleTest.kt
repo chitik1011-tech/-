@@ -25,6 +25,9 @@ class NativeSessionLifecycleTest {
         assertTrue(lifecycle.onNativeEvent(second.generation, "state"))
         assertTrue(lifecycle.installHandle(second.generation, 8L))
         assertFalse(lifecycle.onNativeEvent(first.generation, "error"))
+        assertFalse(
+            lifecycle.onNativeEvent(first.generation, "authorization_code_delivery_changed"),
+        )
         assertTrue(lifecycle.onNativeEvent(second.generation, "authorization_changed"))
         assertEquals(8L, lifecycle.currentHandleOrZero())
     }

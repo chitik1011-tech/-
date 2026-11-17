@@ -178,6 +178,32 @@ impl GrammersBackend {
         self.auth.state()
     }
 
+    fn authorization_events(&self, state: AuthorizationState) -> Vec<CoreEvent> {
+        let delivery = if state == AuthorizationState::WaitingForCode {
+            self.auth.login_code_delivery()
+        } else {
+            None
+        };
+        vec![
+            CoreEvent::AuthorizationChanged(state),
+            CoreEvent::AuthorizationCodeDeliveryChanged(delivery),
+        ]
+    }
+
+    fn authorization_error_events(
+        &self,
+        previous_state: AuthorizationState,
+        error: &CoreError,
+    ) -> Option<Vec<CoreEvent>> {
+        let state = self.auth.state();
+        if state == previous_state {
+            return None;
+        }
+        let mut events = self.authorization_events(state);
+        events.push(CoreEvent::Error(error.to_string()));
+        Some(events)
+    }
+
     async fn ensure_update_worker(&mut self) -> tg_mobile_core::Result<()> {
         if self
             .update_task
@@ -802,9 +828,7 @@ impl GrammersBackend {
         self.reliable_send_order.clear();
         self.auth.close();
 
-        Ok(vec![CoreEvent::AuthorizationChanged(
-            AuthorizationState::Closed,
-        )])
+        Ok(self.authorization_events(AuthorizationState::Closed))
     }
 
     async fn shutdown(&mut self) -> tg_mobile_core::Result<Vec<CoreEvent>> {
@@ -841,9 +865,7 @@ impl GrammersBackend {
 
         self.auth.close();
         self.stopped = true;
-        Ok(vec![CoreEvent::AuthorizationChanged(
-            AuthorizationState::Closed,
-        )])
+        Ok(self.authorization_events(AuthorizationState::Closed))
     }
 
     async fn handle_command(
@@ -862,29 +884,52 @@ impl GrammersBackend {
                 if state == AuthorizationState::Ready {
                     self.ensure_update_worker().await?;
                 }
-                vec![CoreEvent::AuthorizationChanged(state)]
+                self.authorization_events(state)
             }
             CoreCommand::Logout => self.logout().await?,
             CoreCommand::SetPhoneNumber(phone) => {
-                let state = self
+                let previous_state = self.auth.state();
+                match self
                     .auth
                     .set_phone_number(&self.client, &self.config.api_hash, phone)
-                    .await?;
-                vec![CoreEvent::AuthorizationChanged(state)]
+                    .await
+                {
+                    Ok(state) => self.authorization_events(state),
+                    Err(error) => match self.authorization_error_events(previous_state, &error) {
+                        Some(events) => events,
+                        None => return Err(error),
+                    },
+                }
             }
             CoreCommand::SubmitCode(code) => {
-                let state = self.auth.submit_code(&self.client, code).await?;
-                if state == AuthorizationState::Ready {
-                    self.ensure_update_worker().await?;
+                let previous_state = self.auth.state();
+                match self.auth.submit_code(&self.client, code).await {
+                    Ok(state) => {
+                        if state == AuthorizationState::Ready {
+                            self.ensure_update_worker().await?;
+                        }
+                        self.authorization_events(state)
+                    }
+                    Err(error) => match self.authorization_error_events(previous_state, &error) {
+                        Some(events) => events,
+                        None => return Err(error),
+                    },
                 }
-                vec![CoreEvent::AuthorizationChanged(state)]
             }
             CoreCommand::SubmitPassword(password) => {
-                let state = self.auth.submit_password(&self.client, password).await?;
-                if state == AuthorizationState::Ready {
-                    self.ensure_update_worker().await?;
+                let previous_state = self.auth.state();
+                match self.auth.submit_password(&self.client, password).await {
+                    Ok(state) => {
+                        if state == AuthorizationState::Ready {
+                            self.ensure_update_worker().await?;
+                        }
+                        self.authorization_events(state)
+                    }
+                    Err(error) => match self.authorization_error_events(previous_state, &error) {
+                        Some(events) => events,
+                        None => return Err(error),
+                    },
                 }
-                vec![CoreEvent::AuthorizationChanged(state)]
             }
             CoreCommand::LoadChats { limit } => {
                 self.require_ready().await?;
