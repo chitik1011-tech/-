@@ -90,6 +90,15 @@ pub(crate) fn spawn_download(
     })
 }
 
+fn validate_cache_size(total_bytes: Option<u64>, cache_limit: u64) -> Result<(), String> {
+    if total_bytes.is_some_and(|total| total > cache_limit) {
+        return Err(format!(
+            "media is larger than the {cache_limit}-byte download cache limit"
+        ));
+    }
+    Ok(())
+}
+
 fn failure_state(
     transfers: &TransferManager,
     token: TransferToken,
@@ -159,6 +168,8 @@ async fn run_download(
         .start_download(queued_token)
         .map_err(|_| "download state changed before it could start".to_owned())?;
 
+    validate_cache_size(target.total_bytes, cache.max_bytes())?;
+
     emit_snapshot(updates, target, transfers, active).await;
 
     // CacheWriter keeps partial bytes in a hidden temporary entry until atomic commit.
@@ -175,7 +186,16 @@ async fn run_download(
     {
         writer
             .write_all(&chunk)
-            .map_err(|_| "could not write downloaded media".to_owned())?;
+            .map_err(|error| {
+                if error.kind() == std::io::ErrorKind::FileTooLarge {
+                    format!(
+                        "media is larger than the {}-byte download cache limit",
+                        cache.max_bytes()
+                    )
+                } else {
+                    "could not write downloaded media".to_owned()
+                }
+            })?;
         transferred = transferred.saturating_add(chunk.len() as u64);
         transfers
             .report_progress(active, transferred)
@@ -282,6 +302,13 @@ mod tests {
                 total_bytes: Some(100),
             }
         );
+    }
+
+    #[test]
+    fn known_media_larger_than_the_cache_is_rejected_before_network_io() {
+        assert!(validate_cache_size(Some(11), 10).is_err());
+        assert!(validate_cache_size(Some(10), 10).is_ok());
+        assert!(validate_cache_size(None, 10).is_ok());
     }
 
     #[test]
