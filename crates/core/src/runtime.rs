@@ -204,11 +204,7 @@ where
                         && reduced_state.connection_machine.phase() == LinkPhase::Synchronizing
                         && reduced_state.account.authorization
                             == crate::model::AuthorizationState::Ready;
-                    if initial_sync
-                        && !events
-                            .iter()
-                            .any(|event| matches!(event, CoreEvent::ChatsLoaded(_)))
-                    {
+                    if initial_sync && !has_initial_chat_sync_result(&events) {
                         events.push(CoreEvent::ConnectionLifecycle {
                             token: current_generation,
                             event: LinkEvent::ConnectFailed { retryable: false },
@@ -671,7 +667,11 @@ where
                     next_op_id = next_op_id.wrapping_add(1).max(1);
                     let generation = reduced_state.connection_machine.token();
                     live_ops.insert(op_id, (generation, command.clone()));
-                    let sync_required = matches!(&command, CoreCommand::LoadChats { .. })
+                    let sync_required = matches!(
+                        &command,
+                        CoreCommand::LoadChats { .. }
+                            | CoreCommand::LoadChatsPage { cursor: None, .. }
+                    )
                         && reduced_state.connection_machine.phase() == LinkPhase::Synchronizing
                         && reduced_state.account.authorization
                             == crate::model::AuthorizationState::Ready;
@@ -1039,6 +1039,13 @@ fn operation_error_events(command: &CoreCommand, error: CoreError) -> Vec<CoreEv
     }
 }
 
+fn has_initial_chat_sync_result(events: &[CoreEvent]) -> bool {
+    events.iter().any(|event| {
+        matches!(event, CoreEvent::ChatsLoaded(_))
+            || matches!(event, CoreEvent::ChatsPageLoaded(page) if page.requested_cursor.is_none())
+    })
+}
+
 fn chat_page_cursor_is_stale(
     pagination: &crate::chat_pagination::ChatPaginationState,
     cursor: &Option<String>,
@@ -1135,6 +1142,27 @@ fn command_capability_error(command: &CoreCommand, state: &CoreState) -> Option<
 mod capability_tests {
     use super::*;
     use crate::{capabilities::ChatCapabilities, command::CoreCommand};
+
+    #[test]
+    fn only_a_successful_first_chat_page_completes_initial_sync() {
+        let first_page = CoreEvent::ChatsPageLoaded(crate::chat_pagination::ChatPage {
+            requested_cursor: None,
+            chats: Vec::new(),
+            next_cursor: Some("peer-1".into()),
+        });
+        assert!(has_initial_chat_sync_result(&[first_page]));
+
+        let later_page = CoreEvent::ChatsPageLoaded(crate::chat_pagination::ChatPage {
+            requested_cursor: Some("peer-1".into()),
+            chats: Vec::new(),
+            next_cursor: None,
+        });
+        assert!(!has_initial_chat_sync_result(&[later_page]));
+        assert!(!has_initial_chat_sync_result(&[CoreEvent::ChatsPageFailed {
+            cursor: None,
+            error: "network down".into(),
+        }]));
+    }
 
     #[test]
     fn pagination_accepts_first_page_refresh_and_rejects_stale_continuation() {
