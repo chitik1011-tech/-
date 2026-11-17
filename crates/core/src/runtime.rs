@@ -1640,14 +1640,21 @@ async fn restore_state<S: StateStore>(
                     state.last_error = Some(error.to_string());
                 }
             }
+            state.restore_complete = true;
             let _ = state_tx.send(state.clone());
             state
         }
-        Ok(None) => CoreState::default(),
+        Ok(None) => {
+            let mut state = CoreState::default();
+            state.restore_complete = true;
+            let _ = state_tx.send(state.clone());
+            state
+        }
         Err(error) => {
             let mut state = CoreState::default();
             let message = error.to_string();
             state.last_error = Some(message.clone());
+            state.restore_complete = true;
             let _ = state_tx.send(state.clone());
             let _ = event_tx.send(CoreEvent::Error(message));
             state

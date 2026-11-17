@@ -53,9 +53,9 @@ pub use mock::MockTelegramBackend;
 pub use model::{
     AccountState, AttachmentDownloadState, AttachmentKind, AttachmentThumbnail, AuthorizationState,
     AvatarReference, ChatActivityKind, ChatFolder, ChatFolderFacts, ChatSummary, Draft,
-    ForwardedFrom, GeoPoint, MediaAttachment, MessageHistoryState, MessageLocation,
-    MessageReaction, MessageReactionType, MessageSummary, PeerKind, PeerPresence, PeerProfile,
-    ReactionRevision, ReadDirection, ReadReceipt, ReplyMetadata, Venue,
+    ForwardedFrom, GeoPoint, LoginCodeDeliveryMethod, MediaAttachment, MessageHistoryState,
+    MessageLocation, MessageReaction, MessageReactionType, MessageSummary, PeerKind, PeerPresence,
+    PeerProfile, ReactionRevision, ReadDirection, ReadReceipt, ReplyMetadata, Venue,
 };
 pub use peer::{
     parse_peer_reference, MessageLink, MessageLinkMetadata, MessageLinkResolution, MessagePeer,
