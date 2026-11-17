@@ -433,7 +433,9 @@ where
                             || (!pagination.loaded && cursor.is_some())
                         {
                             apply_event(
-                                CoreEvent::Error("chat page cursor is stale; reload the current page".into()),
+                                CoreEvent::Error(
+                                    "chat page cursor is stale; reload the current page".into(),
+                                ),
                                 &mut reduced_state,
                                 &state_tx,
                                 &event_tx_task,
