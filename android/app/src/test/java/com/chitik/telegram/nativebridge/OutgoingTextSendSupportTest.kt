@@ -127,6 +127,18 @@ class OutgoingTextSendSupportTest {
     }
 
     @Test
+    fun voiceRecordingErrorsStayScopedToTheirChat() {
+        val recording = VoiceRecordingUiState(chatId = 99L)
+        assertTrue(recording.isRecording)
+        assertNull(recording.errorChatId)
+
+        val failure = VoiceRecordingUiState(error = "microphone unavailable", errorChatId = 99L)
+        assertFalse(failure.isRecording)
+        assertNull(failure.chatId)
+        assertEquals(99L, failure.errorChatId)
+    }
+
+    @Test
     fun unknownSendOutcomeReleasesComposerWithoutMakingTheSendRetryable() {
         val id = 31L
         val pending = NativeUiState(activeTextSendId = id, activeTextSendChatId = 99L, activeTextSendText = "hello")

@@ -62,6 +62,7 @@ data class VoiceRecordingUiState(
     val chatId: Long? = null,
     val durationMs: Long = 0L,
     val error: String? = null,
+    val errorChatId: Long? = null,
 ) {
     val isRecording: Boolean get() = chatId != null
 }
@@ -867,6 +868,12 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
             current.chatCapabilities[chatId]?.canSendMedia == false
         ) return false
 
+        _state.update { state ->
+            if (state.voiceRecording.errorChatId == chatId) {
+                state.copy(voiceRecording = VoiceRecordingUiState())
+            } else state
+        }
+
         when (val result = voiceRecorder.start()) {
             VoiceRecorderResult.RecordingStarted -> {
                 voiceRecordingJob?.cancel()
@@ -894,7 +901,12 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
             }
             is VoiceRecorderResult.Failed -> {
                 _state.update {
-                    it.copy(voiceRecording = VoiceRecordingUiState(error = voiceRecorderFailureMessage(result.reason)))
+                    it.copy(
+                        voiceRecording = VoiceRecordingUiState(
+                            error = voiceRecorderFailureMessage(result.reason),
+                            errorChatId = chatId,
+                        ),
+                    )
                 }
                 return false
             }
@@ -915,7 +927,12 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
             val failure = (result as? VoiceRecorderResult.Failed)?.reason
                 ?: VoiceRecorderFailure.FINALIZATION_FAILED
             _state.update {
-                it.copy(voiceRecording = VoiceRecordingUiState(error = voiceRecorderFailureMessage(failure)))
+                it.copy(
+                    voiceRecording = VoiceRecordingUiState(
+                        error = voiceRecorderFailureMessage(failure),
+                        errorChatId = chatId,
+                    ),
+                )
             }
             return false
         }
@@ -926,7 +943,12 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         ) {
             deletePickedMedia(getApplication(), result.voice.path)
             _state.update {
-                it.copy(voiceRecording = VoiceRecordingUiState(error = "Голосовое сообщение нельзя отправить в этот чат"))
+                it.copy(
+                    voiceRecording = VoiceRecordingUiState(
+                        error = "Голосовое сообщение нельзя отправить в этот чат",
+                        errorChatId = chatId,
+                    ),
+                )
             }
             return false
         }
@@ -936,7 +958,12 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         if (!accepted) {
             deletePickedMedia(getApplication(), media.path)
             _state.update {
-                it.copy(voiceRecording = VoiceRecordingUiState(error = "Не удалось добавить голосовое сообщение в отправку"))
+                it.copy(
+                    voiceRecording = VoiceRecordingUiState(
+                        error = "Не удалось добавить голосовое сообщение в отправку",
+                        errorChatId = chatId,
+                    ),
+                )
             }
         }
         return accepted
@@ -944,8 +971,15 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
 
     /** Cancel the active microphone capture and remove its partial app-private file. */
     fun cancelVoiceRecording(chatId: Long? = null): Boolean {
-        val activeChatId = _state.value.voiceRecording.chatId
-        if (activeChatId == null || (chatId != null && chatId != activeChatId)) return false
+        val recording = _state.value.voiceRecording
+        val activeChatId = recording.chatId
+        if (activeChatId == null) {
+            val errorChatId = recording.errorChatId
+            if (errorChatId == null || (chatId != null && chatId != errorChatId)) return false
+            _state.update { it.copy(voiceRecording = VoiceRecordingUiState()) }
+            return true
+        }
+        if (chatId != null && chatId != activeChatId) return false
         voiceRecordingEpoch++
         voiceRecordingJob?.cancel()
         voiceRecordingJob = null

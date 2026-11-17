@@ -19,7 +19,6 @@ data class PickedOutgoingMedia(
     val videoDurationMs: Long? = null,
     val videoWidth: Int? = null,
     val videoHeight: Int? = null,
-    val voiceDurationMs: Long? = null,
 )
 
 /**
@@ -161,13 +160,12 @@ private fun readPickedVideoMetadata(context: Context, uri: Uri): PickedVideoMeta
     }
 }
 
-/** Deletes only an app-private picked file or voice recording after its send reaches a terminal state. */
+/** Deletes only an app-private media copy after its send reaches a terminal state. */
 internal fun deletePickedMedia(context: Context, path: String) {
     runCatching {
-        val directories = listOf("outgoing-media", "voice-recordings")
-            .map { directory -> File(context.applicationContext.filesDir, directory).canonicalFile }
+        val directory = File(context.applicationContext.filesDir, "outgoing-media").canonicalFile
         val candidate = File(path).canonicalFile
-        if (candidate.parentFile?.let { it in directories } == true && candidate.isFile) {
+        if (candidate.parentFile == directory && candidate.isFile) {
             candidate.delete()
         }
     }
