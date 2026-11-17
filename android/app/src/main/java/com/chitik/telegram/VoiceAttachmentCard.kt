@@ -1,7 +1,6 @@
 package com.chitik.telegram
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -17,9 +16,11 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -43,7 +44,8 @@ import androidx.lifecycle.LifecycleEventObserver
 fun VoiceAttachmentCard(
     attachment: MediaAttachmentUi,
     coordinator: VoicePlaybackCoordinator,
-    onRequestDownload: () -> Unit,
+    onDownload: (retry: Boolean) -> Unit,
+    onCancelDownload: () -> Unit,
     waveform: List<Int> = emptyList(),
     modifier: Modifier = Modifier,
 ) {
@@ -116,7 +118,7 @@ fun VoiceAttachmentCard(
                     error = if (active) playback.error else null,
                 )
             } else {
-                DownloadStatus(attachment.downloadState, onRequestDownload)
+                DownloadStatus(attachment.downloadState, onDownload, onCancelDownload)
             }
         }
     }
@@ -138,27 +140,66 @@ private fun ColumnVoiceTime(positionMs: Long, durationMs: Long, error: String?) 
 }
 
 @Composable
-private fun DownloadStatus(state: MediaDownloadUiState, onRequestDownload: () -> Unit) {
+private fun DownloadStatus(
+    state: MediaDownloadUiState,
+    onDownload: (retry: Boolean) -> Unit,
+    onCancel: () -> Unit,
+) {
     when (state) {
-        MediaDownloadUiState.Queued,
-        is MediaDownloadUiState.Downloading,
-        -> {
+        MediaDownloadUiState.Queued -> Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
             CircularProgressIndicator(modifier = Modifier.width(20.dp), strokeWidth = 2.dp)
-            Text("Загрузка голосового сообщения", style = MaterialTheme.typography.bodySmall)
+            Text("В очереди", style = MaterialTheme.typography.bodySmall)
+            TextButton(onClick = onCancel) { Text("Отмена") }
         }
-        else -> Row(
+        is MediaDownloadUiState.Downloading -> Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            val fraction = state.totalBytes
+                ?.takeIf { it > 0L }
+                ?.let { (state.bytesTransferred.toDouble() / it).coerceIn(0.0, 1.0).toFloat() }
+            if (fraction != null) {
+                LinearProgressIndicator(progress = { fraction }, modifier = Modifier.width(72.dp))
+                Text("${(fraction * 100).toInt()}%", style = MaterialTheme.typography.labelSmall)
+            } else {
+                CircularProgressIndicator(modifier = Modifier.width(20.dp), strokeWidth = 2.dp)
+                Text(formatMediaSize(state.bytesTransferred) ?: "Загрузка…", style = MaterialTheme.typography.bodySmall)
+            }
+            TextButton(onClick = onCancel) { Text("Отмена") }
+        }
+        MediaDownloadUiState.NotDownloaded -> DownloadAction(
+            label = "Загрузить голосовое сообщение",
+            onClick = { onDownload(false) },
+        )
+        is MediaDownloadUiState.Failed -> DownloadAction(
+            label = state.reason ?: "Не удалось скачать · повторить",
+            onClick = { onDownload(true) },
+        )
+        MediaDownloadUiState.Cancelled -> DownloadAction(
+            label = "Загрузка отменена · повторить",
+            onClick = { onDownload(true) },
+        )
+        is MediaDownloadUiState.Downloaded -> DownloadAction(
+            label = "Файл удалён из кэша · скачать заново",
+            onClick = { onDownload(true) },
+        )
+    }
+}
+
+@Composable
+private fun DownloadAction(label: String, onClick: () -> Unit) {
+    Row(
             modifier = Modifier
                 .clip(RoundedCornerShape(8.dp))
-                .clickable(onClick = onRequestDownload)
                 .padding(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                if (state is MediaDownloadUiState.Failed || state == MediaDownloadUiState.Cancelled || state is MediaDownloadUiState.Downloaded) "Повторить загрузку" else "Загрузить голосовое сообщение",
-                style = MaterialTheme.typography.bodySmall,
-            )
+        TextButton(onClick = onClick) {
+            Text(label, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
-    }
 }
 
 /** Convert Telegram's 5-bit samples into a bounded, displayable waveform. */
