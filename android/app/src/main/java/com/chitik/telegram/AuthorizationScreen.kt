@@ -59,6 +59,7 @@ enum class AuthorizationUiStep {
 /** UI projection of the backend-owned authorization state. */
 data class AuthorizationUiState(
     val authorization: AuthorizationUiStep = AuthorizationUiStep.Closed,
+    val loginCodeDeliveryMethod: LoginCodeDeliveryMethod? = null,
     /** Caller-owned configuration readiness, sourced from its runtime config store. */
     val isTelegramConfigured: Boolean = false,
     val isLoading: Boolean = false,
@@ -150,7 +151,7 @@ fun AuthorizationScreen(
     } else when (state.authorization) {
         AuthorizationUiStep.Starting -> "Waiting for the Rust client to initialize."
         AuthorizationUiStep.WaitingForPhoneNumber -> "Enter your number with the country code."
-        AuthorizationUiStep.WaitingForCode -> "Check the Telegram service chat on another signed-in device first. Telegram chooses the delivery method; this app cannot show it or request a resend yet."
+        AuthorizationUiStep.WaitingForCode -> authorizationCodeDeliveryLabel(state.loginCodeDeliveryMethod)
         AuthorizationUiStep.WaitingForPassword -> "Enter your Telegram two-step verification password."
         AuthorizationUiStep.Ready -> "Your Telegram account is connected."
         AuthorizationUiStep.LoggingOut -> "The session is closing."

@@ -14,5 +14,16 @@ pub fn encode_event(event: &CoreEvent) -> Result<String> {
 }
 
 pub fn encode_state(state: &CoreState) -> Result<String> {
-    serde_json::to_string(state).map_err(|error| CoreError::Serialization(error.to_string()))
+    let mut value = serde_json::to_value(state)
+        .map_err(|error| CoreError::Serialization(error.to_string()))?;
+    let Some(object) = value.as_object_mut() else {
+        return Err(CoreError::Serialization(
+            "core state did not serialize as an object".into(),
+        ));
+    };
+    object.insert(
+        "restore_complete".into(),
+        serde_json::Value::Bool(state.restore_complete),
+    );
+    serde_json::to_string(&value).map_err(|error| CoreError::Serialization(error.to_string()))
 }

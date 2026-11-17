@@ -24,6 +24,26 @@ pub enum AuthorizationState {
     Closed,
 }
 
+/// The delivery option Telegram returned with `auth.sendCode`.
+///
+/// This is display-only metadata for the current, in-memory authorization flow.
+/// It must not be persisted with account/session state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LoginCodeDeliveryMethod {
+    TelegramApp,
+    Sms,
+    VoiceCall,
+    FlashCall,
+    MissedCall,
+    FirebaseSms,
+    FragmentSms,
+    SmsWord,
+    SmsPhrase,
+    EmailCode,
+    EmailSetupRequired,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChatSummary {
     pub id: i64,

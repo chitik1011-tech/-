@@ -4,7 +4,7 @@ use grammers_client::{
     sender::InvocationError,
     tl::enums::auth::SentCodeType,
 };
-use tg_mobile_core::{AuthorizationState, CoreError};
+use tg_mobile_core::{AuthorizationState, CoreError, LoginCodeDeliveryMethod};
 
 use crate::error::{TelegramBackendError, auth_api_error};
 
@@ -15,25 +15,6 @@ enum AuthPhase {
     WaitingForCode,
     WaitingForPassword,
     Ready,
-}
-
-/// Telegram's delivery option reported with `auth.sendCode`.
-///
-/// This remains backend-owned until the auth event contract is extended; it
-/// must not be inferred from a successful request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum LoginCodeDeliveryMethod {
-    TelegramApp,
-    Sms,
-    VoiceCall,
-    FlashCall,
-    MissedCall,
-    FirebaseSms,
-    FragmentSms,
-    SmsWord,
-    SmsPhrase,
-    EmailCode,
-    EmailSetupRequired,
 }
 
 impl From<SentCodeType> for LoginCodeDeliveryMethod {
@@ -115,11 +96,14 @@ impl AuthFlow {
             .is_authorized()
             .await
             .map_err(|error| auth_api_error("check authorization", error))?;
-        self.phase = if authorized {
-            AuthPhase::Ready
+        if authorized {
+            self.login_token = None;
+            self.password_token = None;
+            self.login_code_delivery = None;
+            self.phase = AuthPhase::Ready;
         } else {
-            AuthPhase::WaitingForPhoneNumber
-        };
+            self.reset_to_phone_entry();
+        }
         Ok(self.state())
     }
 
@@ -129,6 +113,9 @@ impl AuthFlow {
         api_hash: &str,
         phone: String,
     ) -> tg_mobile_core::Result<AuthorizationState> {
+        // A new phone request replaces the previous token/metadata even if
+        // input validation or the Telegram RPC fails.
+        self.reset_to_phone_entry();
         let phone = normalize_phone_number(&phone)?;
 
         let (token, delivery) = client
@@ -303,13 +290,10 @@ fn normalize_phone_number(input: &str) -> tg_mobile_core::Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        AuthFlow, AuthPhase, LoginCodeDeliveryMethod, login_token_invalidated,
-        normalize_phone_number,
-    };
+    use super::{AuthFlow, AuthPhase, login_token_invalidated, normalize_phone_number};
     use grammers_client::sender::{InvocationError, RpcError};
     use grammers_client::tl;
-    use tg_mobile_core::AuthorizationState;
+    use tg_mobile_core::{AuthorizationState, LoginCodeDeliveryMethod};
 
     #[test]
     fn international_phone_numbers_are_normalized_and_invalid_numbers_rejected() {

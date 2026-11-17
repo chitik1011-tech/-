@@ -628,4 +628,15 @@ mod tests {
             if event.kind() == "message_reactions_updated"
                 && payload.contains("\"chosen_by_me\":true")));
     }
+
+    #[test]
+    fn serializes_telegram_auth_delivery_event_with_stable_event_kind() {
+        let event = CoreEvent::AuthorizationCodeDeliveryChanged(Some(
+            tg_mobile_core::LoginCodeDeliveryMethod::FlashCall,
+        ));
+        let encoded = encode_event(&event);
+        assert!(matches!(encoded, Ok(payload)
+            if event.kind() == "authorization_code_delivery_changed"
+                && payload == r#"{"type":"authorization_code_delivery_changed","payload":"flash_call"}"#));
+    }
 }
