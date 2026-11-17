@@ -1,0 +1,29 @@
+package com.chitik.telegram
+
+/** Only starts recording after permission returns for the still-selected chat. */
+internal fun voiceRecordingChatAfterPermission(
+    granted: Boolean,
+    requestedChatId: Long,
+    selectedChatId: Long,
+    requestedSelectionGeneration: Long,
+    currentSelectionGeneration: Long,
+): Long? = requestedChatId.takeIf {
+    granted && it != 0L && it == selectedChatId &&
+        requestedSelectionGeneration >= 0L && requestedSelectionGeneration == currentSelectionGeneration
+}
+
+/** Invalidates an outstanding permission request as soon as navigation leaves its chat. */
+internal fun pendingVoicePermissionChatAfterNavigation(
+    pendingChatId: Long,
+    selectedChatId: Long,
+): Long = pendingChatId.takeIf { it != 0L && it == selectedChatId } ?: 0L
+
+/** A recording belongs to one chat and must stop before the UI shows a different one. */
+internal fun shouldCancelVoiceRecordingForChatChange(
+    recordingChatId: Long?,
+    selectedChatId: Long,
+): Boolean = recordingChatId != null && recordingChatId != selectedChatId
+
+/** A stale recorder error must not appear in a different chat. */
+internal fun voiceErrorForSelectedChat(error: String?, errorChatId: Long?, selectedChatId: Long): String? =
+    error?.takeIf { errorChatId == selectedChatId }
