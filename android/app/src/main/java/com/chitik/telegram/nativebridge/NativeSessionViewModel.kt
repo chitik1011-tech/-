@@ -26,6 +26,8 @@ import com.chitik.telegram.ConversationPollOptionUi
 import com.chitik.telegram.ConversationPollUi
 import com.chitik.telegram.PeerProfileUi
 import com.chitik.telegram.notifications.NotificationCleanupPolicy
+import com.chitik.telegram.notifications.NotificationCancellation
+import com.chitik.telegram.notifications.NotificationCancellationPolicy
 import com.chitik.telegram.notifications.NotificationEventGate
 import com.chitik.telegram.notifications.NotificationWireParser
 import com.chitik.telegram.notifications.TelegramNotificationPublisher
@@ -1276,6 +1278,23 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
             }
             return
         }
+        if (_state.value.authorization == AuthorizationUiStep.Ready) {
+            when (val cancellation = NotificationCancellationPolicy.fromEvent(type, payload)) {
+                is NotificationCancellation.ReadThrough -> {
+                    notifications.cancelReadThrough(
+                        chatId = cancellation.chatId,
+                        maxMessageId = cancellation.maxMessageId,
+                    )
+                }
+                is NotificationCancellation.MessagesChanged -> {
+                    notifications.cancelForMessages(
+                        chatId = cancellation.chatId,
+                        messageIds = cancellation.messageIds,
+                    )
+                }
+                null -> Unit
+            }
+        }
         val message = notificationEventGate.incoming(
             generation = generation,
             eventType = type,
@@ -1286,6 +1305,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         notifications.publish(
             TelegramNotificationPublisher.IncomingMessage(
                 chatId = message.chatId,
+                messageId = message.messageId,
                 chatTitle = chat?.title ?: "Telegram",
                 body = message.preview,
                 // Core peer IDs are positive for users and negative for groups/channels.
