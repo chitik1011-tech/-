@@ -364,6 +364,97 @@ mod tests {
     }
 
     #[test]
+    fn maps_every_grammers_sent_code_type_exhaustively() {
+        use tl::types::auth as sent_code;
+
+        let cases = [
+            (
+                tl::enums::auth::SentCodeType::App(sent_code::SentCodeTypeApp { length: 5 }),
+                LoginCodeDeliveryMethod::TelegramApp,
+            ),
+            (
+                tl::enums::auth::SentCodeType::Sms(sent_code::SentCodeTypeSms { length: 5 }),
+                LoginCodeDeliveryMethod::Sms,
+            ),
+            (
+                tl::enums::auth::SentCodeType::Call(sent_code::SentCodeTypeCall { length: 5 }),
+                LoginCodeDeliveryMethod::VoiceCall,
+            ),
+            (
+                tl::enums::auth::SentCodeType::FlashCall(sent_code::SentCodeTypeFlashCall {
+                    pattern: "***".into(),
+                }),
+                LoginCodeDeliveryMethod::FlashCall,
+            ),
+            (
+                tl::enums::auth::SentCodeType::MissedCall(sent_code::SentCodeTypeMissedCall {
+                    prefix: "+1".into(),
+                    length: 5,
+                }),
+                LoginCodeDeliveryMethod::MissedCall,
+            ),
+            (
+                tl::enums::auth::SentCodeType::FirebaseSms(
+                    sent_code::SentCodeTypeFirebaseSms {
+                        nonce: None,
+                        play_integrity_project_id: None,
+                        play_integrity_nonce: None,
+                        receipt: None,
+                        push_timeout: None,
+                        length: 5,
+                    },
+                ),
+                LoginCodeDeliveryMethod::FirebaseSms,
+            ),
+            (
+                tl::enums::auth::SentCodeType::FragmentSms(
+                    sent_code::SentCodeTypeFragmentSms {
+                        url: "https://fragment.com".into(),
+                        length: 5,
+                    },
+                ),
+                LoginCodeDeliveryMethod::FragmentSms,
+            ),
+            (
+                tl::enums::auth::SentCodeType::SmsWord(sent_code::SentCodeTypeSmsWord {
+                    beginning: Some("A".into()),
+                }),
+                LoginCodeDeliveryMethod::SmsWord,
+            ),
+            (
+                tl::enums::auth::SentCodeType::SmsPhrase(sent_code::SentCodeTypeSmsPhrase {
+                    beginning: Some("A".into()),
+                }),
+                LoginCodeDeliveryMethod::SmsPhrase,
+            ),
+            (
+                tl::enums::auth::SentCodeType::EmailCode(sent_code::SentCodeTypeEmailCode {
+                    apple_signin_allowed: Some(true),
+                    google_signin_allowed: Some(true),
+                    email_pattern: "a***@example.com".into(),
+                    length: 5,
+                    reset_available_period: None,
+                    reset_pending_date: None,
+                }),
+                LoginCodeDeliveryMethod::EmailCode,
+            ),
+            (
+                tl::enums::auth::SentCodeType::SetUpEmailRequired(
+                    sent_code::SentCodeTypeSetUpEmailRequired {
+                        apple_signin_allowed: Some(true),
+                        google_signin_allowed: Some(true),
+                    },
+                ),
+                LoginCodeDeliveryMethod::EmailSetupRequired,
+            ),
+        ];
+
+        for (sent_code_type, expected) in cases {
+            assert_eq!(delivery_method_from_sent_code_type(sent_code_type), expected);
+        }
+    }
+
+    #[test]
     fn invalid_or_expired_login_hashes_require_a_fresh_phone_entry() {
         for name in [
             "PHONE_CODE_EXPIRED",

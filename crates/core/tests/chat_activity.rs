@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use tg_mobile_core::{
     backend::{backend_update_channel, BackendFuture, BackendUpdateReceiver, TelegramBackend},
-    spawn_core, CoreCommand, CoreEvent, CoreState,
+    spawn_core, CoreCommand, CoreEvent,
 };
 use tokio::time::timeout;
 
@@ -26,6 +26,15 @@ async fn runtime_broadcasts_activity_expiry_without_mutating_core_state() {
     let core = spawn_core(ActivityBackend {
         updates: Some(update_rx),
     });
+
+    timeout(Duration::from_secs(1), async {
+        while !core.state().restore_complete {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the initial persisted state restore completes");
+    let initial_state = core.state();
     let mut events = core.subscribe();
 
     updates
@@ -64,7 +73,7 @@ async fn runtime_broadcasts_activity_expiry_without_mutating_core_state() {
             generation: 1,
         }
     );
-    assert_eq!(core.state(), CoreState::default());
+    assert_eq!(core.state(), initial_state);
 
     core.send(CoreCommand::Shutdown)
         .await
