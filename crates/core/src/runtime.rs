@@ -429,7 +429,8 @@ where
                         if pagination.loading {
                             // Avoid racing two pages requested with the same opaque cursor.
                             skip_backend = true;
-                        } else if (pagination.loaded && pagination.next_cursor.as_ref() != cursor)
+                        } else if (pagination.loaded
+                            && pagination.next_cursor.as_ref() != cursor.as_ref())
                             || (!pagination.loaded && cursor.is_some())
                         {
                             apply_event(
