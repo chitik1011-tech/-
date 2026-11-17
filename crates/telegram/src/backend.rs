@@ -20,7 +20,7 @@ use tg_mobile_core::{
     BackendUpdateSender, ConnectionToken, CoreCommand, CoreError, CoreEvent, DownloadState,
     ForwardMessagesResult, ForwardOutcome, MessageLinkResolution, MessagePeer, MessageSummary,
     OutgoingMediaAttachment, OutgoingSend, PeerReference, PeerResolution, TelegramBackend,
-    TransferDirection, TransferManager, TransferState, TransferToken, UploadState,
+    TransferDirection, TransferError, TransferManager, TransferState, TransferToken, UploadState,
     backend_update_channel,
 };
 use tokio::{
@@ -63,6 +63,23 @@ async fn with_initial_connection_timeout<T>(
     timeout(INITIAL_AUTHORIZATION_CHECK_TIMEOUT, future)
         .await
         .map_err(|_| CoreError::from(TelegramBackendError::InitialConnectionTimeout))?
+}
+
+/// Atomically cancel a download only if it is still active. If completion wins
+/// the race, its pending publication must be allowed to finish instead.
+fn cancel_download_transfer(
+    transfers: &TransferManager,
+    reference: &str,
+) -> Result<Option<TransferToken>, TransferError> {
+    let Some(snapshot) = transfers.get_by_key(TransferDirection::Download, reference)? else {
+        return Ok(None);
+    };
+
+    match transfers.cancel(snapshot.token) {
+        Ok(token) => Ok(Some(token)),
+        Err(TransferError::InvalidTransition { .. } | TransferError::StaleToken) => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -784,6 +801,17 @@ impl GrammersBackend {
     ) -> tg_mobile_core::Result<Vec<CoreEvent>> {
         self.cleanup_media_tasks();
         let key = (chat_id, message_id, attachment_index);
+        let Some(active) = self.media_tasks.get(&key) else {
+            return Ok(Vec::new());
+        };
+        let reference = active.reference.clone();
+        let Some(cancelled) = cancel_download_transfer(&self.transfers, &reference)
+            .map_err(|error| CoreError::Backend(error.to_string()))?
+        else {
+            // Completion or another terminal transition won. Keep the task
+            // alive so it can publish its final event (and retain its cache file).
+            return Ok(Vec::new());
+        };
         let Some(active) = self.media_tasks.remove(&key) else {
             return Ok(Vec::new());
         };
@@ -793,28 +821,13 @@ impl GrammersBackend {
             chat_id,
             message_id,
             attachment_index,
-            reference: active.reference.clone(),
+            reference,
             total_bytes: None,
         };
-        let mut generation = 0;
-        if let Some(snapshot) = self
-            .transfers
-            .get_by_key(TransferDirection::Download, &active.reference)
-            .map_err(|error| CoreError::Backend(error.to_string()))?
-        {
-            generation = snapshot.token.generation;
-            if !snapshot.state.is_terminal() {
-                generation = self
-                    .transfers
-                    .cancel(snapshot.token)
-                    .map_err(|error| CoreError::Backend(error.to_string()))?
-                    .generation;
-            }
-        }
 
         Ok(vec![media_event(
             &target,
-            generation,
+            cancelled.generation,
             AttachmentDownloadState::Cancelled,
         )])
     }
@@ -1828,6 +1841,55 @@ mod initial_connection_timeout_tests {
     async fn completed_initial_authorization_check_preserves_its_result() {
         let result = with_initial_connection_timeout(async { Ok(true) }).await;
         assert!(matches!(result, Ok(true)));
+    }
+}
+
+#[cfg(test)]
+mod download_cancel_race_tests {
+    use tg_mobile_core::{DownloadState, TransferDirection, TransferManager, TransferState};
+
+    use super::cancel_download_transfer;
+
+    #[test]
+    fn completion_wins_cancel_race_and_keeps_downloaded_transfer_terminal() {
+        let transfers = TransferManager::new();
+        let remote = transfers
+            .request(TransferDirection::Download, "completed-but-not-published", Some(8))
+            .unwrap();
+        let queued = transfers.queue_download(remote.token).unwrap();
+        let active = transfers.start_download(queued).unwrap();
+
+        // Model run_download committing the cache entry and completing its
+        // transfer immediately before the CancelMediaDownload command runs,
+        // while its Downloaded update is still awaiting publication.
+        let completed = transfers.complete(active).unwrap();
+        assert_eq!(
+            cancel_download_transfer(&transfers, "completed-but-not-published").unwrap(),
+            None
+        );
+        assert_eq!(
+            transfers.get(completed).unwrap().state,
+            TransferState::Download(DownloadState::Downloaded)
+        );
+    }
+
+    #[test]
+    fn cancellation_wins_while_download_is_still_active() {
+        let transfers = TransferManager::new();
+        let remote = transfers
+            .request(TransferDirection::Download, "active-download", Some(8))
+            .unwrap();
+        let queued = transfers.queue_download(remote.token).unwrap();
+        let active = transfers.start_download(queued).unwrap();
+
+        let cancelled = cancel_download_transfer(&transfers, "active-download")
+            .unwrap()
+            .expect("active download should be cancelled");
+        assert_eq!(cancelled.generation, active.generation + 1);
+        assert_eq!(
+            transfers.get(cancelled).unwrap().state,
+            TransferState::Download(DownloadState::Cancelled)
+        );
     }
 }
 
