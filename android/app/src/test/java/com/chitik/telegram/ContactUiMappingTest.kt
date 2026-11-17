@@ -3,9 +3,35 @@ package com.chitik.telegram
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ContactUiMappingTest {
+    @Test
+    fun loadedContactSearchMatchesNameAndUsernameWithoutCaseSensitivity() {
+        val contacts = listOf(
+            ContactListEntry(1, "Ada Lovelace", "ada_l", isMutual = true),
+            ContactListEntry(2, "Grace Hopper", "compiler", isMutual = false),
+            ContactListEntry(3, "Katherine Johnson", null, isMutual = false),
+        )
+
+        assertEquals(listOf(1L), filterLoadedContacts(contacts, "ADA").map(ContactListEntry::userId))
+        assertEquals(listOf(2L), filterLoadedContacts(contacts, "@COMP").map(ContactListEntry::userId))
+        assertEquals(listOf(3L), filterLoadedContacts(contacts, "johnson").map(ContactListEntry::userId))
+    }
+
+    @Test
+    fun emptyQueryAndNoMatchesAreHandledWithoutChangingLoadedContacts() {
+        val contacts = listOf(
+            ContactListEntry(1, "Ada Lovelace", "ada_l", isMutual = true),
+            ContactListEntry(2, "Grace Hopper", null, isMutual = false),
+        )
+
+        assertEquals(contacts, filterLoadedContacts(contacts, " "))
+        assertEquals(contacts, filterLoadedContacts(contacts, ""))
+        assertTrue(filterLoadedContacts(contacts, "missing").isEmpty())
+    }
+
     @Test
     fun parsesContactsByStableUserIdAndIgnoresUntrustedFields() {
         val state = JSONObject(

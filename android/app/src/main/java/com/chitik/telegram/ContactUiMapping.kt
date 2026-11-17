@@ -2,6 +2,17 @@ package com.chitik.telegram
 
 import org.json.JSONObject
 
+/** Filters only the contacts already present in the current paginated list. */
+internal fun filterLoadedContacts(contacts: List<ContactListEntry>, query: String): List<ContactListEntry> {
+    val normalized = query.trim().removePrefix("@").trim()
+    if (normalized.isEmpty()) return contacts
+
+    return contacts.filter { contact ->
+        contact.displayName.contains(normalized, ignoreCase = true) ||
+            contact.username?.contains(normalized, ignoreCase = true) == true
+    }
+}
+
 /** Parses the canonical Rust contact map without importing any phone-number fields. */
 internal fun parseContactListState(root: JSONObject?): List<ContactListEntry> {
     val byUserId = root?.optJSONObject("by_user_id") ?: return emptyList()

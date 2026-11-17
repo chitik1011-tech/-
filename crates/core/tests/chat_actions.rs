@@ -32,6 +32,32 @@ async fn authorize() -> tg_mobile_core::CoreHandle {
     core
 }
 
+async fn expect_chat_action_event(
+    events: &mut tokio::sync::broadcast::Receiver<CoreEvent>,
+    expected: CoreEvent,
+) {
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            match events
+                .recv()
+                .await
+                .expect("event stream closed before chat action completed")
+            {
+                // LoadChats can publish this after its state snapshot is visible to `load_chats`.
+                // It is unrelated to the action under test; all other unexpected events fail.
+                CoreEvent::ChatCapabilitiesUpdated(_) => {}
+                CoreEvent::Error(error) => {
+                    panic!("chat action emitted an error before {expected:?}: {error:?}")
+                }
+                event if event == expected => return,
+                event => panic!("unexpected event before {expected:?}: {event:?}"),
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("timed out waiting for chat action event {expected:?}"));
+}
+
 #[test]
 fn chat_action_commands_validate_ids_and_round_trip_on_wire() {
     let actions = [
@@ -145,7 +171,7 @@ async fn chat_actions_emit_events_and_update_state_without_optimistic_success() 
 
     for (command, expected) in actions {
         core.send(command).await.unwrap();
-        assert_eq!(events.recv().await.unwrap(), expected);
+        expect_chat_action_event(&mut events, expected).await;
     }
 
     let chat = core.state();
@@ -186,7 +212,7 @@ async fn chat_actions_emit_events_and_update_state_without_optimistic_success() 
         ),
     ] {
         core.send(command).await.unwrap();
-        assert_eq!(events.recv().await.unwrap(), expected);
+        expect_chat_action_event(&mut events, expected).await;
     }
 
     let chat = core.state();

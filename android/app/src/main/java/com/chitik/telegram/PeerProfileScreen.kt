@@ -2,26 +2,27 @@ package com.chitik.telegram
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.Alignment
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import java.io.File
 
@@ -52,79 +53,128 @@ fun PeerProfileDialog(
     loading: Boolean,
     error: String?,
     onDismiss: () -> Unit,
+    /** Returns to the already-open conversation so the user can message this peer. */
+    onMessage: () -> Unit = onDismiss,
 ) {
-    val title = profile?.displayName?.takeIf(String::isNotBlank) ?: "Profile"
+    val presentation = profile?.toPeerProfilePresentation()
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
-            Text(
-                text = "Info",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
-            )
+            if (profile != null && presentation != null) {
+                PeerProfileHeader(profile, presentation)
+            } else {
+                Text("Profile", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+            }
         },
         text = {
             Column(
-                modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 if (loading && profile == null) {
                     CircularProgressIndicator(modifier = Modifier.align(Alignment.CenterHorizontally))
                 }
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                profile?.let { peer ->
-                    if (!peer.avatarLocalPath.isNullOrBlank()) {
-                        AsyncImage(
-                            model = File(peer.avatarLocalPath),
-                            contentDescription = "Profile photo",
-                            modifier = Modifier.size(92.dp).clip(CircleShape).align(Alignment.CenterHorizontally),
-                        )
-                    } else {
-                        AvatarPlaceholder(
-                            displayName = title,
-                            size = 92.dp,
-                            modifier = Modifier.align(Alignment.CenterHorizontally),
-                        )
+                presentation?.let { details ->
+                    details.username?.let { ProfileInfoRow(label = "Username", value = "@$it") }
+                    details.bio?.let { ProfileInfoRow(label = "Bio", value = it) }
+                    details.memberCount?.let { ProfileInfoRow(label = "Members", value = it.toString()) }
+                    if (details.badges.isNotEmpty()) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            details.badges.forEach { label -> ProfileBadge(label) }
+                        }
                     }
-                    Text(
-                        text = title,
-                        style = MaterialTheme.typography.titleLarge,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    peer.presence?.takeIf(String::isNotBlank)?.let { presence ->
+                    if (details.permissions.isNotEmpty()) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                         Text(
-                            presence,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.fillMaxWidth(),
+                            "Available actions",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                        details.permissions.forEach { permission ->
+                            ProfileInfoRow(label = permission.label, value = permission.value)
+                        }
                     }
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                    peer.username?.takeIf(String::isNotBlank)?.let {
-                        ProfileInfoRow(label = "Username", value = "@$it")
-                    }
-                    peer.bio?.takeIf(String::isNotBlank)?.let {
-                        ProfileInfoRow(label = "Bio", value = it)
-                    }
-                    peer.memberCount?.let {
-                        ProfileInfoRow(label = "Members", value = it.toString())
-                    }
-                    if (peer.isVerified == true) ProfileInfoRow("Account", "Verified")
-                    if (peer.isBot == true) ProfileInfoRow("Type", "Bot")
-                    if (peer.isPremium == true) ProfileInfoRow("Telegram", "Premium")
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+        confirmButton = {
+            if (presentation?.canMessage == true) {
+                TextButton(onClick = onMessage) { Text("Message") }
+            } else {
+                TextButton(onClick = onDismiss) { Text("Close") }
+            }
+        },
+        dismissButton = {
+            if (presentation?.canMessage == true) {
+                TextButton(onClick = onDismiss) { Text("Close") }
+            }
+        },
     )
 }
 
 @Composable
+private fun PeerProfileHeader(profile: PeerProfileUi, presentation: PeerProfilePresentation) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (!profile.avatarLocalPath.isNullOrBlank()) {
+            AsyncImage(
+                model = File(profile.avatarLocalPath),
+                contentDescription = "Profile photo",
+                modifier = Modifier.size(76.dp).clip(CircleShape),
+            )
+        } else {
+            AvatarPlaceholder(displayName = presentation.title, size = 76.dp)
+        }
+        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(
+                text = presentation.title,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = presentation.kindLabel,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            presentation.presence?.let { status ->
+                Text(
+                    text = status,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (status == "Online") MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProfileBadge(label: String) {
+    Surface(
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+        shape = CircleShape,
+    ) {
+        Text(
+            text = label,
+            modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+            style = MaterialTheme.typography.labelSmall,
+        )
+    }
+}
+
+@Composable
 private fun ProfileInfoRow(label: String, value: String) {
-    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-        Text(value, style = MaterialTheme.typography.bodyLarge)
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(value, style = MaterialTheme.typography.bodyMedium)
         Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
