@@ -899,9 +899,13 @@ impl GrammersBackend {
             }
             CoreCommand::LoadChatsPage { cursor, limit } => {
                 self.require_ready().await?;
-                let (page, capabilities) =
-                    crate::chats::load_chats_page(&self.client, &self.peers, cursor.as_deref(), limit)
-                        .await?;
+                let (page, capabilities) = crate::chats::load_chats_page(
+                    &self.client,
+                    &self.peers,
+                    cursor.as_deref(),
+                    limit,
+                )
+                .await?;
                 let mut events = vec![CoreEvent::ChatsPageLoaded(page)];
                 events.extend(
                     capabilities
