@@ -25,4 +25,43 @@ class PendingNotificationRouteTest {
         assertEquals(null, restorePendingNotificationChatId(null, null))
         assertEquals(null, restorePendingNotificationChatId(0L, 0L))
     }
+    @Test
+    fun incompleteSessionRestoreKeepsPendingRouteUntilOutcomeIsKnown() {
+        assertEquals(
+            PendingNotificationSessionDecision.WaitForRestore,
+            decidePendingNotificationSessionRestore(
+                restoreComplete = false,
+                authorizationReady = false,
+            ),
+        )
+        assertEquals(
+            PendingNotificationSessionDecision.WaitForRestore,
+            decidePendingNotificationSessionRestore(
+                restoreComplete = false,
+                authorizationReady = true,
+            ),
+        )
+    }
+
+    @Test
+    fun completedReadyRestoreKeepsPendingRoute() {
+        assertEquals(
+            PendingNotificationSessionDecision.KeepPending,
+            decidePendingNotificationSessionRestore(
+                restoreComplete = true,
+                authorizationReady = true,
+            ),
+        )
+    }
+
+    @Test
+    fun completedNonReadyRestoreDiscardsPendingRoute() {
+        assertEquals(
+            PendingNotificationSessionDecision.Discard,
+            decidePendingNotificationSessionRestore(
+                restoreComplete = true,
+                authorizationReady = false,
+            ),
+        )
+    }
 }
