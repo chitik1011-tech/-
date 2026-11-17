@@ -46,7 +46,6 @@ fun VoiceAttachmentCard(
     coordinator: VoicePlaybackCoordinator,
     onDownload: (retry: Boolean) -> Unit,
     onCancelDownload: () -> Unit,
-    waveform: List<Int> = emptyList(),
     modifier: Modifier = Modifier,
 ) {
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -71,7 +70,9 @@ fun VoiceAttachmentCard(
     val file = attachment.downloadedFile
     val active = file != null && playback.filePath == file.absolutePath
     val playing = active && playback.isPlaying
-    val bars = remember(waveform) { formatVoiceWaveform(waveform) }
+    val bars = remember(attachment.voiceWaveform) {
+        formatVoiceWaveform(attachment.voiceWaveform.orEmpty())
+    }
     val color = MaterialTheme.colorScheme.primary
 
     Surface(
@@ -99,17 +100,24 @@ fun VoiceAttachmentCard(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(1.dp),
                 ) {
-                    bars.forEachIndexed { index, height ->
-                        val progress = if (active && playback.durationMs > 0L) {
-                            playback.positionMs.toFloat() / playback.durationMs
-                        } else 0f
-                        Box(
-                            modifier = Modifier
-                                .width(2.dp)
-                                .height(height.dp)
-                                .clip(CircleShape)
-                                .background(if (bars.isNotEmpty() && index.toFloat() / bars.size < progress) color else MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.45f)),
-                        )
+                    if (bars.isEmpty()) {
+                        Text("Голосовое сообщение", style = MaterialTheme.typography.bodySmall)
+                    } else {
+                        bars.forEachIndexed { index, height ->
+                            val progress = if (active && playback.durationMs > 0L) {
+                                playback.positionMs.toFloat() / playback.durationMs
+                            } else 0f
+                            Box(
+                                modifier = Modifier
+                                    .width(2.dp)
+                                    .height(height.dp)
+                                    .clip(CircleShape)
+                                    .background(
+                                        if (index.toFloat() / bars.size < progress) color
+                                        else MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.45f),
+                                    ),
+                            )
+                        }
                     }
                 }
                 ColumnVoiceTime(
@@ -192,17 +200,18 @@ private fun DownloadStatus(
 @Composable
 private fun DownloadAction(label: String, onClick: () -> Unit) {
     Row(
-            modifier = Modifier
-                .clip(RoundedCornerShape(8.dp))
-                .padding(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .padding(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         TextButton(onClick = onClick) {
             Text(label, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
+    }
 }
 
-/** Convert Telegram's 5-bit samples into a bounded, displayable waveform. */
+/** Convert Telegram's amplitude samples into a bounded set of waveform bar heights. */
 internal fun formatVoiceWaveform(samples: List<Int>, maxBars: Int = 48): List<Int> {
     if (samples.isEmpty() || maxBars <= 0) return emptyList()
     val bucketCount = minOf(maxBars, samples.size, 48)

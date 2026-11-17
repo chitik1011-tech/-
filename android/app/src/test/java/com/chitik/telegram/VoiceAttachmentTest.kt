@@ -9,6 +9,17 @@ import org.junit.Test
 
 class VoiceAttachmentTest {
     @Test
+    fun packedTelegramWaveformDecodesFiveBitSamplesWithoutInventingMissingData() {
+        assertEquals(listOf(31, 31, 0), decodeTelegramVoiceWaveform(listOf(255, 3)))
+        assertEquals(emptyList<Int>(), decodeTelegramVoiceWaveform(null))
+        assertEquals(emptyList<Int>(), decodeTelegramVoiceWaveform(emptyList()))
+        assertEquals(emptyList<Int>(), decodeTelegramVoiceWaveform(listOf(-1)))
+        assertEquals(emptyList<Int>(), decodeTelegramVoiceWaveform(listOf(256)))
+        assertEquals(emptyList<Int>(), decodeTelegramVoiceWaveform(List(4097) { 0 }))
+        assertEquals(48, decodeTelegramVoiceWaveform(List(64) { 0xff }).size)
+    }
+
+    @Test
     fun waveformIsBoundedAndHandlesInvalidSamples() {
         assertEquals(emptyList<Int>(), formatVoiceWaveform(emptyList()))
         assertEquals(emptyList<Int>(), formatVoiceWaveform(listOf(1, 2), maxBars = 0))

@@ -10,6 +10,7 @@ use std::collections::BTreeSet;
 pub enum ChatActivityKind {
     Typing,
     RecordingVoice,
+    RecordingVideo,
     UploadingMedia,
 }
 
@@ -517,6 +518,9 @@ pub struct MediaAttachment {
     pub height: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<u64>,
+    /// Raw Telegram 5-bit packed amplitude bytes for voice messages, when supplied.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub voice_waveform: Option<Vec<u8>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub filename: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

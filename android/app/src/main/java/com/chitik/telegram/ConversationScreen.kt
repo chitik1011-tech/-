@@ -46,6 +46,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -57,6 +58,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -157,6 +159,7 @@ data class ConversationScreenState(
     val chatTitle: String,
     val messages: List<ConversationMessageUi>,
     val draft: String,
+    val activityStatus: String? = null,
     val loading: Boolean = false,
     val sending: Boolean = false,
     val sendStatus: String? = null,
@@ -269,6 +272,14 @@ fun ConversationScreen(
     onOpenDocument: (MediaAttachmentUi) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val context = LocalContext.current
+    val voicePlaybackCoordinator = remember(state.chatId) {
+        VoicePlaybackCoordinator.create(context.applicationContext)
+    }
+    DisposableEffect(voicePlaybackCoordinator) {
+        onDispose { voicePlaybackCoordinator.release() }
+    }
+
     val listState = rememberLazyListState()
     var viewerKey by rememberSaveable { mutableStateOf<String?>(null) }
     var missingPinnedTarget by remember(state.chatId, state.selectionGeneration) { mutableStateOf<String?>(null) }
@@ -383,6 +394,15 @@ fun ConversationScreen(
                                     text = "Обновление…",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            state.activityStatus?.let { status ->
+                                Text(
+                                    text = status,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary,
                                 )
                             }
                         }
@@ -692,6 +712,7 @@ fun ConversationScreen(
                         ) { message ->
                             MessageBubble(
                                 message = message,
+                                voicePlaybackCoordinator = voicePlaybackCoordinator,
                                 onPollVote = onPollVote,
                                 pinned = message.id in state.pinnedMessageIds,
                                 pending = message.id in state.pendingPinnedMessageIds,
@@ -887,6 +908,7 @@ fun ConversationScreen(
 @Composable
 private fun MessageBubble(
     message: ConversationMessageUi,
+    voicePlaybackCoordinator: VoicePlaybackCoordinator,
     onPollVote: (ConversationPollUi, List<List<Int>>) -> Unit,
     pinned: Boolean,
     pending: Boolean,
@@ -961,6 +983,7 @@ private fun MessageBubble(
                 message.attachments.forEach { attachment ->
                     MediaAttachmentCard(
                         attachment = attachment,
+                        voicePlaybackCoordinator = voicePlaybackCoordinator,
                         onDownload = { retry -> onDownloadMedia(attachment.index, retry) },
                         onCancel = { onCancelMedia(attachment.index) },
                         onOpenViewer = { onOpenViewer(attachment) },
@@ -1277,6 +1300,7 @@ internal fun pollPercent(voterCount: Int?, totalVoters: Int?): Int? {
 @Composable
 private fun MediaAttachmentCard(
     attachment: MediaAttachmentUi,
+    voicePlaybackCoordinator: VoicePlaybackCoordinator,
     onDownload: (retry: Boolean) -> Unit,
     onCancel: () -> Unit,
     onOpenViewer: () -> Unit,
@@ -1313,6 +1337,13 @@ private fun MediaAttachmentCard(
             onDownload = onDownload,
             onCancel = onCancel,
             onOpen = onOpenViewer,
+        )
+
+        MediaKindUi.Voice -> VoiceAttachmentCard(
+            attachment = attachment,
+            coordinator = voicePlaybackCoordinator,
+            onDownload = onDownload,
+            onCancelDownload = onCancel,
         )
 
         else -> DocumentAttachmentCard(

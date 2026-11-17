@@ -197,6 +197,7 @@ fn photo_attachment(photo: &Photo) -> MediaAttachment {
         width,
         height,
         duration_ms: None,
+        voice_waveform: None,
         filename: None,
         thumbnail: None,
         download_generation: 0,
@@ -225,11 +226,25 @@ fn document_attachment(
         width,
         height,
         duration_ms,
+        voice_waveform: voice_waveform(document),
         filename: document.name().map(str::to_owned),
         thumbnail,
         download_generation: 0,
         download_state: AttachmentDownloadState::NotDownloaded,
     }
+}
+
+fn voice_waveform(document: &Document) -> Option<Vec<u8>> {
+    let tl::enums::Document::Document(raw) = document.raw.document.as_ref()? else {
+        return None;
+    };
+    raw.attributes.iter().find_map(|attribute| match attribute {
+        tl::enums::DocumentAttribute::Audio(audio) if audio.voice => audio
+            .waveform
+            .clone()
+            .filter(|waveform| !waveform.is_empty() && waveform.len() <= 4096),
+        _ => None,
+    })
 }
 
 fn document_kind(document: &Document) -> AttachmentKind {
