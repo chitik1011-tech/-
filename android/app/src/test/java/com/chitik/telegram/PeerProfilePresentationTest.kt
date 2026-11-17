@@ -70,6 +70,31 @@ class PeerProfilePresentationTest {
     }
 
     @Test
+    fun publicUsernameActionsNormalizeUsernameAndBuildSafeTelegramUri() {
+        assertEquals("nina_news", normalizePublicTelegramUsername("  @nina_news  "))
+        assertEquals(
+            PeerProfileUsernameActions("@nina_news", "https://t.me/nina_news"),
+            peerProfileUsernameActions("@nina_news"),
+        )
+        assertEquals(null, peerProfileUsernameActions("@nina"))
+        assertEquals(null, peerProfileUsernameActions("@nina-news"))
+        assertEquals(null, peerProfileUsernameActions("@@nina_news"))
+        assertEquals(null, peerProfileUsernameActions("a".repeat(33)))
+    }
+
+    @Test
+    fun exposesUsernameActionsOnlyForValidPublicUsername() {
+        val publicProfile = profile(username = "@nina_news").toPeerProfilePresentation()
+        assertEquals("nina_news", publicProfile.username)
+        assertEquals("@nina_news", publicProfile.usernameActions?.copyText)
+        assertEquals("https://t.me/nina_news", publicProfile.usernameActions?.uri)
+
+        val invalidProfile = profile(username = "private name").toPeerProfilePresentation()
+        assertEquals(null, invalidProfile.username)
+        assertEquals(null, invalidProfile.usernameActions)
+    }
+
+    @Test
     fun doesNotOfferMessageActionForChannelWithoutSendPermission() {
         assertFalse(profile(kind = "channel").toPeerProfilePresentation().canMessage)
         assertTrue(profile(kind = "channel", canSendMessages = true).toPeerProfilePresentation().canMessage)
