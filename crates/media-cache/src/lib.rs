@@ -86,12 +86,14 @@ impl MediaCache {
                 state,
             }),
         };
-        if is_new_state {
+        {
             let state = cache.lock_state()?;
-            cache.recover_temporary_files()?;
-            // Completed entries survive process restarts. Reapply the current
-            // bound before serving any cache hits, including after a config or
-            // app-version change lowers `max_bytes`.
+            if is_new_state {
+                cache.recover_temporary_files()?;
+            }
+            // Completed entries survive process restarts and may be shared with an
+            // already-open handle in this process. Always apply this handle's current
+            // bound before serving hits, including when configuration lowers it.
             cache.enforce_limit(&state)?;
         }
         Ok(cache)
@@ -621,6 +623,65 @@ mod tests {
 
         assert!(reopened.used_bytes().expect("recovered size") <= 3);
         assert!(reopened.entries().expect("entries").len() <= 1);
+    }
+
+    #[test]
+    fn opening_shared_root_with_lower_limit_reapplies_the_new_bound() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path().join("private-cache");
+        let original = MediaCache::new(CacheConfig {
+            root: root.clone(),
+            max_bytes: 16,
+        })
+        .expect("initial cache");
+        let mut writer = original.begin_write("shared-root-entry").expect("writer");
+        writer.write_all(b"four").expect("write");
+        drop(writer.commit().expect("commit"));
+        assert_eq!(original.used_bytes().expect("initial size"), 4);
+
+        // The original handle keeps shared state alive, so `new` must still
+        // enforce the lower bound requested by the new handle.
+        let smaller =
+            MediaCache::new(CacheConfig { root, max_bytes: 3 }).expect("open smaller cache handle");
+
+        assert_eq!(smaller.used_bytes().expect("smaller size"), 0);
+        assert_eq!(original.used_bytes().expect("shared size"), 0);
+        assert!(smaller.get("shared-root-entry").expect("get").is_none());
+    }
+
+    #[test]
+    fn committed_entry_remains_available_by_reference_after_reopen() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path().join("private-cache");
+        let reference = "legacy-saved-state-reference";
+        let expected_path;
+        {
+            let cache = MediaCache::new(CacheConfig {
+                root: root.clone(),
+                max_bytes: 128,
+            })
+            .expect("initial cache");
+            let mut writer = cache.begin_write(reference).expect("writer");
+            writer.write_all(b"complete media").expect("write");
+            let lease = writer.commit().expect("commit");
+            expected_path = lease.path().to_path_buf();
+            drop(lease);
+        }
+
+        let reopened = MediaCache::new(CacheConfig {
+            root,
+            max_bytes: 128,
+        })
+        .expect("reopen cache");
+        let lease = reopened
+            .get_with_expected_size(reference, Some(14))
+            .expect("get")
+            .expect("persisted cache hit");
+        assert_eq!(lease.path(), expected_path);
+        assert_eq!(
+            fs::read(lease.path()).expect("read media"),
+            b"complete media"
+        );
     }
 
     #[test]
