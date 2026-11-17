@@ -6,6 +6,7 @@ use std::{
 use crate::{
     backend::{BackendFuture, TelegramBackend},
     capabilities::{CapabilityValue, ChatCapabilities, ChatKind},
+    chat_pagination::ChatPage,
     command::CoreCommand,
     error::{CoreError, Result},
     event::CoreEvent,
@@ -125,6 +126,36 @@ impl MockTelegramBackend {
                         .into_iter()
                         .map(|chat| CoreEvent::ChatCapabilitiesUpdated(mock_capabilities(chat.id))),
                 );
+                Ok(events)
+            }
+            CoreCommand::LoadChatsPage { cursor, limit } => {
+                let offset = match cursor.as_deref() {
+                    None => 0,
+                    Some(value) => self
+                        .chats
+                        .iter()
+                        .position(|chat| chat.id.to_string() == value)
+                        .map(|index| index + 1)
+                        .ok_or_else(|| CoreError::InvalidInput("stale chat cursor".into()))?,
+                };
+                let chats = self
+                    .chats
+                    .iter()
+                    .skip(offset)
+                    .take(limit)
+                    .cloned()
+                    .collect::<Vec<_>>();
+                let has_more = offset.saturating_add(chats.len()) < self.chats.len();
+                let next_cursor = has_more.then(|| chats.last().map(|chat| chat.id.to_string())).flatten();
+                let page = ChatPage {
+                    requested_cursor: cursor,
+                    chats: chats.clone(),
+                    next_cursor,
+                };
+                let mut events = vec![CoreEvent::ChatsPageLoaded(page)];
+                events.extend(chats.into_iter().map(|chat| {
+                    CoreEvent::ChatCapabilitiesUpdated(mock_capabilities(chat.id))
+                }));
                 Ok(events)
             }
             CoreCommand::LoadProfile { peer_id } => Ok(vec![CoreEvent::ProfileUpdated(
