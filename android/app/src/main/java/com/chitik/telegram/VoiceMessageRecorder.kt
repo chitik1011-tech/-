@@ -57,9 +57,7 @@ sealed interface VoiceRecorderResult {
 class VoiceMessageRecorder(context: Context) : AutoCloseable {
     private val appContext = context.applicationContext
     private val controller = VoiceRecordingController(
-        // Keep recordings in the same private directory used by the reliable media outbox so
-        // its existing terminal-state cleanup owns the file lifecycle.
-        outputDirectory = File(appContext.filesDir, "outgoing-media"),
+        outputDirectory = File(appContext.filesDir, "voice-recordings"),
         apiLevel = Build.VERSION.SDK_INT,
         hasMicrophonePermission = {
             ContextCompat.checkSelfPermission(
