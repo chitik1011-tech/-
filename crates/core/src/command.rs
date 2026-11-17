@@ -90,6 +90,9 @@ pub enum CoreCommand {
     SendTextReliable {
         client_id: i64,
         chat_id: i64,
+        /// Optional Telegram message ID to reply to; kept in the durable outbox.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reply_to_message_id: Option<i64>,
         text: String,
     },
     /// Upload and send one photo, video or document through the durable send outbox.
@@ -382,6 +385,7 @@ impl CoreCommand {
             Self::SendTextReliable {
                 client_id,
                 chat_id,
+                reply_to_message_id,
                 text,
             } => {
                 if *client_id <= 0 {
@@ -390,6 +394,11 @@ impl CoreCommand {
                     ));
                 }
                 validate_chat_id(*chat_id)?;
+                if reply_to_message_id.is_some_and(|message_id| message_id <= 0) {
+                    return Err(CoreError::InvalidInput(
+                        "reply target must be a positive message id".into(),
+                    ));
+                }
                 require_non_blank("message text", text)
             }
             Self::SendMediaReliable {
