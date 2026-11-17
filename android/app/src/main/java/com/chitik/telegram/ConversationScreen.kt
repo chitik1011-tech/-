@@ -60,6 +60,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -758,6 +761,7 @@ fun ConversationScreen(
                                 reactionPending = "${message.chatId}:${message.id}" in state.pendingReactionKeys,
                                 reactionError = state.reactionErrors["${message.chatId}:${message.id}"],
                                 onReaction = { reaction -> onReaction(message.chatId, message.id, reaction) },
+                                selectionMode = selectionActive,
                                 selected = message.id.toLongOrNull()?.let { it in selectedMessageIds } == true,
                                 onClick = {
                                     message.id.toLongOrNull()?.let { id ->
@@ -942,10 +946,12 @@ private fun MessageBubble(
     reactionPending: Boolean,
     reactionError: String?,
     onReaction: (ConversationReactionUi?) -> Unit,
+    selectionMode: Boolean,
     selected: Boolean,
     onClick: () -> Unit,
     onLongPress: () -> Unit,
 ) {
+    val selectedForSemantics = selected
     message.serviceAction?.let { action ->
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
             Surface(
@@ -969,7 +975,16 @@ private fun MessageBubble(
         Surface(
             modifier = Modifier
                 .fillMaxWidth(0.86f)
-                .combinedClickable(onClick = onClick, onLongClick = onLongPress),
+                .combinedClickable(
+                    onClickLabel = messageClickAccessibilityLabel(selectionMode),
+                    onLongClickLabel = messageContextActionLabel(selectionMode),
+                    onClick = onClick,
+                    onLongClick = onLongPress,
+                )
+                .semantics {
+                    contentDescription = messageBubbleAccessibilityLabel(message)
+                    if (selectionMode) this.selected = selectedForSemantics
+                },
             shape = RoundedCornerShape(
                 topStart = TelegramUiTokens.messageCorner,
                 topEnd = TelegramUiTokens.messageCorner,
