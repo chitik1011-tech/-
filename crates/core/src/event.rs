@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     capabilities::ChatCapabilities,
+    chat_pagination::ChatPage,
     connection::ConnectionState,
     connection_machine::{ConnectionToken, LinkEvent},
     contacts::Contact,
@@ -12,7 +13,6 @@ use crate::{
     },
     peer::PeerResolution,
     poll::PollSummary,
-    chat_pagination::ChatPage,
     search::{MessageSearchPage, SearchMessagesRequest},
     send::OutgoingSend,
 };
