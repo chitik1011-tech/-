@@ -20,9 +20,6 @@ internal const val TELEGRAM_MESSAGE_NOTIFICATION_TAG_PREFIX = "telegram_chat_"
  * navigation changes.
  */
 class TelegramNotificationPublisher(context: Context) {
-    @Volatile
-    private var previewPolicy = DEFAULT_NOTIFICATION_PREVIEW_POLICY
-
     private val appContext = context.applicationContext
     private val notificationManager =
         appContext.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
@@ -44,11 +41,6 @@ class TelegramNotificationPublisher(context: Context) {
         val senderName: String? = null,
         val timestampMillis: Long = System.currentTimeMillis(),
     )
-
-    /** Changes only the Android presentation of future notifications. */
-    internal fun setPreviewPolicy(policy: NotificationPreviewPolicy) {
-        previewPolicy = policy
-    }
 
     /** Marks the currently visible chat; its incoming events are not shown as notifications. */
     fun setVisibleChat(chatId: Long?) {
@@ -88,11 +80,7 @@ class TelegramNotificationPublisher(context: Context) {
         } else {
             message.senderName?.takeIf(String::isNotBlank) ?: message.chatTitle
         }.ifBlank { "Telegram" }
-        val presentation = notificationPresentation(
-            policy = previewPolicy,
-            title = title,
-            body = message.body,
-        )
+        val presentation = notificationPresentation(title = title, body = message.body)
 
         val notification = Notification.Builder(appContext, channelId)
             .setSmallIcon(android.R.drawable.sym_action_chat)
