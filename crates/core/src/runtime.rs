@@ -429,10 +429,7 @@ where
                         if pagination.loading {
                             // Avoid racing two pages requested with the same opaque cursor.
                             skip_backend = true;
-                        } else if (pagination.loaded
-                            && pagination.next_cursor.as_ref() != cursor.as_ref())
-                            || (!pagination.loaded && cursor.is_some())
-                        {
+                        } else if chat_page_cursor_is_stale(pagination, cursor) {
                             apply_event(
                                 CoreEvent::Error(
                                     "chat page cursor is stale; reload the current page".into(),
@@ -1042,6 +1039,19 @@ fn operation_error_events(command: &CoreCommand, error: CoreError) -> Vec<CoreEv
     }
 }
 
+fn chat_page_cursor_is_stale(
+    pagination: &crate::chat_pagination::ChatPaginationState,
+    cursor: &Option<String>,
+) -> bool {
+    if pagination.loaded {
+        cursor
+            .as_ref()
+            .is_some_and(|cursor| pagination.next_cursor.as_ref() != Some(cursor))
+    } else {
+        cursor.is_some()
+    }
+}
+
 fn command_capability_error(command: &CoreCommand, state: &CoreState) -> Option<String> {
     // Unauthenticated requests must retain the backend's authorization error;
     // no session-bound rights exist to consult until authorization completes.
@@ -1125,6 +1135,24 @@ fn command_capability_error(command: &CoreCommand, state: &CoreState) -> Option<
 mod capability_tests {
     use super::*;
     use crate::{capabilities::ChatCapabilities, command::CoreCommand};
+
+    #[test]
+    fn pagination_accepts_first_page_refresh_and_rejects_stale_continuation() {
+        let pagination = crate::chat_pagination::ChatPaginationState {
+            loaded: true,
+            next_cursor: Some("current".into()),
+            ..Default::default()
+        };
+        assert!(!chat_page_cursor_is_stale(&pagination, &None));
+        assert!(!chat_page_cursor_is_stale(
+            &pagination,
+            &Some("current".into())
+        ));
+        assert!(chat_page_cursor_is_stale(
+            &pagination,
+            &Some("expired".into())
+        ));
+    }
 
     fn allowed(chat_id: i64) -> ChatCapabilities {
         let mut capabilities = ChatCapabilities {
