@@ -186,11 +186,7 @@ pub(crate) fn spawn_media_send(
             session_epoch,
         };
         let uploaded: Uploaded = match client
-            .upload_stream(
-                &mut reader,
-                upload_size,
-                media.file_name.clone(),
-            )
+            .upload_stream(&mut reader, upload_size, media.file_name.clone())
             .await
         {
             Ok(uploaded) => uploaded,
