@@ -46,6 +46,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -57,12 +58,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.chitik.telegram.nativebridge.OutgoingTextSendUi
 import java.util.Locale
 import kotlin.math.roundToInt
@@ -270,6 +275,26 @@ fun ConversationScreen(
     onOpenDocument: (MediaAttachmentUi) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val context = LocalContext.current
+    val voicePlaybackCoordinator = remember(state.chatId) {
+        VoicePlaybackCoordinator.create(context.applicationContext)
+    }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(voicePlaybackCoordinator, lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_STOP -> voicePlaybackCoordinator.onHostStop()
+                Lifecycle.Event.ON_START -> voicePlaybackCoordinator.onHostStart()
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            voicePlaybackCoordinator.release()
+        }
+    }
+
     val listState = rememberLazyListState()
     var viewerKey by rememberSaveable { mutableStateOf<String?>(null) }
     var missingPinnedTarget by remember(state.chatId, state.selectionGeneration) { mutableStateOf<String?>(null) }
@@ -702,6 +727,7 @@ fun ConversationScreen(
                         ) { message ->
                             MessageBubble(
                                 message = message,
+                                voicePlaybackCoordinator = voicePlaybackCoordinator,
                                 onPollVote = onPollVote,
                                 pinned = message.id in state.pinnedMessageIds,
                                 pending = message.id in state.pendingPinnedMessageIds,
@@ -897,6 +923,7 @@ fun ConversationScreen(
 @Composable
 private fun MessageBubble(
     message: ConversationMessageUi,
+    voicePlaybackCoordinator: VoicePlaybackCoordinator,
     onPollVote: (ConversationPollUi, List<List<Int>>) -> Unit,
     pinned: Boolean,
     pending: Boolean,
@@ -971,6 +998,7 @@ private fun MessageBubble(
                 message.attachments.forEach { attachment ->
                     MediaAttachmentCard(
                         attachment = attachment,
+                        voicePlaybackCoordinator = voicePlaybackCoordinator,
                         onDownload = { retry -> onDownloadMedia(attachment.index, retry) },
                         onCancel = { onCancelMedia(attachment.index) },
                         onOpenViewer = { onOpenViewer(attachment) },
@@ -1287,6 +1315,7 @@ internal fun pollPercent(voterCount: Int?, totalVoters: Int?): Int? {
 @Composable
 private fun MediaAttachmentCard(
     attachment: MediaAttachmentUi,
+    voicePlaybackCoordinator: VoicePlaybackCoordinator,
     onDownload: (retry: Boolean) -> Unit,
     onCancel: () -> Unit,
     onOpenViewer: () -> Unit,
@@ -1323,6 +1352,13 @@ private fun MediaAttachmentCard(
             onDownload = onDownload,
             onCancel = onCancel,
             onOpen = onOpenViewer,
+        )
+
+        MediaKindUi.Voice -> VoiceAttachmentCard(
+            attachment = attachment,
+            coordinator = voicePlaybackCoordinator,
+            onDownload = onDownload,
+            onCancelDownload = onCancel,
         )
 
         else -> DocumentAttachmentCard(

@@ -13,6 +13,7 @@ fn media(kind: AttachmentKind) -> MediaAttachment {
         width: Some(120),
         height: Some(80),
         duration_ms: Some(1_250),
+        voice_waveform: None,
         filename: Some("media.webp".into()),
         thumbnail: Some(AttachmentThumbnail {
             file_reference: "thumbnail-reference".into(),
@@ -24,6 +25,26 @@ fn media(kind: AttachmentKind) -> MediaAttachment {
         download_generation: 0,
         download_state: AttachmentDownloadState::NotDownloaded,
     }
+}
+
+#[test]
+fn optional_voice_waveform_round_trips_without_breaking_legacy_media() {
+    let mut attachment = media(AttachmentKind::Voice);
+    attachment.voice_waveform = Some(vec![0xff, 0x03]);
+    let encoded = serde_json::to_value(&attachment).expect("serialize voice media");
+    assert_eq!(encoded["voice_waveform"], json!([255, 3]));
+    assert_eq!(
+        serde_json::from_value::<MediaAttachment>(encoded).expect("deserialize voice media"),
+        attachment,
+    );
+
+    let mut legacy = serde_json::to_value(media(AttachmentKind::Voice)).expect("serialize media");
+    legacy
+        .as_object_mut()
+        .expect("media object")
+        .remove("voice_waveform");
+    let decoded = serde_json::from_value::<MediaAttachment>(legacy).expect("legacy media");
+    assert_eq!(decoded.voice_waveform, None);
 }
 
 #[test]

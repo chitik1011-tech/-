@@ -38,6 +38,7 @@ data class MediaAttachmentUi(
     val durationMs: Long?,
     val filename: String?,
     val downloadState: MediaDownloadUiState,
+    val voiceWaveform: List<Int>? = null,
 ) {
     val aspectRatio: Float?
         get() {

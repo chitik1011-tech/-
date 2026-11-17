@@ -1985,6 +1985,12 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                         .takeIf { it.has("duration_ms") && !it.isNull("duration_ms") }
                         ?.optLong("duration_ms")
                         ?.takeIf { it >= 0L },
+                    voiceWaveform = attachment.optJSONArray("voice_waveform")?.let { waveform ->
+                        if (waveform.length() !in 1..4096) return@let null
+                        decodeTelegramVoiceWaveform(
+                            (0 until waveform.length()).map { waveform.optInt(it, -1) },
+                        ).takeIf { it.isNotEmpty() }
+                    },
                     filename = attachment
                         .optString("filename")
                         .takeIf { it.isNotBlank() },
