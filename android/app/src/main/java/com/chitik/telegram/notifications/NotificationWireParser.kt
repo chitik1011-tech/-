@@ -19,8 +19,7 @@ internal object NotificationWireParser {
         if (payload.length > MAX_PAYLOAD_LENGTH) return null
         return runCatching {
             val root = JSONObject(payload)
-            val eventType = root.opt("type")
-            if (eventType != null && eventType != "message_added") return@runCatching null
+            if (root.opt("type") != "message_added") return@runCatching null
             val message = root.optJSONObject("payload") ?: return@runCatching null
             val outgoing = message.opt("outgoing") as? Boolean ?: return@runCatching null
             val chatId = message.longOrNull("chat_id") ?: return@runCatching null

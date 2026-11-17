@@ -22,16 +22,16 @@ class NotificationWireParserTest {
     @Test
     fun parsesMediaAndServiceFallbacksAndPrefersCaptions() {
         val photo = NotificationWireParser.parseLiveMessage(
-            """{"payload":{"id":4,"chat_id":2,"outgoing":false,"attachments":[{"kind":"photo"}]}}""",
+            """{"type":"message_added","payload":{"id":4,"chat_id":2,"outgoing":false,"attachments":[{"kind":"photo"}]}}""",
         )
         val captioned = NotificationWireParser.parseLiveMessage(
-            """{"payload":{"id":5,"chat_id":2,"outgoing":false,"text":"","media_caption":"Caption","attachments":[{"kind":"video"}]}}""",
+            """{"type":"message_added","payload":{"id":5,"chat_id":2,"outgoing":false,"text":"","media_caption":"Caption","attachments":[{"kind":"video"}]}}""",
         )
         val location = NotificationWireParser.parseLiveMessage(
-            """{"payload":{"id":6,"chat_id":2,"outgoing":false,"location":{"kind":"location"}}}""",
+            """{"type":"message_added","payload":{"id":6,"chat_id":2,"outgoing":false,"location":{"kind":"location"}}}""",
         )
         val service = NotificationWireParser.parseLiveMessage(
-            """{"payload":{"id":7,"chat_id":2,"outgoing":false,"service_message":true}}""",
+            """{"type":"message_added","payload":{"id":7,"chat_id":2,"outgoing":false,"service_message":true}}""",
         )
 
         assertEquals("Photo", photo?.preview)
@@ -47,13 +47,14 @@ class NotificationWireParserTest {
             "not-json",
             "{}",
             """{"type":"message_edited","payload":{"id":1,"chat_id":2,"outgoing":false}}""",
-            """{"payload":{}}""",
-            """{"payload":{"id":1,"chat_id":2,"outgoing":"false"}}""",
-            """{"payload":{"id":1,"chat_id":2,"outgoing":null}}""",
-            """{"payload":{"id":"1","chat_id":2,"outgoing":false}}""",
-            """{"payload":{"id":1.5,"chat_id":2,"outgoing":false}}""",
-            """{"payload":{"id":0,"chat_id":2,"outgoing":false}}""",
-            """{"payload":{"id":1,"chat_id":0,"outgoing":false}}""",
+            """{"payload":{"id":1,"chat_id":2,"outgoing":false}}""",
+            """{"type":"message_added","payload":{}}""",
+            """{"type":"message_added","payload":{"id":1,"chat_id":2,"outgoing":"false"}}""",
+            """{"type":"message_added","payload":{"id":1,"chat_id":2,"outgoing":null}}""",
+            """{"type":"message_added","payload":{"id":"1","chat_id":2,"outgoing":false}}""",
+            """{"type":"message_added","payload":{"id":1.5,"chat_id":2,"outgoing":false}}""",
+            """{"type":"message_added","payload":{"id":0,"chat_id":2,"outgoing":false}}""",
+            """{"type":"message_added","payload":{"id":1,"chat_id":0,"outgoing":false}}""",
         )
 
         invalid.forEach { payload ->
@@ -66,7 +67,7 @@ class NotificationWireParserTest {
     fun parsesOutgoingForPlannerAndBoundsNotificationPreview() {
         val longText = "x".repeat(300)
         val parsed = NotificationWireParser.parseLiveMessage(
-            """{"payload":{"id":77,"chat_id":4,"outgoing":true,"text":"$longText"}}""",
+            """{"type":"message_added","payload":{"id":77,"chat_id":4,"outgoing":true,"text":"$longText"}}""",
         )
 
         assertTrue(parsed?.outgoing == true)
