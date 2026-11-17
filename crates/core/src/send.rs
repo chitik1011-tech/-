@@ -13,6 +13,8 @@ pub const MAX_OUTGOING_MEDIA_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 pub enum OutgoingMediaKind {
     Photo,
     Video,
+    /// Ogg/Opus audio sent as a Telegram voice message.
+    Voice,
     Document,
 }
 
@@ -24,6 +26,9 @@ pub struct OutgoingMediaAttachment {
     pub file_name: String,
     pub mime_type: String,
     pub size_bytes: u64,
+    /// Voice recording length in milliseconds. Telegram stores voice duration in seconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub voice_duration_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub video_duration_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -63,6 +68,23 @@ impl OutgoingMediaAttachment {
                 || self.video_height.is_some())
         {
             return Err("video metadata can only be set for video media".into());
+        }
+        if self.kind != OutgoingMediaKind::Voice && self.voice_duration_ms.is_some() {
+            return Err("voice duration can only be set for voice media".into());
+        }
+        if self.kind == OutgoingMediaKind::Voice {
+            if !self.mime_type.eq_ignore_ascii_case("audio/ogg") {
+                return Err("voice media must use the audio/ogg MIME type".into());
+            }
+            if !self.file_name.to_ascii_lowercase().ends_with(".ogg") {
+                return Err("voice media file name must end in .ogg".into());
+            }
+            if !self
+                .voice_duration_ms
+                .is_some_and(|duration| (1_000..=48 * 60 * 60 * 1_000).contains(&duration))
+            {
+                return Err("voice duration must be between 1000 ms and 48 hours".into());
+            }
         }
         if self
             .video_duration_ms
@@ -417,6 +439,7 @@ mod tests {
             file_name: "photo.jpg".into(),
             mime_type: "image/jpeg".into(),
             size_bytes: 512,
+            voice_duration_ms: None,
             video_duration_ms: None,
             video_width: None,
             video_height: None,
@@ -456,12 +479,42 @@ mod tests {
     }
 
     #[test]
+    fn voice_metadata_requires_ogg_and_bounded_duration() {
+        let mut voice = valid_media();
+        voice.kind = OutgoingMediaKind::Voice;
+        voice.file_name = "note.ogg".into();
+        voice.mime_type = "audio/ogg".into();
+        voice.voice_duration_ms = Some(1_250);
+        assert!(voice.validate().is_ok());
+        voice.voice_duration_ms = Some(999);
+        assert!(voice.validate().is_err());
+        voice.voice_duration_ms = Some(48 * 60 * 60 * 1_000 + 1);
+        assert!(voice.validate().is_err());
+        voice.voice_duration_ms = Some(5_000);
+        voice.mime_type = "audio/mpeg".into();
+        assert!(voice.validate().is_err());
+        voice.mime_type = "audio/ogg".into();
+        voice.file_name = "note.mp3".into();
+        assert!(voice.validate().is_err());
+    }
+
+    #[test]
     fn media_retries_match_complete_payload() {
         let media = valid_media();
         let send = OutgoingSend::uploading_media(7, 42, media.clone(), "caption", 10, 2);
         assert!(send.same_media_request(42, &media, "caption"));
         assert!(!send.same_media_request(42, &media, "different"));
         assert!(!send.same_media_request(43, &media, "caption"));
+
+        let mut voice = media.clone();
+        voice.kind = OutgoingMediaKind::Voice;
+        voice.file_name = "voice.ogg".into();
+        voice.mime_type = "audio/ogg".into();
+        voice.voice_duration_ms = Some(3_250);
+        let voice_send = OutgoingSend::uploading_media(8, 42, voice.clone(), "caption", 10, 2);
+        assert!(voice_send.same_media_request(42, &voice, "caption"));
+        voice.voice_duration_ms = Some(3_500);
+        assert!(!voice_send.same_media_request(42, &voice, "caption"));
     }
 
     #[test]
