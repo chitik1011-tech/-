@@ -1,6 +1,4 @@
-use std::{
-    collections::BTreeMap, future::Future, pin::Pin, sync::Arc, time::Duration,
-};
+use std::{collections::BTreeMap, future::Future, pin::Pin, sync::Arc, time::Duration};
 
 use grammers_client::{
     Client, InvocationError, client::UpdateStream, sender::UpdatesConfiguration,
@@ -8,9 +6,9 @@ use grammers_client::{
 };
 pub use tg_mobile_core::ConnectionState;
 use tg_mobile_core::{
-    BackendUpdateSender, ChatActivityKind, ConnectionToken, CoreError, CoreEvent, LinkEvent,
-    MessageReaction, MessageSummary, PollSummary, ReactionRevision, ReadDirection,
-    DEFAULT_CHAT_ACTIVITY_TTL_MS,
+    BackendUpdateSender, ChatActivityKind, ConnectionToken, CoreError, CoreEvent,
+    DEFAULT_CHAT_ACTIVITY_TTL_MS, LinkEvent, MessageReaction, MessageSummary, PollSummary,
+    ReactionRevision, ReadDirection,
 };
 use tokio::sync::{broadcast, mpsc, watch};
 use tokio::time::sleep;
@@ -261,11 +259,7 @@ fn map_raw_activity_update(
                 tl::enums::Peer::User(peer) => peer.user_id,
                 _ => return None,
             };
-            generations.update(
-                -update.chat_id,
-                sender_id,
-                activity_signal(&update.action),
-            )
+            generations.update(-update.chat_id, sender_id, activity_signal(&update.action))
         }
         RawUpdate::ChannelUserTyping(update) => {
             if update.channel_id <= 0 {
@@ -850,12 +844,11 @@ async fn map_update(
         Update::Raw(raw) => match &raw.raw {
             tl::enums::Update::UserTyping(_)
             | tl::enums::Update::ChatUserTyping(_)
-            | tl::enums::Update::ChannelUserTyping(_) => Ok(map_raw_activity_update(
-                &raw.raw,
-                activity_generations,
-            )
-            .into_iter()
-            .collect()),
+            | tl::enums::Update::ChannelUserTyping(_) => {
+                Ok(map_raw_activity_update(&raw.raw, activity_generations)
+                    .into_iter()
+                    .collect())
+            }
             tl::enums::Update::MessagePoll(update) => Ok(poll_from_update(update, polls)
                 .await?
                 .map(TelegramUpdate::PollUpdated)
@@ -952,13 +945,12 @@ mod tests {
     use grammers_client::{InvocationError, sender::RpcError};
     use tokio::sync::watch;
 
-    use super::{ConnectionState, TelegramUpdate, map_raw_pinned_update};
     use super::{
-        ActivityGenerations, ActivitySignal, NextOutcome, RetryBackoff,
-        UPDATE_RETRY_INITIAL_DELAY, UPDATE_RETRY_MAX_DELAY, UpdateSource,
-        activity_signal, is_transient_update_error, map_raw_activity_update,
-        next_with_recovery, wait_for_current_attempt,
+        ActivityGenerations, ActivitySignal, NextOutcome, RetryBackoff, UPDATE_RETRY_INITIAL_DELAY,
+        UPDATE_RETRY_MAX_DELAY, UpdateSource, activity_signal, is_transient_update_error,
+        map_raw_activity_update, next_with_recovery, wait_for_current_attempt,
     };
+    use super::{ConnectionState, TelegramUpdate, map_raw_pinned_update};
     use tg_mobile_core::{
         ChatActivityKind, ChatActivityTracker, ConnectionMachine, CoreEvent, LinkEvent,
         MessageSummary, ReadDirection, backend_update_channel,
@@ -1036,7 +1028,11 @@ mod tests {
         );
         assert!(generations.update(12, 34, ActivitySignal::Ended).is_none());
         let second = generations
-            .update(12, 34, ActivitySignal::Started(ChatActivityKind::UploadingMedia))
+            .update(
+                12,
+                34,
+                ActivitySignal::Started(ChatActivityKind::UploadingMedia),
+            )
             .unwrap();
         assert!(matches!(
             second,
@@ -1064,15 +1060,17 @@ mod tests {
     #[test]
     fn malformed_activity_peer_ids_are_dropped_without_panicking() {
         let mut generations = ActivityGenerations::default();
-        assert!(generations
-            .update(0, 9, ActivitySignal::Started(ChatActivityKind::Typing))
-            .is_none());
-        assert!(generations
-            .update(-8, 0, ActivitySignal::Started(ChatActivityKind::Typing))
-            .is_none());
-        assert!(generations
-            .update(9, -1, ActivitySignal::Ended)
-            .is_none());
+        assert!(
+            generations
+                .update(0, 9, ActivitySignal::Started(ChatActivityKind::Typing))
+                .is_none()
+        );
+        assert!(
+            generations
+                .update(-8, 0, ActivitySignal::Started(ChatActivityKind::Typing))
+                .is_none()
+        );
+        assert!(generations.update(9, -1, ActivitySignal::Ended).is_none());
     }
 
     #[test]
