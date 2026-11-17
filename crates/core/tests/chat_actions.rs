@@ -58,6 +58,32 @@ async fn expect_chat_action_event(
     .unwrap_or_else(|_| panic!("timed out waiting for chat action event {expected:?}"));
 }
 
+async fn expect_chat_action_error(
+    events: &mut tokio::sync::broadcast::Receiver<CoreEvent>,
+    expected_message: &str,
+) {
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            match events
+                .recv()
+                .await
+                .expect("event stream closed before chat action failed")
+            {
+                // LoadChats can publish this after its state snapshot is visible to `load_chats`.
+                // Ignore only that unrelated event; a successful action is an immediate failure.
+                CoreEvent::ChatCapabilitiesUpdated(_) => {}
+                CoreEvent::Error(error) if error.contains(expected_message) => return,
+                CoreEvent::Error(error) => {
+                    panic!("unexpected chat action error: {error:?}; expected {expected_message:?}")
+                }
+                event => panic!("unexpected event before chat action error: {event:?}"),
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("timed out waiting for chat action error {expected_message:?}"));
+}
+
 #[test]
 fn chat_action_commands_validate_ids_and_round_trip_on_wire() {
     let actions = [
@@ -232,7 +258,7 @@ async fn failed_chat_action_emits_error_and_keeps_cached_state_unchanged() {
     core.send(CoreCommand::ArchiveChat { chat_id: 404 })
         .await
         .unwrap();
-    assert!(matches!(events.recv().await.unwrap(), CoreEvent::Error(_)));
+    expect_chat_action_error(&mut events, "404 not found").await;
 
     assert_eq!(core.state().chat(2).unwrap().archived, Some(false));
     assert!(core.state().chat(404).is_none());
@@ -247,16 +273,6 @@ async fn chat_action_requires_authorization() {
     core.send(CoreCommand::MuteChat { chat_id: 2 })
         .await
         .unwrap();
-    // LoadChats publishes the state and then broadcasts its capability update.
-    // Ignore that possible in-flight notification before checking our action error.
-    tokio::time::timeout(std::time::Duration::from_secs(2), async {
-        loop {
-            if matches!(events.recv().await.unwrap(), CoreEvent::Error(_)) {
-                break;
-            }
-        }
-    })
-    .await
-    .expect("unauthorized chat action did not report an error");
+    expect_chat_action_error(&mut events, "not authorized").await;
     assert_eq!(core.state().chat(2).unwrap().muted, Some(false));
 }
