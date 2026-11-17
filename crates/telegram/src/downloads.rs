@@ -186,11 +186,8 @@ async fn run_download(
     let lease = writer
         .commit()
         .map_err(|_| "could not commit completed media to cache".to_owned())?;
-    let mut pending_publication = PendingDownloadPublication::new(
-        cache.clone(),
-        target.reference.clone(),
-        lease,
-    );
+    let mut pending_publication =
+        PendingDownloadPublication::new(cache.clone(), target.reference.clone(), lease);
     let completed = transfers
         .complete(active)
         .map_err(|_| "download completion state became invalid".to_owned())?;
@@ -326,11 +323,8 @@ mod tests {
         let (root, cache) = test_cache();
         let reference = "cancelled-after-cache-commit";
         let lease = committed_download(&cache, reference);
-        let publication = PendingDownloadPublication::new(
-            cache.clone(),
-            reference.to_owned(),
-            lease,
-        );
+        let publication =
+            PendingDownloadPublication::new(cache.clone(), reference.to_owned(), lease);
 
         assert!(cache.get(reference).expect("get").is_some());
         drop(publication);
@@ -345,11 +339,8 @@ mod tests {
         let (root, cache) = test_cache();
         let reference = "published-download";
         let lease = committed_download(&cache, reference);
-        let mut publication = PendingDownloadPublication::new(
-            cache.clone(),
-            reference.to_owned(),
-            lease,
-        );
+        let mut publication =
+            PendingDownloadPublication::new(cache.clone(), reference.to_owned(), lease);
 
         publication.mark_published();
         drop(publication);
