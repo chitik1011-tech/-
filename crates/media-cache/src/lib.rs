@@ -545,11 +545,8 @@ mod tests {
         assert_eq!(cache.used_bytes().expect("initial size"), 8);
         drop(cache);
 
-        let reopened = MediaCache::new(CacheConfig {
-            root,
-            max_bytes: 3,
-        })
-        .expect("reopen with smaller cache limit");
+        let reopened = MediaCache::new(CacheConfig { root, max_bytes: 3 })
+            .expect("reopen with smaller cache limit");
 
         assert!(reopened.used_bytes().expect("recovered size") <= 3);
         assert!(reopened.entries().expect("entries").len() <= 1);
