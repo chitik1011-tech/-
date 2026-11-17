@@ -21,21 +21,28 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.rememberDrawerState
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.People
+import androidx.compose.material.icons.filled.Chat
+import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -43,6 +50,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
 
 /** Data projected exclusively from Rust CoreState; never inject sample chats. */
 data class ChatListEntry(
@@ -74,102 +82,167 @@ fun ChatListScreen(
     modifier: Modifier = Modifier,
 ) {
     val contentMode = resolveAsyncContentMode(isLoading, chats.isEmpty(), error != null)
+    val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
+    val scope = rememberCoroutineScope()
     var searching by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
     var confirmLogout by rememberSaveable { mutableStateOf(false) }
     val visibleChats = filterLoadedChats(chats, query)
-    Column(modifier = modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
-        TopAppBar(
-            title = { Text("Telegram", fontWeight = FontWeight.SemiBold) },
-            navigationIcon = {
-                IconButton(onClick = onOpenContacts) {
-                    Icon(Icons.Default.Menu, contentDescription = "Open contacts")
+    ModalNavigationDrawer(
+        modifier = modifier.fillMaxSize(),
+        drawerState = drawerState,
+        drawerContent = {
+            ModalDrawerSheet {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.primaryContainer)
+                        .padding(horizontal = 20.dp, vertical = 24.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Text("Telegram", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                    Text("Chats and people", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-            },
-            actions = {
-                IconButton(onClick = { searching = !searching; if (!searching) query = "" }) {
-                    Icon(if (searching) Icons.Default.Close else Icons.Default.Search, contentDescription = if (searching) "Close chat search" else "Search loaded chats")
-                }
-                IconButton(onClick = onRefresh, enabled = !isLoading) {
-                    if (isLoading) CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                    else Icon(Icons.Default.Refresh, contentDescription = "Refresh conversations")
-                }
-                IconButton(onClick = onOpenContacts) {
-                    Icon(Icons.Default.People, contentDescription = "Contacts")
-                }
-                TextButton(onClick = { confirmLogout = true }) {
-                    Text("Log out")
-                }
-            },
-        )
-        if (confirmLogout) {
-            AlertDialog(
-                onDismissRequest = { confirmLogout = false },
-                title = { Text("Log out of Telegram?") },
-                text = { Text("This signs out this Telegram session. You can sign in again with the same account.") },
-                confirmButton = {
-                    TextButton(onClick = {
-                        confirmLogout = false
-                        onLogout()
-                    }) { Text("Log out") }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                NavigationDrawerItem(
+                    label = { Text("Chats") },
+                    selected = true,
+                    icon = { Icon(Icons.Default.Chat, contentDescription = null) },
+                    onClick = {
+                        scope.launch {
+                            performChatListDrawerAction(
+                                action = ChatListDrawerAction.CHATS,
+                                closeDrawer = { drawerState.close() },
+                                onOpenContacts = onOpenContacts,
+                                onRequestLogout = { confirmLogout = true },
+                            )
+                        }
+                    },
+                    modifier = Modifier.padding(horizontal = 12.dp),
+                )
+                NavigationDrawerItem(
+                    label = { Text("Contacts") },
+                    selected = false,
+                    icon = { Icon(Icons.Default.People, contentDescription = null) },
+                    onClick = {
+                        scope.launch {
+                            performChatListDrawerAction(
+                                action = ChatListDrawerAction.CONTACTS,
+                                closeDrawer = { drawerState.close() },
+                                onOpenContacts = onOpenContacts,
+                                onRequestLogout = { confirmLogout = true },
+                            )
+                        }
+                    },
+                    modifier = Modifier.padding(horizontal = 12.dp),
+                )
+                Spacer(Modifier.weight(1f))
+                NavigationDrawerItem(
+                    label = { Text("Log out") },
+                    selected = false,
+                    icon = { Icon(Icons.Default.Logout, contentDescription = null) },
+                    onClick = {
+                        scope.launch {
+                            performChatListDrawerAction(
+                                action = ChatListDrawerAction.LOG_OUT,
+                                closeDrawer = { drawerState.close() },
+                                onOpenContacts = onOpenContacts,
+                                onRequestLogout = { confirmLogout = true },
+                            )
+                        }
+                    },
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                )
+            }
+        },
+    ) {
+        Column(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
+            TopAppBar(
+                title = { Text("Telegram", fontWeight = FontWeight.SemiBold) },
+                navigationIcon = {
+                    IconButton(onClick = { scope.launch { drawerState.open() } }) {
+                        Icon(Icons.Default.Menu, contentDescription = "Open navigation menu")
+                    }
                 },
-                dismissButton = {
-                    TextButton(onClick = { confirmLogout = false }) { Text("Cancel") }
+                actions = {
+                    IconButton(onClick = { searching = !searching; if (!searching) query = "" }) {
+                        Icon(if (searching) Icons.Default.Close else Icons.Default.Search, contentDescription = if (searching) "Close chat search" else "Search loaded chats")
+                    }
+                    IconButton(onClick = onRefresh, enabled = !isLoading) {
+                        if (isLoading) CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                        else Icon(Icons.Default.Refresh, contentDescription = "Refresh conversations")
+                    }
                 },
             )
-        }
-        if (searching) {
-            OutlinedTextField(
-                value = query,
-                onValueChange = { query = it },
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
-                placeholder = { Text("Search loaded chats") },
-                singleLine = true,
-                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-            )
-        }
-        if (error != null && contentMode != AsyncContentMode.Loading) {
-            ErrorRetryState(
-                title = "Couldn’t load chats", message = error,
-                retryLabel = "Try again", retryEnabled = !isLoading, onRetry = onRefresh,
-            )
-        }
-        when (contentMode) {
-            AsyncContentMode.Loading -> LoadingState(
-                message = "Loading chats…",
-                modifier = Modifier.weight(1f).fillMaxWidth().padding(24.dp),
-            )
-            AsyncContentMode.Empty -> EmptyState(
-                title = "No conversations yet",
-                description = "Your Telegram conversations will appear here.",
-                actionLabel = "Refresh chats",
-                onAction = onRefresh,
-                modifier = Modifier.weight(1f).fillMaxWidth().padding(24.dp),
-            )
-            AsyncContentMode.Error -> Unit
-            AsyncContentMode.Content -> LazyColumn(
-                modifier = Modifier.weight(1f).fillMaxWidth(),
-            ) {
-                if (visibleChats.isEmpty()) {
-                    item(key = "search_empty") {
-                        Text(
-                            "No matching loaded chats",
-                            modifier = Modifier.padding(24.dp),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            if (confirmLogout) {
+                AlertDialog(
+                    onDismissRequest = { confirmLogout = false },
+                    title = { Text("Log out of Telegram?") },
+                    text = { Text("This signs out this Telegram session. You can sign in again with the same account.") },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            confirmLogout = false
+                            onLogout()
+                        }) { Text("Log out") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { confirmLogout = false }) { Text("Cancel") }
+                    },
+                )
+            }
+            if (searching) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                    placeholder = { Text("Search loaded chats") },
+                    singleLine = true,
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                )
+            }
+            if (error != null && contentMode != AsyncContentMode.Loading) {
+                ErrorRetryState(
+                    title = "Couldn’t load chats", message = error,
+                    retryLabel = "Try again", retryEnabled = !isLoading, onRetry = onRefresh,
+                )
+            }
+            when (contentMode) {
+                AsyncContentMode.Loading -> LoadingState(
+                    message = "Loading chats…",
+                    modifier = Modifier.weight(1f).fillMaxWidth().padding(24.dp),
+                )
+                AsyncContentMode.Empty -> EmptyState(
+                    title = "No conversations yet",
+                    description = "Your Telegram conversations will appear here.",
+                    actionLabel = "Refresh chats",
+                    onAction = onRefresh,
+                    modifier = Modifier.weight(1f).fillMaxWidth().padding(24.dp),
+                )
+                AsyncContentMode.Error -> Unit
+                AsyncContentMode.Content -> LazyColumn(
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                ) {
+                    if (visibleChats.isEmpty()) {
+                        item(key = "search_empty") {
+                            Text(
+                                "No matching loaded chats",
+                                modifier = Modifier.padding(24.dp),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    items(visibleChats, key = ChatListEntry::id) { chat ->
+                        ChatListRow(
+                            chat = chat,
+                            selected = chat.id == selectedChatId,
+                            onClick = { onChatSelected(chat.id) },
+                        )
+                        HorizontalDivider(
+                            modifier = Modifier.padding(start = TelegramUiTokens.dividerInset),
+                            thickness = 0.5.dp,
+                            color = MaterialTheme.colorScheme.outlineVariant,
                         )
                     }
-                }
-                items(visibleChats, key = ChatListEntry::id) { chat ->
-                    ChatListRow(
-                        chat = chat,
-                        selected = chat.id == selectedChatId,
-                        onClick = { onChatSelected(chat.id) },
-                    )
-                    HorizontalDivider(
-                        modifier = Modifier.padding(start = TelegramUiTokens.dividerInset),
-                        thickness = 0.5.dp,
-                        color = MaterialTheme.colorScheme.outlineVariant,
-                    )
                 }
             }
         }
@@ -243,5 +316,27 @@ internal fun filterLoadedChats(chats: List<ChatListEntry>, query: String): List<
     return chats.filter { chat ->
         chat.title.contains(needle, ignoreCase = true) ||
             chat.lastMessage?.text?.contains(needle, ignoreCase = true) == true
+    }
+}
+
+/** Real destinations/actions available from the chat-list navigation drawer. */
+internal enum class ChatListDrawerAction {
+    CHATS,
+    CONTACTS,
+    LOG_OUT,
+}
+
+/** Closes the drawer before dispatching the action selected by the user. */
+internal suspend fun performChatListDrawerAction(
+    action: ChatListDrawerAction,
+    closeDrawer: suspend () -> Unit,
+    onOpenContacts: () -> Unit,
+    onRequestLogout: () -> Unit,
+) {
+    closeDrawer()
+    when (action) {
+        ChatListDrawerAction.CHATS -> Unit
+        ChatListDrawerAction.CONTACTS -> onOpenContacts()
+        ChatListDrawerAction.LOG_OUT -> onRequestLogout()
     }
 }
