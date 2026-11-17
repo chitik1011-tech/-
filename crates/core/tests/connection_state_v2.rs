@@ -7,8 +7,8 @@ use std::time::Duration;
 use tg_mobile_core::{
     backend::{BackendFuture, BackendUpdateReceiver},
     encode_event, spawn_core_with_store, AuthorizationState, ChatPage, ConnectionState,
-    CoreCommand, CoreEvent, CoreState, LinkEvent, MemoryStateStore, MessageSummary, MockTelegramBackend,
-    StateStore, TelegramBackend,
+    CoreCommand, CoreEvent, CoreState, LinkEvent, MemoryStateStore, MessageSummary,
+    MockTelegramBackend, StateStore, TelegramBackend,
 };
 use tokio::{sync::mpsc, time::timeout};
 
