@@ -630,6 +630,26 @@ mod tests {
     }
 
     #[test]
+    fn serializes_telegram_unread_counters_in_chat_events() {
+        let event = CoreEvent::ChatsLoaded(vec![tg_mobile_core::ChatSummary {
+            id: 42,
+            title: "chat".into(),
+            unread_count: 5,
+            unread_mentions_count: Some(2),
+            unread_reactions_count: Some(3),
+            archived: None,
+            muted: None,
+            pinned: None,
+            is_unread: None,
+            last_message: None,
+        }]);
+        let encoded = encode_event(&event);
+        assert!(matches!(encoded, Ok(payload)
+            if payload.contains("\"unread_mentions_count\":2")
+                && payload.contains("\"unread_reactions_count\":3")));
+    }
+
+    #[test]
     fn serializes_telegram_auth_delivery_event_with_stable_event_kind() {
         let event = CoreEvent::AuthorizationCodeDeliveryChanged(Some(
             tg_mobile_core::LoginCodeDeliveryMethod::FlashCall,

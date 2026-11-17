@@ -81,6 +81,8 @@ fn reducer_only_clears_unread_when_receipt_covers_latest_message() {
         muted: None,
         pinned: None,
         is_unread: None,
+        unread_mentions_count: None,
+        unread_reactions_count: None,
         last_message: Some(last_message(10)),
     });
 
@@ -108,6 +110,8 @@ fn inbox_and_outbox_receipts_are_monotonic_and_persisted() {
         muted: None,
         pinned: None,
         is_unread: None,
+        unread_mentions_count: None,
+        unread_reactions_count: None,
         last_message: Some(last_message(25)),
     });
     for (direction, max_message_id) in [

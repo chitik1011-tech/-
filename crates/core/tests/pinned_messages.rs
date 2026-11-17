@@ -217,6 +217,8 @@ fn chats_loaded_prunes_pinned_bookkeeping_outside_the_bounded_chat_cache() {
         muted: None,
         pinned: None,
         is_unread: None,
+        unread_mentions_count: None,
+        unread_reactions_count: None,
         last_message: None,
     }]));
 

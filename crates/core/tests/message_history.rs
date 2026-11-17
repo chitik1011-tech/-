@@ -34,6 +34,8 @@ fn loaded_history_merges_without_incrementing_unread() {
         muted: Some(false),
         pinned: Some(false),
         is_unread: Some(true),
+        unread_mentions_count: None,
+        unread_reactions_count: None,
         last_message: None,
     });
 
@@ -82,6 +84,8 @@ fn live_message_deduplicates_against_loaded_history() {
         muted: Some(false),
         pinned: Some(false),
         is_unread: Some(false),
+        unread_mentions_count: None,
+        unread_reactions_count: None,
         last_message: None,
     });
 

@@ -32,6 +32,8 @@ fn seed_chat(state: &mut CoreState, chat_id: i64) {
         muted: None,
         pinned: None,
         is_unread: None,
+        unread_mentions_count: None,
+        unread_reactions_count: None,
         last_message: None,
     });
 }
@@ -107,6 +109,8 @@ fn edit_for_unknown_non_preview_message_does_not_create_sparse_history() {
         muted: None,
         pinned: None,
         is_unread: None,
+        unread_mentions_count: None,
+        unread_reactions_count: None,
         last_message: Some(message(7, 20, 200, "latest")),
     });
 
@@ -127,6 +131,8 @@ fn edit_updates_preview_even_when_history_page_is_not_cached() {
         muted: None,
         pinned: None,
         is_unread: None,
+        unread_mentions_count: None,
+        unread_reactions_count: None,
         last_message: Some(message(7, 20, 200, "before")),
     });
 
@@ -298,6 +304,8 @@ fn deleting_preview_without_cached_history_clears_stale_preview() {
         muted: None,
         pinned: None,
         is_unread: None,
+        unread_mentions_count: None,
+        unread_reactions_count: None,
         last_message: Some(message(7, 50, 500, "preview only")),
     });
 
