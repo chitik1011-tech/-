@@ -425,8 +425,8 @@ mod tests {
             ),
             (
                 tl::enums::auth::SentCodeType::EmailCode(sent_code::SentCodeTypeEmailCode {
-                    apple_signin_allowed: Some(true),
-                    google_signin_allowed: Some(true),
+                    apple_signin_allowed: true,
+                    google_signin_allowed: true,
                     email_pattern: "a***@example.com".into(),
                     length: 5,
                     reset_available_period: None,
@@ -437,8 +437,8 @@ mod tests {
             (
                 tl::enums::auth::SentCodeType::SetUpEmailRequired(
                     sent_code::SentCodeTypeSetUpEmailRequired {
-                        apple_signin_allowed: Some(true),
-                        google_signin_allowed: Some(true),
+                        apple_signin_allowed: true,
+                        google_signin_allowed: true,
                     },
                 ),
                 LoginCodeDeliveryMethod::EmailSetupRequired,
