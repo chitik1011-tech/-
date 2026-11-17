@@ -1854,7 +1854,11 @@ mod download_cancel_race_tests {
     fn completion_wins_cancel_race_and_keeps_downloaded_transfer_terminal() {
         let transfers = TransferManager::new();
         let remote = transfers
-            .request(TransferDirection::Download, "completed-but-not-published", Some(8))
+            .request(
+                TransferDirection::Download,
+                "completed-but-not-published",
+                Some(8),
+            )
             .unwrap();
         let queued = transfers.queue_download(remote.token).unwrap();
         let active = transfers.start_download(queued).unwrap();
