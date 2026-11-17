@@ -366,10 +366,11 @@ private fun TelegramRustApp(
                     chatId.toLongOrNull()?.let { numericChatId ->
                         val target = replyToMessageId
                         if (target != null) {
-                            viewModel.replyMessage(numericChatId, target, text)
-                            draft = ""
-                            replyToMessageId = null
-                            replyToPreview = null
+                            if (viewModel.replyMessage(numericChatId, target, text)) {
+                                draft = ""
+                                replyToMessageId = null
+                                replyToPreview = null
+                            }
                         } else if (viewModel.sendText(numericChatId, text)) {
                             draft = ""
                         }

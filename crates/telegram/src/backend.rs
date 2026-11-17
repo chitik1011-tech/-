@@ -54,6 +54,7 @@ const MEDIA_CACHE_MAX_BYTES: u64 = 512 * 1024 * 1024;
 struct ReliableSendRecord {
     chat_id: i64,
     text: String,
+    reply_to_message_id: Option<i64>,
     message_id: i64,
 }
 
@@ -232,12 +233,16 @@ impl GrammersBackend {
         client_id: i64,
         chat_id: i64,
         text: &str,
+        reply_to_message_id: Option<i64>,
     ) -> tg_mobile_core::Result<Option<i64>> {
         let Some(record) = self.reliable_sends.get(&client_id) else {
             return Ok(None);
         };
 
-        if record.chat_id != chat_id || record.text != text {
+        if record.chat_id != chat_id
+            || record.text != text
+            || record.reply_to_message_id != reply_to_message_id
+        {
             return Err(CoreError::InvalidInput(format!(
                 "client message id {client_id} is already bound to another request"
             )));
@@ -251,6 +256,7 @@ impl GrammersBackend {
         client_id: i64,
         chat_id: i64,
         text: String,
+        reply_to_message_id: Option<i64>,
         message_id: i64,
     ) {
         if !self.reliable_sends.contains_key(&client_id) {
@@ -261,6 +267,7 @@ impl GrammersBackend {
             ReliableSendRecord {
                 chat_id,
                 text,
+                reply_to_message_id,
                 message_id,
             },
         );
@@ -277,20 +284,21 @@ impl GrammersBackend {
         client_id: i64,
         chat_id: i64,
         text: String,
+        reply_to_message_id: Option<i64>,
     ) -> Vec<CoreEvent> {
         let sending = CoreEvent::MessageSendStateChanged(OutgoingSend::sending(
             client_id,
             chat_id,
             text.clone(),
-        ));
+        ).with_reply_target(reply_to_message_id));
 
-        match self.known_reliable_send(client_id, chat_id, &text) {
+        match self.known_reliable_send(client_id, chat_id, &text, reply_to_message_id) {
             Ok(Some(message_id)) => {
                 return vec![
                     sending,
                     CoreEvent::MessageSendStateChanged(OutgoingSend::sent(
                         client_id, chat_id, text, message_id,
-                    )),
+                    ).with_reply_target(reply_to_message_id)),
                 ];
             }
             Ok(None) => {}
@@ -303,7 +311,7 @@ impl GrammersBackend {
                         text,
                         error.to_string(),
                         false,
-                    )),
+                    ).with_reply_target(reply_to_message_id)),
                 ];
             }
         }
@@ -313,13 +321,26 @@ impl GrammersBackend {
             let peer = find_peer(&self.peers, chat_id)
                 .await
                 .ok_or(TelegramBackendError::UnknownChat(chat_id))?;
-            send_text_idempotent(&self.client, peer, text.clone(), client_id).await
+            send_text_idempotent(
+                &self.client,
+                peer,
+                text.clone(),
+                client_id,
+                reply_to_message_id,
+            )
+            .await
         }
         .await;
 
         match result {
             Ok(message) => {
-                self.remember_reliable_send(client_id, chat_id, text.clone(), message.id);
+                self.remember_reliable_send(
+                    client_id,
+                    chat_id,
+                    text.clone(),
+                    reply_to_message_id,
+                    message.id,
+                );
 
                 let mut events = vec![sending];
                 if self.dedup.should_emit(&message).await {
@@ -327,11 +348,17 @@ impl GrammersBackend {
                 }
                 events.push(CoreEvent::MessageSendStateChanged(OutgoingSend::sent(
                     client_id, chat_id, text, message.id,
-                )));
+                ).with_reply_target(reply_to_message_id)));
                 events
             }
             Err(error) => {
-                let state = reliable_send_error_state(client_id, chat_id, text, error);
+                let state = reliable_send_error_state(
+                    client_id,
+                    chat_id,
+                    text,
+                    reply_to_message_id,
+                    error,
+                );
                 vec![sending, CoreEvent::MessageSendStateChanged(state)]
             }
         }
@@ -1306,8 +1333,11 @@ impl GrammersBackend {
             CoreCommand::SendTextReliable {
                 client_id,
                 chat_id,
+                reply_to_message_id,
                 text,
-            } => self.handle_reliable_send(client_id, chat_id, text).await,
+            } => self
+                .handle_reliable_send(client_id, chat_id, text, reply_to_message_id)
+                .await,
             CoreCommand::SendMediaReliable {
                 client_id,
                 chat_id,
@@ -1641,9 +1671,10 @@ fn reliable_send_error_state(
     client_id: i64,
     chat_id: i64,
     text: String,
+    reply_to_message_id: Option<i64>,
     error: CoreError,
 ) -> OutgoingSend {
-    match error {
+    let send = match error {
         CoreError::SendOutcomeUnknown(reason) => {
             OutgoingSend::awaiting_confirmation(client_id, chat_id, text, reason)
         }
@@ -1655,7 +1686,8 @@ fn reliable_send_error_state(
         }
         CoreError::SendRejected(reason) => OutgoingSend::rejected(client_id, chat_id, text, reason),
         other => OutgoingSend::rejected(client_id, chat_id, text, other.to_string()),
-    }
+    };
+    send.with_reply_target(reply_to_message_id)
 }
 
 #[cfg(test)]
@@ -1670,6 +1702,7 @@ mod reliable_send_error_tests {
             7,
             9,
             "hello".into(),
+            None,
             CoreError::TransientSend("server busy".into()),
         );
         assert!(matches!(
@@ -1684,6 +1717,7 @@ mod reliable_send_error_tests {
             7,
             9,
             "hello".into(),
+            None,
             CoreError::SendRejected("MESSAGE_TOO_LONG".into()),
         );
         assert!(matches!(
@@ -1695,6 +1729,7 @@ mod reliable_send_error_tests {
             7,
             9,
             "hello".into(),
+            None,
             CoreError::SendOutcomeUnknown("connection closed".into()),
         );
         assert!(matches!(

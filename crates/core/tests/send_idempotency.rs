@@ -28,6 +28,8 @@ async fn retrying_same_client_id_does_not_add_a_second_message() {
     let command = CoreCommand::SendTextReliable {
         client_id: 991,
         chat_id: 2,
+
+        reply_to_message_id: None,
         text: "hello".into(),
     };
 
@@ -73,6 +75,8 @@ async fn same_text_with_different_client_ids_creates_two_messages() {
         .handle(CoreCommand::SendTextReliable {
             client_id: 501,
             chat_id: 2,
+
+            reply_to_message_id: None,
             text: "same text".into(),
         })
         .await
@@ -81,6 +85,8 @@ async fn same_text_with_different_client_ids_creates_two_messages() {
         .handle(CoreCommand::SendTextReliable {
             client_id: 502,
             chat_id: 2,
+
+            reply_to_message_id: None,
             text: "same text".into(),
         })
         .await
@@ -100,6 +106,45 @@ async fn same_text_with_different_client_ids_creates_two_messages() {
 }
 
 #[tokio::test]
+async fn reliable_reply_is_idempotent_and_reply_target_is_part_of_the_payload() {
+    let mut backend = MockTelegramBackend::default();
+    authorize(&mut backend).await;
+    let reply = CoreCommand::SendTextReliable {
+        client_id: 503,
+        chat_id: 2,
+        reply_to_message_id: Some(41),
+        text: "reply once".into(),
+    };
+
+    let first = backend.handle(reply.clone()).await.unwrap();
+    let message_id = first.iter().find_map(|event| match event {
+        CoreEvent::MessageAdded(message) => {
+            assert_eq!(message.reply_to.as_ref().map(|reply| reply.message_id), Some(41));
+            Some(message.id)
+        }
+        _ => None,
+    }).expect("reply should create one message");
+    let retry = backend.handle(reply).await.unwrap();
+    assert!(!retry.iter().any(|event| matches!(event, CoreEvent::MessageAdded(_))));
+    assert!(retry.iter().any(|event| matches!(event,
+        CoreEvent::MessageSendStateChanged(send)
+            if matches!(&send.state, OutgoingSendState::Sent { message_id: id } if *id == message_id)
+    )));
+
+    let collision = backend.handle(CoreCommand::SendTextReliable {
+        client_id: 503,
+        chat_id: 2,
+        reply_to_message_id: Some(42),
+        text: "reply once".into(),
+    }).await.unwrap();
+    assert!(!collision.iter().any(|event| matches!(event, CoreEvent::MessageAdded(_))));
+    assert!(collision.iter().any(|event| matches!(event,
+        CoreEvent::MessageSendStateChanged(send)
+            if matches!(&send.state, OutgoingSendState::Failed { retryable: false, .. })
+    )));
+}
+
+#[tokio::test]
 async fn reusing_client_id_for_different_content_is_rejected_without_sending() {
     let mut backend = MockTelegramBackend::default();
     authorize(&mut backend).await;
@@ -108,6 +153,8 @@ async fn reusing_client_id_for_different_content_is_rejected_without_sending() {
         .handle(CoreCommand::SendTextReliable {
             client_id: 7,
             chat_id: 2,
+
+            reply_to_message_id: None,
             text: "first".into(),
         })
         .await
@@ -117,6 +164,8 @@ async fn reusing_client_id_for_different_content_is_rejected_without_sending() {
         .handle(CoreCommand::SendTextReliable {
             client_id: 7,
             chat_id: 2,
+
+            reply_to_message_id: None,
             text: "different".into(),
         })
         .await
@@ -229,6 +278,7 @@ impl TelegramBackend for WriteAheadBackend {
             if let CoreCommand::SendTextReliable {
                 client_id,
                 chat_id,
+                reply_to_message_id,
                 text,
             } = command
             {
@@ -262,6 +312,8 @@ async fn send_intent_is_persisted_before_backend_rpc_starts() {
     core.send(CoreCommand::SendTextReliable {
         client_id: 17,
         chat_id: 2,
+
+        reply_to_message_id: None,
         text: "write ahead".into(),
     })
     .await
@@ -303,6 +355,8 @@ async fn acknowledged_client_id_binding_survives_restart() {
         .send(CoreCommand::SendTextReliable {
             client_id: 19,
             chat_id: 2,
+
+            reply_to_message_id: None,
             text: "accepted".into(),
         })
         .await
@@ -341,6 +395,8 @@ async fn acknowledged_client_id_binding_survives_restart() {
         .send(CoreCommand::SendTextReliable {
             client_id: 19,
             chat_id: 2,
+
+            reply_to_message_id: None,
             text: "accepted".into(),
         })
         .await
@@ -365,6 +421,8 @@ async fn acknowledged_client_id_binding_survives_restart() {
         .send(CoreCommand::SendTextReliable {
             client_id: 19,
             chat_id: 2,
+
+            reply_to_message_id: None,
             text: "changed after restart".into(),
         })
         .await
@@ -449,6 +507,8 @@ fn reliable_send_wire_command_is_additive_and_validated() {
     let invalid = CoreCommand::SendTextReliable {
         client_id: 0,
         chat_id: 2,
+
+        reply_to_message_id: None,
         text: "hello".into(),
     };
     assert!(invalid.validate().is_err());
@@ -467,11 +527,13 @@ impl TelegramBackend for AmbiguousRetryBackend {
                 CoreCommand::SendTextReliable {
                     client_id,
                     chat_id,
+                    reply_to_message_id,
                     text,
                 } => {
                     calls.lock().unwrap().push(CoreCommand::SendTextReliable {
                         client_id,
                         chat_id,
+                        reply_to_message_id,
                         text: text.clone(),
                     });
                     if calls.lock().unwrap().len() == 1 {
@@ -480,7 +542,8 @@ impl TelegramBackend for AmbiguousRetryBackend {
                         ))
                     } else {
                         Ok(vec![CoreEvent::MessageSendStateChanged(
-                            OutgoingSend::sent(client_id, chat_id, text, 700),
+                            OutgoingSend::sent(client_id, chat_id, text, 700)
+                                .with_reply_target(reply_to_message_id),
                         )])
                     }
                 }
@@ -503,6 +566,8 @@ async fn ambiguous_send_retry_reuses_the_same_client_id_and_payload() {
     let command = CoreCommand::SendTextReliable {
         client_id: 777,
         chat_id: 42,
+
+        reply_to_message_id: None,
         text: "retry exactly this payload".into(),
     };
 
@@ -588,6 +653,7 @@ impl TelegramBackend for OrderedSendBackend {
             let CoreCommand::SendTextReliable {
                 client_id,
                 chat_id,
+                reply_to_message_id,
                 text,
             } = command
             else {
@@ -596,13 +662,14 @@ impl TelegramBackend for OrderedSendBackend {
             calls.lock().unwrap().push(CoreCommand::SendTextReliable {
                 client_id,
                 chat_id,
+                reply_to_message_id,
                 text: text.clone(),
             });
 
             let message = test_message(900, chat_id, text.clone());
             let sent = CoreEvent::MessageSendStateChanged(OutgoingSend::sent(
                 client_id, chat_id, text, message.id,
-            ));
+            ).with_reply_target(reply_to_message_id));
             match response_order {
                 SendResponseOrder::UpdateBeforeAck => {
                     updates_tx
@@ -689,8 +756,43 @@ fn reliable_send_command() -> CoreCommand {
     CoreCommand::SendTextReliable {
         client_id: 880,
         chat_id: 42,
+
+        reply_to_message_id: None,
         text: "ordered response".into(),
     }
+}
+
+#[test]
+fn reliable_reply_payload_is_validated_and_preserved_in_legacy_compatible_state() {
+    let command = CoreCommand::SendTextReliable {
+        client_id: 901,
+        chat_id: 42,
+        reply_to_message_id: Some(77),
+        text: "reply body".into(),
+    };
+    assert!(command.validate().is_ok());
+
+    let invalid = CoreCommand::SendTextReliable {
+        client_id: 902,
+        chat_id: 42,
+        reply_to_message_id: Some(0),
+        text: "reply body".into(),
+    };
+    assert!(invalid.validate().is_err());
+
+    let legacy: CoreCommand = serde_json::from_value(serde_json::json!({
+        "type": "send_text_reliable",
+        "payload": {"client_id": 903, "chat_id": 42, "text": "old wire"}
+    }))
+    .unwrap();
+    assert!(matches!(legacy, CoreCommand::SendTextReliable { reply_to_message_id: None, .. }));
+
+    let send = OutgoingSend::sending(901, 42, "reply body").with_reply_target(Some(77));
+    let encoded = serde_json::to_value(&send).unwrap();
+    let restored: OutgoingSend = serde_json::from_value(encoded).unwrap();
+    assert_eq!(restored.reply_to_message_id, Some(77));
+    assert!(restored.same_request(42, "reply body", Some(77)));
+    assert!(!restored.same_request(42, "reply body", Some(78)));
 }
 
 #[tokio::test]

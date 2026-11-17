@@ -217,6 +217,8 @@ async fn shutdown_persists_reliable_send_recovery_without_waiting_for_rpc() {
     core.send(CoreCommand::SendTextReliable {
         client_id: 9,
         chat_id: 42,
+
+        reply_to_message_id: None,
         text: "hello".into(),
     })
     .await
@@ -226,6 +228,8 @@ async fn shutdown_persists_reliable_send_recovery_without_waiting_for_rpc() {
         CoreCommand::SendTextReliable {
             client_id: 9,
             chat_id: 42,
+
+            reply_to_message_id: None,
             text: "hello".into(),
         },
     )

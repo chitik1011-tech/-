@@ -15,14 +15,22 @@ internal fun nextPositiveClientMessageId(): Long {
     }
 }
 
-internal fun reliableTextCommand(clientId: Long, chatId: Long, text: String): String {
+internal fun reliableTextCommand(
+    clientId: Long,
+    chatId: Long,
+    text: String,
+    replyToMessageId: Long? = null,
+): String {
     require(clientId > 0L && chatId != 0L && text.isNotBlank())
+    require(replyToMessageId == null || replyToMessageId > 0L)
+    val payload = JSONObject()
+        .put("client_id", clientId)
+        .put("chat_id", chatId)
+        .put("text", text)
+    replyToMessageId?.let { payload.put("reply_to_message_id", it) }
     return JSONObject()
         .put("type", "send_text_reliable")
-        .put("payload", JSONObject()
-            .put("client_id", clientId)
-            .put("chat_id", chatId)
-            .put("text", text))
+        .put("payload", payload)
         .toString()
 }
 

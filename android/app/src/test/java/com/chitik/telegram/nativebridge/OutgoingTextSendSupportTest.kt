@@ -21,6 +21,14 @@ class OutgoingTextSendSupportTest {
     }
 
     @Test
+    fun reliableReplyUsesTheSameOutboxContractWithReplyTarget() {
+        val wire = reliableTextCommand(124L, 99L, "reply", replyToMessageId = 77L)
+        assertTrue(wire.contains("\"type\":\"send_text_reliable\""))
+        assertTrue(wire.contains("\"client_id\":124"))
+        assertTrue(wire.contains("\"reply_to_message_id\":77"))
+    }
+
+    @Test
     fun generatedClientIdsArePositiveAndDistinct() {
         val ids = (0 until 2000).map { nextPositiveClientMessageId() }
         assertTrue(ids.all { it > 0L })
