@@ -27,6 +27,30 @@ class MediaUiTest {
     }
 
     @Test
+    fun imageDocumentsUseTheInlineImageViewerButOtherDocumentsDoNot() {
+        fun attachment(kind: MediaKindUi, mimeType: String?, filename: String?) =
+            MediaAttachmentUi(
+                index = 0,
+                kind = kind,
+                fileReference = "document:1",
+                sizeBytes = 1,
+                mimeType = mimeType,
+                width = null,
+                height = null,
+                durationMs = null,
+                filename = filename,
+                downloadState = MediaDownloadUiState.NotDownloaded,
+            )
+
+        assertTrue(isInlineImageMedia(attachment(MediaKindUi.Document, "image/png", "scan.png")))
+        assertTrue(isInlineImageMedia(attachment(MediaKindUi.Document, null, "scan.webp")))
+        assertTrue(isInlineImageMedia(attachment(MediaKindUi.Document, null, "scan.bmp")))
+        assertFalse(isInlineImageMedia(attachment(MediaKindUi.Document, "application/pdf", "scan.png")))
+        assertFalse(isInlineImageMedia(attachment(MediaKindUi.Document, "image/svg+xml", "scan.svg")))
+        assertFalse(isInlineImageMedia(attachment(MediaKindUi.Video, "image/png", "scan.png")))
+    }
+
+    @Test
     fun openIntentSpecUsesNarrowAppAuthorityAndReadGrant() {
         val spec = buildOpenIntentSpec(
             packageName = "com.chitik.telegram",
