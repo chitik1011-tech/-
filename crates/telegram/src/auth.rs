@@ -394,25 +394,21 @@ mod tests {
                 LoginCodeDeliveryMethod::MissedCall,
             ),
             (
-                tl::enums::auth::SentCodeType::FirebaseSms(
-                    sent_code::SentCodeTypeFirebaseSms {
-                        nonce: None,
-                        play_integrity_project_id: None,
-                        play_integrity_nonce: None,
-                        receipt: None,
-                        push_timeout: None,
-                        length: 5,
-                    },
-                ),
+                tl::enums::auth::SentCodeType::FirebaseSms(sent_code::SentCodeTypeFirebaseSms {
+                    nonce: None,
+                    play_integrity_project_id: None,
+                    play_integrity_nonce: None,
+                    receipt: None,
+                    push_timeout: None,
+                    length: 5,
+                }),
                 LoginCodeDeliveryMethod::FirebaseSms,
             ),
             (
-                tl::enums::auth::SentCodeType::FragmentSms(
-                    sent_code::SentCodeTypeFragmentSms {
-                        url: "https://fragment.com".into(),
-                        length: 5,
-                    },
-                ),
+                tl::enums::auth::SentCodeType::FragmentSms(sent_code::SentCodeTypeFragmentSms {
+                    url: "https://fragment.com".into(),
+                    length: 5,
+                }),
                 LoginCodeDeliveryMethod::FragmentSms,
             ),
             (
@@ -450,7 +446,10 @@ mod tests {
         ];
 
         for (sent_code_type, expected) in cases {
-            assert_eq!(delivery_method_from_sent_code_type(sent_code_type), expected);
+            assert_eq!(
+                delivery_method_from_sent_code_type(sent_code_type),
+                expected
+            );
         }
     }
 
