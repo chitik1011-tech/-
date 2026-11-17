@@ -1102,6 +1102,7 @@ mod tests {
         let mut generations = ActivityGenerations::default();
         let user = tl::enums::Update::UserTyping(tl::types::UpdateUserTyping {
             user_id: 77,
+            top_msg_id: None,
             action: tl::enums::SendMessageAction::SendMessageRecordAudioAction,
         });
         assert!(matches!(
@@ -1134,6 +1135,7 @@ mod tests {
 
         let malformed = tl::enums::Update::UserTyping(tl::types::UpdateUserTyping {
             user_id: 0,
+            top_msg_id: None,
             action: tl::enums::SendMessageAction::SendMessageTypingAction,
         });
         assert!(map_raw_activity_update(&malformed, &mut generations).is_none());
