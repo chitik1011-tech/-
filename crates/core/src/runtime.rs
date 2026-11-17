@@ -1604,6 +1604,7 @@ async fn restore_state<S: StateStore>(
             state.connection_state = crate::connection::ConnectionState::Disconnected;
             state.message_search = Default::default();
             state.last_error = None;
+            normalize_restored_media_downloads(&mut state);
             for history in state.message_history.values_mut() {
                 history.loading = false;
                 history.requested_before_message_id = None;
@@ -1658,6 +1659,32 @@ async fn restore_state<S: StateStore>(
             let _ = state_tx.send(state.clone());
             let _ = event_tx.send(CoreEvent::Error(message));
             state
+        }
+    }
+}
+
+fn normalize_restored_media_downloads(state: &mut CoreState) {
+    fn normalize_message(message: &mut crate::model::MessageSummary) {
+        for attachment in &mut message.attachments {
+            if matches!(
+                &attachment.download_state,
+                crate::model::AttachmentDownloadState::Queued
+                    | crate::model::AttachmentDownloadState::Downloading { .. }
+            ) {
+                attachment.download_state = crate::model::AttachmentDownloadState::NotDownloaded;
+                attachment.download_generation = 0;
+            }
+        }
+    }
+
+    for messages in state.messages.values_mut() {
+        for message in messages {
+            normalize_message(message);
+        }
+    }
+    for chat in &mut state.account.chats {
+        if let Some(message) = &mut chat.last_message {
+            normalize_message(message);
         }
     }
 }
@@ -2013,5 +2040,103 @@ mod message_mutation_completion_tests {
                 }]
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod media_restore_generation_tests {
+    use super::*;
+    use crate::model::{
+        AccountState, AttachmentDownloadState, AttachmentKind, ChatSummary, MediaAttachment,
+        MessageSummary,
+    };
+
+    fn message() -> MessageSummary {
+        MessageSummary {
+            id: 23,
+            chat_id: 7,
+            sender_id: 9,
+            text: String::new(),
+            timestamp_unix: 1,
+            outgoing: false,
+            location: None,
+            attachments: vec![MediaAttachment {
+                kind: AttachmentKind::Photo,
+                file_reference: "opaque-reference".into(),
+                size_bytes: None,
+                mime_type: None,
+                width: None,
+                height: None,
+                duration_ms: None,
+                voice_waveform: None,
+                filename: None,
+                thumbnail: None,
+                download_generation: 7,
+                download_state: AttachmentDownloadState::Downloading {
+                    bytes_transferred: 128,
+                    total_bytes: Some(512),
+                },
+            }],
+            forwarded_from: None,
+            edited: false,
+            edit_timestamp_unix: None,
+            service_message: false,
+            service: None,
+            media_caption: None,
+            reply_to: None,
+            reactions: Vec::new(),
+            reaction_revision: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn restored_active_download_accepts_generation_one_update() {
+        let store = crate::storage::MemoryStateStore::default();
+        let mut persisted = CoreState::default();
+        let last_message = message();
+        persisted.messages.insert(7, vec![last_message.clone()]);
+        persisted.account = AccountState {
+            authorization: crate::model::AuthorizationState::Ready,
+            chats: vec![ChatSummary {
+                id: 7,
+                title: "chat".into(),
+                unread_count: 0,
+                archived: None,
+                muted: None,
+                pinned: None,
+                is_unread: None,
+                last_message: Some(last_message),
+            }],
+        };
+        store.save(&persisted).await.unwrap();
+        let (state_tx, _) = watch::channel(CoreState::default());
+        let (event_tx, _) = broadcast::channel(8);
+        let mut state = restore_state(&store, &state_tx, &event_tx).await;
+
+        let (state_tx, _) = watch::channel(state.clone());
+        let (event_tx, _) = broadcast::channel(8);
+        apply_event(
+            CoreEvent::MediaTransferUpdated {
+                chat_id: 7,
+                message_id: 23,
+                attachment_index: 0,
+                generation: 1,
+                state: AttachmentDownloadState::Queued,
+            },
+            &mut state,
+            &state_tx,
+            &event_tx,
+            &mut ChatActivityTracker::default(),
+        );
+
+        let cached = &state.messages[&7][0].attachments[0];
+        assert_eq!(cached.download_generation, 1);
+        assert_eq!(cached.download_state, AttachmentDownloadState::Queued);
+        let last = state.account.chats[0].last_message.as_ref().unwrap();
+        assert_eq!(last.attachments[0].download_generation, 1);
+        assert_eq!(
+            last.attachments[0].download_state,
+            AttachmentDownloadState::Queued
+        );
     }
 }
