@@ -4,7 +4,7 @@ use grammers_client::{
     sender::InvocationError,
     tl::enums::auth::SentCodeType,
 };
-use tg_mobile_core::{AuthorizationState, CoreError};
+use tg_mobile_core::{AuthorizationState, CoreError, LoginCodeDeliveryMethod};
 
 use crate::error::{TelegramBackendError, auth_api_error};
 
@@ -17,40 +17,19 @@ enum AuthPhase {
     Ready,
 }
 
-/// Telegram's delivery option reported with `auth.sendCode`.
-///
-/// This remains backend-owned until the auth event contract is extended; it
-/// must not be inferred from a successful request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum LoginCodeDeliveryMethod {
-    TelegramApp,
-    Sms,
-    VoiceCall,
-    FlashCall,
-    MissedCall,
-    FirebaseSms,
-    FragmentSms,
-    SmsWord,
-    SmsPhrase,
-    EmailCode,
-    EmailSetupRequired,
-}
-
-impl From<SentCodeType> for LoginCodeDeliveryMethod {
-    fn from(delivery: SentCodeType) -> Self {
-        match delivery {
-            SentCodeType::App(_) => Self::TelegramApp,
-            SentCodeType::Sms(_) => Self::Sms,
-            SentCodeType::Call(_) => Self::VoiceCall,
-            SentCodeType::FlashCall(_) => Self::FlashCall,
-            SentCodeType::MissedCall(_) => Self::MissedCall,
-            SentCodeType::FirebaseSms(_) => Self::FirebaseSms,
-            SentCodeType::FragmentSms(_) => Self::FragmentSms,
-            SentCodeType::SmsWord(_) => Self::SmsWord,
-            SentCodeType::SmsPhrase(_) => Self::SmsPhrase,
-            SentCodeType::EmailCode(_) => Self::EmailCode,
-            SentCodeType::SetUpEmailRequired(_) => Self::EmailSetupRequired,
-        }
+fn delivery_method_from_sent_code_type(delivery: SentCodeType) -> LoginCodeDeliveryMethod {
+    match delivery {
+        SentCodeType::App(_) => LoginCodeDeliveryMethod::TelegramApp,
+        SentCodeType::Sms(_) => LoginCodeDeliveryMethod::Sms,
+        SentCodeType::Call(_) => LoginCodeDeliveryMethod::VoiceCall,
+        SentCodeType::FlashCall(_) => LoginCodeDeliveryMethod::FlashCall,
+        SentCodeType::MissedCall(_) => LoginCodeDeliveryMethod::MissedCall,
+        SentCodeType::FirebaseSms(_) => LoginCodeDeliveryMethod::FirebaseSms,
+        SentCodeType::FragmentSms(_) => LoginCodeDeliveryMethod::FragmentSms,
+        SentCodeType::SmsWord(_) => LoginCodeDeliveryMethod::SmsWord,
+        SentCodeType::SmsPhrase(_) => LoginCodeDeliveryMethod::SmsPhrase,
+        SentCodeType::EmailCode(_) => LoginCodeDeliveryMethod::EmailCode,
+        SentCodeType::SetUpEmailRequired(_) => LoginCodeDeliveryMethod::EmailSetupRequired,
     }
 }
 
@@ -115,11 +94,14 @@ impl AuthFlow {
             .is_authorized()
             .await
             .map_err(|error| auth_api_error("check authorization", error))?;
-        self.phase = if authorized {
-            AuthPhase::Ready
+        if authorized {
+            self.login_token = None;
+            self.password_token = None;
+            self.login_code_delivery = None;
+            self.phase = AuthPhase::Ready;
         } else {
-            AuthPhase::WaitingForPhoneNumber
-        };
+            self.reset_to_phone_entry();
+        }
         Ok(self.state())
     }
 
@@ -129,6 +111,9 @@ impl AuthFlow {
         api_hash: &str,
         phone: String,
     ) -> tg_mobile_core::Result<AuthorizationState> {
+        // A new phone request replaces the previous token/metadata even if
+        // input validation or the Telegram RPC fails.
+        self.reset_to_phone_entry();
         let phone = normalize_phone_number(&phone)?;
 
         let (token, delivery) = client
@@ -137,7 +122,7 @@ impl AuthFlow {
             .map_err(|error| auth_api_error("request login code", error))?;
         self.password_token = None;
         self.login_token = Some(token);
-        self.login_code_delivery = Some(delivery.into());
+        self.login_code_delivery = Some(delivery_method_from_sent_code_type(delivery));
         self.phase = AuthPhase::WaitingForCode;
         Ok(self.state())
     }
@@ -304,12 +289,12 @@ fn normalize_phone_number(input: &str) -> tg_mobile_core::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        AuthFlow, AuthPhase, LoginCodeDeliveryMethod, login_token_invalidated,
+        AuthFlow, AuthPhase, delivery_method_from_sent_code_type, login_token_invalidated,
         normalize_phone_number,
     };
     use grammers_client::sender::{InvocationError, RpcError};
     use grammers_client::tl;
-    use tg_mobile_core::AuthorizationState;
+    use tg_mobile_core::{AuthorizationState, LoginCodeDeliveryMethod};
 
     #[test]
     fn international_phone_numbers_are_normalized_and_invalid_numbers_rejected() {
@@ -359,11 +344,11 @@ mod tests {
             tl::enums::auth::SentCodeType::Sms(tl::types::auth::SentCodeTypeSms { length: 5 });
 
         assert_eq!(
-            LoginCodeDeliveryMethod::from(app),
+            delivery_method_from_sent_code_type(app),
             LoginCodeDeliveryMethod::TelegramApp
         );
         assert_eq!(
-            LoginCodeDeliveryMethod::from(sms),
+            delivery_method_from_sent_code_type(sms),
             LoginCodeDeliveryMethod::Sms
         );
 
@@ -376,6 +361,96 @@ mod tests {
         );
         flow.reset_to_phone_entry();
         assert_eq!(flow.login_code_delivery(), None);
+    }
+
+    #[test]
+    fn maps_every_grammers_sent_code_type_exhaustively() {
+        use tl::types::auth as sent_code;
+
+        let cases = [
+            (
+                tl::enums::auth::SentCodeType::App(sent_code::SentCodeTypeApp { length: 5 }),
+                LoginCodeDeliveryMethod::TelegramApp,
+            ),
+            (
+                tl::enums::auth::SentCodeType::Sms(sent_code::SentCodeTypeSms { length: 5 }),
+                LoginCodeDeliveryMethod::Sms,
+            ),
+            (
+                tl::enums::auth::SentCodeType::Call(sent_code::SentCodeTypeCall { length: 5 }),
+                LoginCodeDeliveryMethod::VoiceCall,
+            ),
+            (
+                tl::enums::auth::SentCodeType::FlashCall(sent_code::SentCodeTypeFlashCall {
+                    pattern: "***".into(),
+                }),
+                LoginCodeDeliveryMethod::FlashCall,
+            ),
+            (
+                tl::enums::auth::SentCodeType::MissedCall(sent_code::SentCodeTypeMissedCall {
+                    prefix: "+1".into(),
+                    length: 5,
+                }),
+                LoginCodeDeliveryMethod::MissedCall,
+            ),
+            (
+                tl::enums::auth::SentCodeType::FirebaseSms(sent_code::SentCodeTypeFirebaseSms {
+                    nonce: None,
+                    play_integrity_project_id: None,
+                    play_integrity_nonce: None,
+                    receipt: None,
+                    push_timeout: None,
+                    length: 5,
+                }),
+                LoginCodeDeliveryMethod::FirebaseSms,
+            ),
+            (
+                tl::enums::auth::SentCodeType::FragmentSms(sent_code::SentCodeTypeFragmentSms {
+                    url: "https://fragment.com".into(),
+                    length: 5,
+                }),
+                LoginCodeDeliveryMethod::FragmentSms,
+            ),
+            (
+                tl::enums::auth::SentCodeType::SmsWord(sent_code::SentCodeTypeSmsWord {
+                    beginning: Some("A".into()),
+                }),
+                LoginCodeDeliveryMethod::SmsWord,
+            ),
+            (
+                tl::enums::auth::SentCodeType::SmsPhrase(sent_code::SentCodeTypeSmsPhrase {
+                    beginning: Some("A".into()),
+                }),
+                LoginCodeDeliveryMethod::SmsPhrase,
+            ),
+            (
+                tl::enums::auth::SentCodeType::EmailCode(sent_code::SentCodeTypeEmailCode {
+                    apple_signin_allowed: true,
+                    google_signin_allowed: true,
+                    email_pattern: "a***@example.com".into(),
+                    length: 5,
+                    reset_available_period: None,
+                    reset_pending_date: None,
+                }),
+                LoginCodeDeliveryMethod::EmailCode,
+            ),
+            (
+                tl::enums::auth::SentCodeType::SetUpEmailRequired(
+                    sent_code::SentCodeTypeSetUpEmailRequired {
+                        apple_signin_allowed: true,
+                        google_signin_allowed: true,
+                    },
+                ),
+                LoginCodeDeliveryMethod::EmailSetupRequired,
+            ),
+        ];
+
+        for (sent_code_type, expected) in cases {
+            assert_eq!(
+                delivery_method_from_sent_code_type(sent_code_type),
+                expected
+            );
+        }
     }
 
     #[test]

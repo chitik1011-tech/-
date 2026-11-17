@@ -5,6 +5,12 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.chitik.telegram.AuthorizationUiStep
+import com.chitik.telegram.LoginCodeDeliveryMethod
+import com.chitik.telegram.authorizationFromRestoreSnapshot
+import com.chitik.telegram.deliveryAfterAuthorizationChange
+import com.chitik.telegram.deliveryAfterAuthorizationError
+import com.chitik.telegram.deliveryAfterPhoneRequest
+import com.chitik.telegram.parseLoginCodeDeliveryEvent
 import com.chitik.telegram.ChatListEntry
 import com.chitik.telegram.ChatListPreview
 import com.chitik.telegram.ChatCapabilitiesUi
@@ -49,6 +55,8 @@ data class NativeUiState(
     val nativeHandle: Long = 0L,
     val telegramConfigured: Boolean = false,
     val authorization: AuthorizationUiStep = AuthorizationUiStep.Closed,
+    val loginCodeDeliveryMethod: LoginCodeDeliveryMethod? = null,
+    val sessionRestoreComplete: Boolean = false,
     val chats: List<ChatListEntry> = emptyList(),
     val chatsLoaded: Boolean = false,
     val profiles: Map<Long, PeerProfileUi> = emptyMap(),
@@ -226,6 +234,7 @@ private data class ParsedNativeState(
     val profiles: Map<Long, PeerProfileUi>,
     val chatCapabilities: Map<Long, ChatCapabilitiesUi>,
     val outbox: Map<Long, OutgoingTextSendUi>,
+    val restoreComplete: Boolean,
 )
 
 internal fun NativeUiState.advanceSelectionGeneration(): NativeUiState = copy(
@@ -435,7 +444,13 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         val creation = lifecycle.beginReplacement()
             ?: throw IllegalStateException("Native session replacement is already in progress")
         notificationEventGate.reset(creation.generation)
-        _state.update { it.copy(chatsLoaded = false) }
+        _state.update {
+            it.copy(
+                chatsLoaded = false,
+                loginCodeDeliveryMethod = null,
+                sessionRestoreComplete = false,
+            )
+        }
 
         var createdHandle = 0L
         try {
@@ -528,7 +543,13 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
     }
 
     fun submitPhoneNumber(phone: String) {
-        _state.update { it.copy(busy = true, error = null) }
+        _state.update {
+            it.copy(
+                busy = true,
+                error = null,
+                loginCodeDeliveryMethod = deliveryAfterPhoneRequest(),
+            )
+        }
         sendCommand(
             JSONObject()
                 .put("type", "set_phone_number")
@@ -1296,6 +1317,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 }
             }
             "authorization_changed" -> applyAuthorizationEvent(payload)
+            "authorization_code_delivery_changed" -> applyAuthorizationCodeDeliveryEvent(payload)
             "chats_loaded" -> {
                 val loadedChats = runCatching {
                     JSONObject(payload).optJSONArray("payload")?.let(::parseChats)
@@ -1616,6 +1638,11 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                         contactsLoading = false,
                         deletingMessages = false,
                         deleteError = if (it.deletingMessages) message else it.deleteError,
+                        loginCodeDeliveryMethod = deliveryAfterAuthorizationError(
+                            it.loginCodeDeliveryMethod,
+                            it.authorization,
+                            message,
+                        ),
                         lastEventType = type,
                         lastEventPayload = payload,
                         error = message,
@@ -1630,6 +1657,20 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                     )
                 }
             }
+        }
+    }
+
+    private fun applyAuthorizationCodeDeliveryEvent(payload: String) {
+        val delivery = parseLoginCodeDeliveryEvent(payload)
+        _state.update { current ->
+            current.copy(
+                loginCodeDeliveryMethod = if (
+                    current.authorization == AuthorizationUiStep.WaitingForCode
+                ) delivery else null,
+                lastEventType = "authorization_code_delivery_changed",
+                // Keep the state projection free of arbitrary payload strings.
+                lastEventPayload = "",
+            )
         }
     }
 
@@ -1685,6 +1726,10 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 activeTextSendText = if (authorization == AuthorizationUiStep.Ready) current.activeTextSendText else null,
                 textSendError = if (authorization == AuthorizationUiStep.Ready) current.textSendError else null,
                 authorization = authorization,
+                loginCodeDeliveryMethod = deliveryAfterAuthorizationChange(
+                    current.loginCodeDeliveryMethod,
+                    authorization,
+                ),
                 selectionGeneration = if (
                     authorization != AuthorizationUiStep.Ready &&
                     current.authorization == AuthorizationUiStep.Ready
@@ -1755,12 +1800,42 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
             val pinnedMessages = parsePinnedMessages(root.optJSONObject("pinned_messages"))
             val outbox = parseOutgoingTextOutbox(root.optJSONObject("outbox"))
             val ledger = parseOutgoingTextOutbox(root.optJSONObject("send_ledger"))
-            ParsedNativeState(authorization, chats, messages, pinnedMessages, contacts, profiles, capabilities, outbox + ledger)
+            ParsedNativeState(
+                authorization,
+                chats,
+                messages,
+                pinnedMessages,
+                contacts,
+                profiles,
+                capabilities,
+                outbox + ledger,
+                root.optBoolean("restore_complete", false),
+            )
         }.onSuccess { parsed ->
+            if (!parsed.restoreComplete) {
+                // JNI sends the default CoreState immediately, before the SQLite
+                // session-adjacent state store has completed its asynchronous load.
+                _state.update { it.copy(lastEventType = "state", lastEventPayload = "") }
+                return@onSuccess
+            }
+            val restoreWasComplete = _state.value.sessionRestoreComplete
+            if (NotificationCleanupPolicy.shouldClearOnRestoredAuthorizationState(
+                    restoreWasComplete = restoreWasComplete,
+                    restoreIsComplete = true,
+                    isAuthorized = parsed.authorization == AuthorizationUiStep.Ready,
+                )
+            ) {
+                notifications.cancelPublishedNotifications()
+            }
             cleanupTerminalOutgoingMedia(parsed.outbox.values)
             _state.update {
                 it.copy(
-                    authorization = parsed.authorization,
+                    authorization = authorizationFromRestoreSnapshot(
+                        current = it.authorization,
+                        snapshot = parsed.authorization,
+                        restoreComplete = parsed.restoreComplete,
+                    ),
+                    sessionRestoreComplete = true,
                     chats = parsed.chats.map { chat ->
                         chat.copy(
                             capabilities = parsed.chatCapabilities[chat.id]
