@@ -370,17 +370,23 @@ impl CoreState {
 
                 let first_page = page.requested_cursor.is_none();
                 let old_chats = std::mem::take(&mut self.account.chats);
-                let mut merged = if first_page { Vec::new() } else { old_chats.clone() };
+                let mut merged = if first_page {
+                    Vec::new()
+                } else {
+                    old_chats.clone()
+                };
                 for mut incoming in page.chats.iter().cloned() {
                     if let Some(existing) = old_chats.iter().find(|chat| chat.id == incoming.id) {
                         if existing.last_message.as_ref().is_some_and(|old| {
-                            incoming.last_message.as_ref().is_none_or(|new| {
-                                old.timestamp_unix >= new.timestamp_unix
-                            })
+                            incoming
+                                .last_message
+                                .as_ref()
+                                .is_none_or(|new| old.timestamp_unix >= new.timestamp_unix)
                         }) {
                             incoming.last_message = existing.last_message.clone();
                         }
-                        if let Some(existing_slot) = merged.iter_mut().find(|c| c.id == incoming.id) {
+                        if let Some(existing_slot) = merged.iter_mut().find(|c| c.id == incoming.id)
+                        {
                             *existing_slot = incoming;
                             continue;
                         }
@@ -412,7 +418,12 @@ impl CoreState {
                 } else {
                     self.last_error = None;
                 }
-                let ids = self.account.chats.iter().map(|chat| chat.id).collect::<BTreeSet<_>>();
+                let ids = self
+                    .account
+                    .chats
+                    .iter()
+                    .map(|chat| chat.id)
+                    .collect::<BTreeSet<_>>();
                 self.chat_capabilities.retain(|id, _| ids.contains(id));
             }
             CoreEvent::ChatsPageFailed { cursor, error } => {
