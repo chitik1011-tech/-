@@ -69,11 +69,13 @@ fun MediaViewerDialog(
         ) {
             Box(modifier = Modifier.fillMaxSize()) {
                 when (attachment.kind) {
-                    MediaKindUi.Photo -> PhotoViewer(
+                    MediaKindUi.Photo,
+                    MediaKindUi.Document,
+                    -> if (isInlineImageMedia(attachment)) PhotoViewer(
                         file = attachment.downloadedFile,
                         onDismiss = onDismiss,
                         onRetry = onRetry,
-                    )
+                    ) else ViewerUnavailable(onRetry)
 
                     MediaKindUi.Video,
                     MediaKindUi.VideoNote,

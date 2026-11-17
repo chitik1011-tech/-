@@ -126,6 +126,22 @@ internal fun resolveSafeMimeType(declared: String?, filename: String?): String {
     }
 }
 
+/** True when an attachment can use the existing inline image preview and viewer. */
+internal fun isInlineImageMedia(attachment: MediaAttachmentUi): Boolean =
+    attachment.kind == MediaKindUi.Photo ||
+        (attachment.kind == MediaKindUi.Document && resolveSafeMimeType(
+            attachment.mimeType,
+            attachment.filename,
+        ) in INLINE_IMAGE_MIME_TYPES)
+
+private val INLINE_IMAGE_MIME_TYPES = setOf(
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    "image/bmp",
+    "image/gif",
+)
+
 data class OpenIntentSpec(
     val action: String,
     val authority: String,
