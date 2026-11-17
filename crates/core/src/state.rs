@@ -428,6 +428,16 @@ impl CoreState {
                     .map(|chat| chat.id)
                     .collect::<BTreeSet<_>>();
                 self.chat_capabilities.retain(|id, _| ids.contains(id));
+                if first_page && self.connection_machine.phase() == LinkPhase::Synchronizing {
+                    let token = self.connection_machine.token();
+                    if matches!(
+                        self.connection_machine
+                            .apply(token, LinkEvent::SyncCompleted),
+                        Ok(Outcome::Changed { .. })
+                    ) {
+                        self.connection_state = self.connection_machine.transport_state();
+                    }
+                }
             }
             CoreEvent::ChatsPageFailed { cursor, error } => {
                 let pagination = &mut self.chat_pagination;
