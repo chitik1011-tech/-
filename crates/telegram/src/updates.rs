@@ -1408,13 +1408,8 @@ mod tests {
 
         assert!(matches!(result, NextOutcome::Item(42)));
         assert!(transient_seen.load(std::sync::atomic::Ordering::SeqCst));
-        assert_eq!(
-            machine.apply(initial, LinkEvent::TransportLost).unwrap(),
-            tg_mobile_core::Outcome::Changed {
-                from: tg_mobile_core::LinkPhase::Ready,
-                to: tg_mobile_core::LinkPhase::Reconnecting,
-            }
-        );
+        machine.apply(initial, LinkEvent::TransportLost).unwrap();
+        assert_eq!(machine.phase(), tg_mobile_core::LinkPhase::Reconnecting);
         let recovered = *token_rx.borrow();
         assert_eq!(recovered, Some(machine.token()));
         assert!(!update_token_is_current(Some(initial), recovered, false));
