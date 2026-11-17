@@ -502,8 +502,11 @@ impl Write for CacheWriter {
                 "cache entry exceeds its configured size limit",
             ));
         }
-        let allowed = buffer.len().min(usize::try_from(remaining).unwrap_or(usize::MAX));
-        let written = self.file
+        let allowed = buffer
+            .len()
+            .min(usize::try_from(remaining).unwrap_or(usize::MAX));
+        let written = self
+            .file
             .as_mut()
             .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "cache writer is closed"))?
             .write(&buffer[..allowed])?;
@@ -607,10 +610,7 @@ mod tests {
         drop(lease);
         fs::remove_file(path).expect("external removal");
 
-        assert!(cache
-            .get("externally-removed")
-            .expect("lookup")
-            .is_none());
+        assert!(cache.get("externally-removed").expect("lookup").is_none());
         assert!(cache
             .lock_state()
             .expect("cache state")
