@@ -1,4 +1,10 @@
-use std::{collections::BTreeMap, future::Future, pin::Pin, sync::Arc, time::Duration};
+use std::{
+    collections::BTreeMap,
+    future::Future,
+    pin::Pin,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use grammers_client::{
     Client, InvocationError, client::UpdateStream, sender::UpdatesConfiguration,
@@ -172,8 +178,22 @@ enum ActivitySignal {
 /// wrapped in the connection token captured by the update worker.
 #[derive(Debug, Default)]
 struct ActivityGenerations {
-    last_generation: BTreeMap<(i64, i64), u64>,
-    active_generation: BTreeMap<(i64, i64), u64>,
+    next_generation: u64,
+    active: BTreeMap<(i64, i64), ActiveActivityGeneration>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ActiveActivityGeneration {
+    generation: u64,
+    expires_at: Instant,
+}
+
+const MAX_TRACKED_CHAT_ACTIVITIES: usize = 4_096;
+
+impl ActivityGenerations {
+    fn prune_expired(&mut self, now: Instant) {
+        self.active.retain(|_, activity| activity.expires_at > now);
+    }
 }
 
 impl ActivityGenerations {
@@ -186,17 +206,30 @@ impl ActivityGenerations {
         if chat_id == 0 || sender_id <= 0 {
             return None;
         }
+        let now = Instant::now();
+        self.prune_expired(now);
         let key = (chat_id, sender_id);
         match signal {
             ActivitySignal::Started(activity) => {
-                let generation = self
-                    .last_generation
-                    .get(&key)
-                    .copied()
-                    .unwrap_or_default()
-                    .checked_add(1)?;
-                self.last_generation.insert(key, generation);
-                self.active_generation.insert(key, generation);
+                self.next_generation = self.next_generation.checked_add(1)?;
+                let generation = self.next_generation;
+                if self.active.len() >= MAX_TRACKED_CHAT_ACTIVITIES {
+                    if let Some(oldest) = self
+                        .active
+                        .iter()
+                        .min_by_key(|(_, activity)| activity.expires_at)
+                        .map(|(key, _)| *key)
+                    {
+                        self.active.remove(&oldest);
+                    }
+                }
+                self.active.insert(
+                    key,
+                    ActiveActivityGeneration {
+                        generation,
+                        expires_at: now + Duration::from_millis(DEFAULT_CHAT_ACTIVITY_TTL_MS),
+                    },
+                );
                 Some(TelegramUpdate::Typing {
                     chat_id,
                     sender_id,
@@ -206,7 +239,7 @@ impl ActivityGenerations {
                 })
             }
             ActivitySignal::Ended => {
-                let generation = self.active_generation.remove(&key)?;
+                let generation = self.active.remove(&key)?.generation;
                 Some(TelegramUpdate::TypingEnded {
                     chat_id,
                     sender_id,
@@ -940,7 +973,7 @@ fn peer_to_core_id(peer: &grammers_client::tl::enums::Peer) -> i64 {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::VecDeque, future::Future, pin::Pin, sync::Arc};
+    use std::{collections::VecDeque, future::Future, pin::Pin, sync::Arc, time::Instant};
 
     use grammers_client::{InvocationError, sender::RpcError};
     use tokio::sync::watch;
@@ -949,11 +982,12 @@ mod tests {
         ActivityGenerations, ActivitySignal, NextOutcome, RetryBackoff, UPDATE_RETRY_INITIAL_DELAY,
         UPDATE_RETRY_MAX_DELAY, UpdateSource, activity_signal, is_transient_update_error,
         map_raw_activity_update, next_with_recovery, wait_for_current_attempt,
+        MAX_TRACKED_CHAT_ACTIVITIES,
     };
     use super::{ConnectionState, TelegramUpdate, map_raw_pinned_update};
     use tg_mobile_core::{
         ChatActivityKind, ChatActivityTracker, ConnectionMachine, CoreEvent, LinkEvent,
-        MessageSummary, ReadDirection, backend_update_channel,
+        DEFAULT_CHAT_ACTIVITY_TTL_MS, MessageSummary, ReadDirection, backend_update_channel,
     };
 
     #[test]
@@ -1071,6 +1105,32 @@ mod tests {
                 .is_none()
         );
         assert!(generations.update(9, -1, ActivitySignal::Ended).is_none());
+    }
+
+    #[test]
+    fn activity_generation_storage_is_bounded_and_expired_entries_are_pruned() {
+        let mut generations = ActivityGenerations::default();
+        for user_id in 1..=(MAX_TRACKED_CHAT_ACTIVITIES as i64 + 1) {
+            generations
+                .update(12, user_id, ActivitySignal::Started(ChatActivityKind::Typing))
+                .unwrap();
+        }
+        assert_eq!(generations.active.len(), MAX_TRACKED_CHAT_ACTIVITIES);
+
+        generations.prune_expired(
+            Instant::now() + std::time::Duration::from_millis(DEFAULT_CHAT_ACTIVITY_TTL_MS + 1),
+        );
+        assert!(generations.active.is_empty());
+        let next = generations
+            .update(12, 1, ActivitySignal::Started(ChatActivityKind::Typing))
+            .unwrap();
+        assert!(matches!(
+            next,
+            TelegramUpdate::Typing {
+                generation,
+                ..
+            } if generation == MAX_TRACKED_CHAT_ACTIVITIES as u64 + 2
+        ));
     }
 
     #[test]

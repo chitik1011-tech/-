@@ -56,7 +56,7 @@ data class NativeUiState(
     val chatCapabilities: Map<Long, ChatCapabilitiesUi> = emptyMap(),
     val messages: Map<Long, List<ConversationMessageUi>> = emptyMap(),
     val chatActivities: Map<Long, Map<Long, ChatActivityUi>> = emptyMap(),
-    val chatActivityGenerations: Map<Long, Map<Long, ChatActivityGenerationUi>> = emptyMap(),
+    val latestChatActivityGeneration: Long = 0L,
     val pendingReactionKeys: Set<String> = emptySet(),
     val reactionConnectionToken: Pair<Long, Long>? = null,
     val reactionErrors: Map<String, String> = emptyMap(),
@@ -150,7 +150,7 @@ internal fun NativeUiState.applyConnectionLifecycle(payload: String): NativeUiSt
     return if (disconnected || generationChanged) {
         updated.copy(
             chatActivities = emptyMap(),
-            chatActivityGenerations = emptyMap(),
+            latestChatActivityGeneration = 0L,
         ).clearPendingReactionsAfterConnectionChange()
     } else {
         updated
@@ -236,7 +236,7 @@ internal fun NativeUiState.advanceSelectionGeneration(): NativeUiState = copy(
     failedTextSendText = activeTextSendText ?: failedTextSendText,
     textSendError = if (activeTextSendId != null) "Сессия сменилась: проверьте, доставлено ли сообщение, перед повтором" else textSendError,
     chatActivities = emptyMap(),
-    chatActivityGenerations = emptyMap(),
+    latestChatActivityGeneration = 0L,
     pinnedMessages = emptyMap(),
     pendingPinnedMessageIds = emptySet(),
     pinnedError = null,
@@ -1211,8 +1211,8 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                     val updated = activityEvent?.let(current::applyChatActivityEvent)
                     current.copy(
                         chatActivities = updated?.chatActivities ?: current.chatActivities,
-                        chatActivityGenerations = updated?.chatActivityGenerations
-                            ?: current.chatActivityGenerations,
+                        latestChatActivityGeneration = updated?.latestChatActivityGeneration
+                            ?: current.latestChatActivityGeneration,
                         lastEventType = type,
                         lastEventPayload = "",
                     )
@@ -1585,7 +1585,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 chatCapabilities = if (loggedOut) emptyMap() else current.chatCapabilities,
                 messages = if (loggedOut) emptyMap() else current.messages,
                 chatActivities = if (loggedOut) emptyMap() else current.chatActivities,
-                chatActivityGenerations = if (loggedOut) emptyMap() else current.chatActivityGenerations,
+                latestChatActivityGeneration = if (loggedOut) 0L else current.latestChatActivityGeneration,
                 pendingReactionKeys = if (loggedOut) emptySet() else current.pendingReactionKeys,
                 reactionConnectionToken = if (loggedOut) null else current.reactionConnectionToken,
                 reactionErrors = if (loggedOut) emptyMap() else current.reactionErrors,

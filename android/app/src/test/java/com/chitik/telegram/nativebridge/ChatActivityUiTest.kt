@@ -42,6 +42,7 @@ class ChatActivityUiTest {
         assertEquals(emptyMap<Long, Map<Long, ChatActivityUi>>(), expired.chatActivities)
         val staleChanged = expired.applyChatActivityEvent(changed)
         assertEquals(emptyMap<Long, Map<Long, ChatActivityUi>>(), staleChanged.chatActivities)
+        assertEquals(4L, staleChanged.latestChatActivityGeneration)
     }
 
     @Test
@@ -52,6 +53,7 @@ class ChatActivityUiTest {
         assertEquals("записывает голосовое сообщение…", chatActivityStatus(state.chatActivities[12].orEmpty()))
         assertNull(chatActivityStatus(emptyMap()))
         assertEquals(emptyMap<Long, Map<Long, ChatActivityUi>>(), state.advanceSelectionGeneration().chatActivities)
+        assertEquals(0L, state.advanceSelectionGeneration().latestChatActivityGeneration)
 
         val active = state.copy(
             lastConnectionSessionGeneration = 2L,
@@ -61,6 +63,18 @@ class ChatActivityUiTest {
             """{"payload":{"token":{"generation":3,"epoch":0},"event":{"type":"sync_started"}}}""",
         )
         assertEquals(emptyMap<Long, Map<Long, ChatActivityUi>>(), replaced.chatActivities)
-        assertEquals(emptyMap<Long, Map<Long, ChatActivityGenerationUi>>(), replaced.chatActivityGenerations)
+        assertEquals(0L, replaced.latestChatActivityGeneration)
+    }
+
+    @Test
+    fun activeUiEntriesStayBoundedWithoutInactiveGenerationHistory() {
+        var state = NativeUiState()
+        for (userId in 1L..(MAX_CHAT_ACTIVITY_UI_ENTRIES + 1L)) {
+            state = state.applyChatActivityEvent(
+                ChatActivityEventUi(1, userId, userId, ChatActivityKindUi.TYPING),
+            )
+        }
+        assertEquals(MAX_CHAT_ACTIVITY_UI_ENTRIES, state.chatActivities.values.sumOf { it.size })
+        assertEquals(MAX_CHAT_ACTIVITY_UI_ENTRIES.toLong() + 1L, state.latestChatActivityGeneration)
     }
 }

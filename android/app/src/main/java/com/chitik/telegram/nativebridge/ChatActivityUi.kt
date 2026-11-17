@@ -14,17 +14,14 @@ data class ChatActivityUi(
     val kind: ChatActivityKindUi,
 )
 
-data class ChatActivityGenerationUi(
-    val generation: Long,
-    val active: Boolean,
-)
-
 internal data class ChatActivityEventUi(
     val chatId: Long,
     val userId: Long,
     val generation: Long,
     val kind: ChatActivityKindUi?,
 )
+
+internal const val MAX_CHAT_ACTIVITY_UI_ENTRIES = 1_024
 
 internal fun parseChatActivityEvent(type: String, payload: String): ChatActivityEventUi? = runCatching {
     val body = JSONObject(payload).optJSONObject("payload") ?: return@runCatching null
@@ -51,26 +48,31 @@ internal fun parseChatActivityEvent(type: String, payload: String): ChatActivity
 
 internal fun NativeUiState.applyChatActivityEvent(event: ChatActivityEventUi): NativeUiState {
     val chat = chatActivities[event.chatId].orEmpty()
-    val generations = chatActivityGenerations[event.chatId].orEmpty()
-    val previous = generations[event.userId]
-    if (previous != null && event.generation < previous.generation) return this
-
     val updatedActivities = if (event.kind == null) {
-        val active = previous ?: return this
-        if (active.generation != event.generation || !active.active) return this
+        val active = chat[event.userId] ?: return this
+        if (active.generation != event.generation) return this
         chat - event.userId
     } else {
-        if (previous?.let { it.generation == event.generation && !it.active } == true) return this
+        if (event.generation <= latestChatActivityGeneration) return this
         chat + (event.userId to ChatActivityUi(event.generation, event.kind))
     }
-    val updatedGenerations = generations + (
-        event.userId to ChatActivityGenerationUi(event.generation, active = event.kind != null)
-    )
-    val activities = if (updatedActivities.isEmpty()) chatActivities - event.chatId
+    var activities = if (updatedActivities.isEmpty()) chatActivities - event.chatId
     else chatActivities + (event.chatId to updatedActivities)
+    while (activities.values.sumOf { it.size } > MAX_CHAT_ACTIVITY_UI_ENTRIES) {
+        val oldest = activities.flatMap { (chatId, users) ->
+            users.map { (userId, activity) -> Triple(chatId, userId, activity.generation) }
+        }.minByOrNull { it.third } ?: break
+        val users = activities[oldest.first].orEmpty() - oldest.second
+        activities = if (users.isEmpty()) activities - oldest.first
+        else activities + (oldest.first to users)
+    }
     return copy(
         chatActivities = activities,
-        chatActivityGenerations = chatActivityGenerations + (event.chatId to updatedGenerations),
+        latestChatActivityGeneration = if (event.kind == null) {
+            latestChatActivityGeneration
+        } else {
+            event.generation
+        },
     )
 }
 
