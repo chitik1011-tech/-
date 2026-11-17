@@ -12,6 +12,7 @@ use crate::{
     },
     peer::PeerResolution,
     poll::PollSummary,
+    chat_pagination::ChatPage,
     search::{MessageSearchPage, SearchMessagesRequest},
     send::OutgoingSend,
 };
@@ -44,6 +45,14 @@ pub enum CoreEvent {
     /// Legacy untagged state event. Runtime reducers ignore it; use `ConnectionLifecycle`.
     ConnectionStateChanged(ConnectionState),
     ChatsLoaded(Vec<ChatSummary>),
+    ChatsPageLoading {
+        cursor: Option<String>,
+    },
+    ChatsPageLoaded(ChatPage),
+    ChatsPageFailed {
+        cursor: Option<String>,
+        error: String,
+    },
     /// Replaces one chat's authoritative capability snapshot from Telegram.
     ChatCapabilitiesUpdated(ChatCapabilities),
     /// Replaces the contact snapshot at offset zero and appends later pages.
@@ -232,6 +241,9 @@ impl CoreEvent {
             Self::SessionUpdate { .. } => "session_update",
             Self::ConnectionStateChanged(_) => "connection_state_changed",
             Self::ChatsLoaded(_) => "chats_loaded",
+            Self::ChatsPageLoading { .. } => "chats_page_loading",
+            Self::ChatsPageLoaded(_) => "chats_page_loaded",
+            Self::ChatsPageFailed { .. } => "chats_page_failed",
             Self::ChatCapabilitiesUpdated(_) => "chat_capabilities_updated",
             Self::ContactsLoaded { .. } => "contacts_loaded",
             Self::ContactsRefreshRequested => "contacts_refresh_requested",
