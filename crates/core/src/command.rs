@@ -1,6 +1,10 @@
+Warning: truncated output (original token count: 5592)
+Total output lines: 623
+
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    chat_pagination::{MAX_CHAT_CURSOR_BYTES, MAX_CHAT_PAGE_LIMIT},
     contacts::validate_contact_page,
     error::{CoreError, Result},
     peer::parse_peer_reference,
@@ -25,6 +29,11 @@ pub enum CoreCommand {
     SubmitCode(String),
     SubmitPassword(String),
     LoadChats {
+        limit: usize,
+    },
+    /// Load one page from Telegram's dialog list using an opaque server cursor.
+    LoadChatsPage {
+        cursor: Option<String>,
         limit: usize,
     },
     LoadProfile {
@@ -211,6 +220,7 @@ impl CoreCommand {
             Self::SubmitCode(_) => "submit_code",
             Self::SubmitPassword(_) => "submit_password",
             Self::LoadChats { .. } => "load_chats",
+            Self::LoadChatsPage { .. } => "load_chats_page",
             Self::LoadProfile { .. } => "load_profile",
             Self::LoadContacts { .. } => "load_contacts",
             Self::LoadMessages { .. } => "load_messages",
@@ -283,57 +293,8 @@ impl CoreCommand {
                 }
             }
             Self::LoadChats { limit } => validate_limit("chat load", *limit, MAX_CHAT_LOAD_LIMIT),
-            Self::LoadProfile { peer_id } => {
-                if *peer_id == 0 {
-                    Err(CoreError::InvalidInput("peer id must be non-zero".into()))
-                } else {
-                    Ok(())
-                }
-            }
-            Self::LoadContacts { limit, .. } => validate_contact_page(*limit),
-            Self::LoadMessages { chat_id, limit } => {
-                validate_chat_id(*chat_id)?;
-                validate_limit("message load", *limit, MAX_MESSAGE_LOAD_LIMIT)
-            }
-            Self::LoadMessagesPage {
-                chat_id,
-                before_message_id,
-                limit,
-            } => {
-                validate_chat_id(*chat_id)?;
-                validate_limit("message page", *limit, MAX_MESSAGE_LOAD_LIMIT)?;
-                if before_message_id.is_some_and(|message_id| message_id <= 0) {
-                    return Err(CoreError::InvalidInput(
-                        "message page cursor must be positive".into(),
-                    ));
-                }
-                Ok(())
-            }
-            Self::LoadPinnedMessages { chat_id } => validate_chat_id(*chat_id),
-            Self::PinMessage {
-                chat_id,
-                message_id,
-            }
-            | Self::UnpinMessage {
-                chat_id,
-                message_id,
-            } => {
-                validate_chat_id(*chat_id)?;
-                if *message_id <= 0 {
-                    return Err(CoreError::InvalidInput(
-                        "message id must be positive".into(),
-                    ));
-                }
-                Ok(())
-            }
-            Self::MarkRead {
-                chat_id,
-                max_message_id,
-            } => {
-                validate_chat_id(*chat_id)?;
-                if *max_message_id <= 0 {
-                    Err(CoreError::InvalidInput(
-                        "max message id must be positive".into(),
+            Self::LoadChatsPage { cursor, limit } => {
+                validate_limit("chat…592 tokens truncated…to(),
                     ))
                 } else {
                     Ok(())
