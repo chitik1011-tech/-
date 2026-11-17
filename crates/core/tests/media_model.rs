@@ -39,7 +39,10 @@ fn optional_voice_waveform_round_trips_without_breaking_legacy_media() {
     );
 
     let mut legacy = serde_json::to_value(media(AttachmentKind::Voice)).expect("serialize media");
-    legacy.as_object_mut().expect("media object").remove("voice_waveform");
+    legacy
+        .as_object_mut()
+        .expect("media object")
+        .remove("voice_waveform");
     let decoded = serde_json::from_value::<MediaAttachment>(legacy).expect("legacy media");
     assert_eq!(decoded.voice_waveform, None);
 }
