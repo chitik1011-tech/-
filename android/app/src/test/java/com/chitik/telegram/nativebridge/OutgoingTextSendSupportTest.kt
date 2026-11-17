@@ -116,7 +116,7 @@ class OutgoingTextSendSupportTest {
         assertEquals(50, send?.progressPercent)
         assertTrue(send?.canCancel == true)
 
-        val malformed = event.replace("\"voice_duration_ms\":1275,", "")
+        val malformed = event.replace("\"voice_duration_ms\":1275", "")
         assertNull(parseOutgoingTextSendEvent(malformed)?.media)
     }
 

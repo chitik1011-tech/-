@@ -167,7 +167,7 @@ internal fun deletePickedMedia(context: Context, path: String) {
         val directories = listOf("outgoing-media", "voice-recordings")
             .map { directory -> File(context.applicationContext.filesDir, directory).canonicalFile }
         val candidate = File(path).canonicalFile
-        if (candidate.parentFile in directories && candidate.isFile) {
+        if (candidate.parentFile?.let { it in directories } == true && candidate.isFile) {
             candidate.delete()
         }
     }
