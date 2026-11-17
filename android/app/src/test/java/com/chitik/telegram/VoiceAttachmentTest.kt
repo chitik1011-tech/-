@@ -1,5 +1,6 @@
 package com.chitik.telegram
 
+import com.chitik.telegram.nativebridge.decodeTelegramVoiceWaveform
 import java.io.File
 import java.nio.file.Files
 import org.junit.Assert.assertEquals
