@@ -33,6 +33,13 @@ class VoiceRecordingUiTest {
     }
 
     @Test
+    fun recorderFailureIsScopedToTheChatThatProducedIt() {
+        assertEquals("No microphone", voiceErrorForSelectedChat("No microphone", 42L, 42L))
+        assertEquals(null, voiceErrorForSelectedChat("No microphone", 42L, 43L))
+        assertEquals(null, voiceErrorForSelectedChat("No microphone", null, 42L))
+    }
+
+    @Test
     fun chatSwitchCancelsOnlyAnActiveRecordingForThePreviousChat() {
         assertEquals(true, shouldCancelVoiceRecordingForChatChange(42L, -7L))
         assertEquals(false, shouldCancelVoiceRecordingForChatChange(42L, 42L))

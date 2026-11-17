@@ -472,7 +472,11 @@ private fun TelegramRustApp(
                     outgoingMediaSend = state.mediaSendForChat(selectedChatId),
                     voiceRecordingChatId = state.voiceRecording.chatId,
                     voiceRecordingDurationMs = state.voiceRecording.durationMs,
-                    voiceRecordingError = state.voiceRecording.error,
+                    voiceRecordingError = voiceErrorForSelectedChat(
+                        state.voiceRecording.error,
+                        state.voiceRecording.errorChatId,
+                        selectedChatId,
+                    ),
                     error = state.textSendError ?: state.error,
                     pendingReactionKeys = state.pendingReactionKeys,
                     reactionErrors = state.reactionErrors,

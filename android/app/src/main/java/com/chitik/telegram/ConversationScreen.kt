@@ -58,6 +58,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.semantics.contentDescription
@@ -1894,7 +1895,7 @@ private fun ComposerBar(
                             modifier = Modifier.size(48.dp),
                         ) {
                             androidx.compose.material3.Icon(
-                                imageVector = androidx.compose.material.icons.Icons.Default.Mic,
+                                painter = painterResource(R.drawable.ic_voice_mic),
                                 contentDescription = "Записать голосовое сообщение",
                             )
                         }

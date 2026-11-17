@@ -18,3 +18,7 @@ internal fun shouldCancelVoiceRecordingForChatChange(
     recordingChatId: Long?,
     selectedChatId: Long,
 ): Boolean = recordingChatId != null && recordingChatId != selectedChatId
+
+/** A stale recorder error must not appear in a different chat. */
+internal fun voiceErrorForSelectedChat(error: String?, errorChatId: Long?, selectedChatId: Long): String? =
+    error?.takeIf { errorChatId == selectedChatId }
