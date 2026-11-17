@@ -67,12 +67,13 @@ pub(crate) async fn load_chats_page(
     let anchor = cursor
         .map(|value| value.parse::<i64>())
         .transpose()
-        .map_err(|_| crate::error::TelegramBackendError::InvalidInput("invalid chat cursor".into()))?;
+        .map_err(|_| {
+            crate::error::TelegramBackendError::InvalidInput("invalid chat cursor".into())
+        })?;
     if anchor == Some(0) {
-        return Err(crate::error::TelegramBackendError::InvalidInput(
-            "invalid chat cursor".into(),
-        )
-        .into());
+        return Err(
+            crate::error::TelegramBackendError::InvalidInput("invalid chat cursor".into()).into(),
+        );
     }
 
     const MAX_DIALOG_SCAN: usize = 100_000;
