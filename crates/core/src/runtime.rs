@@ -2228,10 +2228,7 @@ mod media_restore_generation_tests {
                 &mut ChatActivityTracker::default(),
             );
 
-            assert_eq!(
-                state.messages[&7][0].attachments[0].download_generation,
-                1
-            );
+            assert_eq!(state.messages[&7][0].attachments[0].download_generation, 1);
             assert_eq!(
                 state.messages[&7][0].attachments[0].download_state,
                 AttachmentDownloadState::Queued
