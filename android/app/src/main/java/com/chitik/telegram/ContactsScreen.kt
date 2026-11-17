@@ -27,6 +27,11 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
@@ -60,9 +65,27 @@ fun ContactsScreen(
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            TextButton(onClick = onBack) { Text("Chats") }
-            Text("Contacts", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-            OutlinedButton(onClick = onRefresh, enabled = !isLoading) {
+            TextButton(
+                onClick = onBack,
+                modifier = Modifier.semantics { contentDescription = "Return to chats" },
+            ) { Text("Chats") }
+            Text(
+                "Contacts",
+                modifier = Modifier.semantics { heading() },
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold,
+            )
+            OutlinedButton(
+                onClick = onRefresh,
+                enabled = !isLoading,
+                modifier = Modifier.semantics {
+                    contentDescription = if (isLoading) {
+                        contactsLoadingAccessibilityLabel(contacts.size, total)
+                    } else {
+                        "Refresh contacts"
+                    }
+                },
+            ) {
                 if (isLoading) CircularProgressIndicator()
                 else Text("Refresh")
             }
@@ -81,10 +104,32 @@ fun ContactsScreen(
             modifier = Modifier.padding(horizontal = 16.dp),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        Text("${contacts.size} of $total contacts", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
-        if (error != null) Text(error, color = MaterialTheme.colorScheme.error)
+        Text(
+            text = "${contacts.size} of $total contacts",
+            modifier = Modifier.padding(horizontal = 16.dp).semantics {
+                contentDescription = contactsCountAccessibilityLabel(contacts.size, total)
+                liveRegion = LiveRegionMode.Polite
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (error != null) {
+            Text(
+                text = error,
+                modifier = Modifier.semantics {
+                    contentDescription = contactsErrorAccessibilityLabel(error)
+                    liveRegion = LiveRegionMode.Polite
+                },
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
         if (contacts.isEmpty() && isLoading) {
-            CircularProgressIndicator(modifier = Modifier.padding(24.dp))
+            CircularProgressIndicator(
+                modifier = Modifier.padding(24.dp).semantics {
+                    contentDescription = contactsLoadingAccessibilityLabel(contacts.size, total)
+                    liveRegion = LiveRegionMode.Polite
+                },
+            )
         } else if (contacts.isEmpty()) {
             Text("No Telegram contacts found.", modifier = Modifier.padding(24.dp))
         } else if (visibleContacts.isEmpty()) {
@@ -94,6 +139,9 @@ fun ContactsScreen(
             items(visibleContacts, key = ContactListEntry::userId) { contact ->
                 Row(
                     modifier = Modifier.fillMaxWidth().clickable { onContactSelected(contact) }
+                        .semantics(mergeDescendants = true) {
+                            contentDescription = contactItemAccessibilityLabel(contact)
+                        }
                         .padding(horizontal = TelegramUiTokens.horizontalInset, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -115,7 +163,17 @@ fun ContactsScreen(
             }
             if (contacts.size < total) {
                 item(key = "load_more_contacts") {
-                    TextButton(onClick = onLoadMore, enabled = !isLoading) {
+                    TextButton(
+                        onClick = onLoadMore,
+                        enabled = !isLoading,
+                        modifier = Modifier.semantics {
+                            contentDescription = contactsLoadMoreAccessibilityLabel(
+                                contacts.size,
+                                total,
+                                isLoading,
+                            )
+                        },
+                    ) {
                         Text(if (isLoading) "Loading…" else "Load more")
                     }
                 }
