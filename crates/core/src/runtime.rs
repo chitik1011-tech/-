@@ -24,6 +24,8 @@ use crate::{
 pub const PERSISTENCE_FLUSH_INTERVAL_MS: u64 = 250;
 const BACKEND_SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(1_000);
 const BACKEND_SHUTDOWN_JOIN_TIMEOUT: Duration = Duration::from_millis(1_250);
+const FINAL_PERSISTENCE_MAX_ATTEMPTS: usize = 3;
+const FINAL_PERSISTENCE_RETRY_DELAY: Duration = Duration::from_millis(50);
 
 #[derive(Clone)]
 pub struct CoreHandle {
@@ -377,9 +379,13 @@ where
                             &event_tx_task,
                             &mut activity_tracker,
                         );
-                        let _ =
-                            persist_state(&store, &mut reduced_state, &state_tx, &event_tx_task)
-                                .await;
+                        let _ = persist_state_before_shutdown(
+                            &store,
+                            &mut reduced_state,
+                            &state_tx,
+                            &event_tx_task,
+                        )
+                        .await;
                         stop_backend_worker(&shutdown_signal_tx, &mut worker).await;
                         break;
                     }
@@ -729,8 +735,13 @@ where
                         &event_tx_task,
                         &mut activity_tracker,
                     );
-                    let _ =
-                        persist_state(&store, &mut reduced_state, &state_tx, &event_tx_task).await;
+                    let _ = persist_state_before_shutdown(
+                        &store,
+                        &mut reduced_state,
+                        &state_tx,
+                        &event_tx_task,
+                    )
+                    .await;
                     stop_backend_worker(&shutdown_signal_tx, &mut worker).await;
                     break;
                 }
@@ -818,9 +829,13 @@ where
                     persistence_dirty |= event_is_persistent;
 
                     if stopped {
-                        let _ =
-                            persist_state(&store, &mut reduced_state, &state_tx, &event_tx_task)
-                                .await;
+                        let _ = persist_state_before_shutdown(
+                            &store,
+                            &mut reduced_state,
+                            &state_tx,
+                            &event_tx_task,
+                        )
+                        .await;
                         stop_backend_worker(&shutdown_signal_tx, &mut worker).await;
                         break;
                     }
@@ -1869,12 +1884,32 @@ async fn persist_state<S: StateStore>(
     }
 }
 
+/// Make a small bounded retry for the final snapshot before the runtime exits.
+/// Each failed attempt remains visible through `last_error` and `CoreEvent::Error`.
+async fn persist_state_before_shutdown<S: StateStore>(
+    store: &S,
+    state: &mut CoreState,
+    state_tx: &watch::Sender<CoreState>,
+    event_tx: &broadcast::Sender<CoreEvent>,
+) -> bool {
+    for attempt in 0..FINAL_PERSISTENCE_MAX_ATTEMPTS {
+        if persist_state(store, state, state_tx, event_tx).await {
+            return true;
+        }
+        if attempt + 1 < FINAL_PERSISTENCE_MAX_ATTEMPTS {
+            tokio::time::sleep(FINAL_PERSISTENCE_RETRY_DELAY).await;
+        }
+    }
+    false
+}
+
 #[cfg(test)]
 mod persistence_retry_tests {
-    use super::spawn_core_with_store;
+    use super::{persist_state_before_shutdown, spawn_core_with_store};
     use crate::{
         command::CoreCommand,
         error::CoreError,
+        event::CoreEvent,
         mock::MockTelegramBackend,
         model::Draft,
         state::CoreState,
@@ -1918,6 +1953,24 @@ mod persistence_retry_tests {
         }
     }
 
+    #[derive(Clone, Default)]
+    struct AlwaysFailStore {
+        saves: Arc<AtomicUsize>,
+    }
+
+    impl StateStore for AlwaysFailStore {
+        fn load<'a>(&'a self) -> StoreFuture<'a, Option<CoreState>> {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn save<'a>(&'a self, _state: &'a CoreState) -> StoreFuture<'a, ()> {
+            Box::pin(async move {
+                self.saves.fetch_add(1, Ordering::SeqCst);
+                Err(CoreError::Storage("persistent test write failure".into()))
+            })
+        }
+    }
+
     #[tokio::test]
     async fn transient_flush_failure_is_retried_without_another_state_change() {
         let store = FailOnceStore::default();
@@ -1950,6 +2003,49 @@ mod persistence_retry_tests {
         assert_eq!(persisted.drafts.get(&draft.chat_id), Some(&draft));
 
         core.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn final_state_flush_retries_a_transient_failure_before_exit() {
+        let store = FailOnceStore::default();
+        let mut state = CoreState::default();
+        let draft = Draft {
+            chat_id: 9,
+            text: "save at shutdown".into(),
+            reply_to_message_id: None,
+            edit_message_id: None,
+            updated_at_unix: 2,
+        };
+        state.drafts.insert(draft.chat_id, draft.clone());
+        let (state_tx, _) = tokio::sync::watch::channel(state.clone());
+        let (event_tx, _) = tokio::sync::broadcast::channel(8);
+
+        assert!(
+            persist_state_before_shutdown(&store, &mut state, &state_tx, &event_tx).await,
+            "a transient final-write failure should be retried"
+        );
+        assert_eq!(store.saves.load(Ordering::SeqCst), 2);
+        let persisted = store.saved_state.lock().unwrap().clone().unwrap();
+        assert_eq!(persisted.drafts.get(&draft.chat_id), Some(&draft));
+    }
+
+    #[tokio::test]
+    async fn final_state_flush_reports_failure_after_bounded_retries() {
+        let store = AlwaysFailStore::default();
+        let mut state = CoreState::default();
+        let (state_tx, _) = tokio::sync::watch::channel(state.clone());
+        let (event_tx, mut events) = tokio::sync::broadcast::channel(8);
+
+        assert!(!persist_state_before_shutdown(&store, &mut state, &state_tx, &event_tx).await);
+        assert_eq!(
+            store.saves.load(Ordering::SeqCst),
+            super::FINAL_PERSISTENCE_MAX_ATTEMPTS
+        );
+        assert_eq!(
+            state.last_error.as_deref(),
+            Some("storage error: persistent test write failure")
+        );
+        assert!(matches!(events.try_recv(), Ok(CoreEvent::Error(_))));
     }
 }
 
