@@ -6,8 +6,8 @@ use std::time::Duration;
 
 use tg_mobile_core::{
     backend::{BackendFuture, BackendUpdateReceiver},
-    encode_event, spawn_core_with_store, AuthorizationState, ConnectionState, CoreCommand,
-    CoreEvent, CoreState, LinkEvent, MemoryStateStore, MessageSummary, MockTelegramBackend,
+    encode_event, spawn_core_with_store, AuthorizationState, ChatPage, ConnectionState,
+    CoreCommand, CoreEvent, CoreState, LinkEvent, MemoryStateStore, MessageSummary, MockTelegramBackend,
     StateStore, TelegramBackend,
 };
 use tokio::{sync::mpsc, time::timeout};
@@ -23,6 +23,40 @@ struct ReconnectBackend {
     omit_initial_result: bool,
     fail_recovery: bool,
     omit_recovery_result: bool,
+}
+
+struct FirstPageBackend {
+    updates: Option<BackendUpdateReceiver>,
+    fail_page: bool,
+}
+
+impl TelegramBackend for FirstPageBackend {
+    fn handle<'a>(&'a mut self, command: CoreCommand) -> BackendFuture<'a> {
+        Box::pin(async move {
+            match command {
+                CoreCommand::Start => Ok(vec![CoreEvent::AuthorizationChanged(
+                    AuthorizationState::Ready,
+                )]),
+                CoreCommand::LoadChatsPage { cursor, .. } => {
+                    if self.fail_page {
+                        return Err(tg_mobile_core::CoreError::Backend(
+                            "simulated first-page failure".into(),
+                        ));
+                    }
+                    Ok(vec![CoreEvent::ChatsPageLoaded(ChatPage {
+                        requested_cursor: cursor,
+                        chats: Vec::new(),
+                        next_cursor: None,
+                    })])
+                }
+                _ => Ok(Vec::new()),
+            }
+        })
+    }
+
+    fn take_updates(&mut self) -> Option<BackendUpdateReceiver> {
+        self.updates.take()
+    }
 }
 
 impl TelegramBackend for ReconnectBackend {
@@ -253,6 +287,120 @@ fn successful_dialog_load_is_the_initial_sync_boundary() {
         tg_mobile_core::LinkPhase::Ready
     );
     assert_eq!(state.connection_state, ConnectionState::Ready);
+}
+
+#[test]
+fn only_a_valid_first_chat_page_completes_reducer_initial_sync() {
+    let mut state = CoreState::default();
+    state.reduce(&CoreEvent::ConnectionSessionStarted);
+    let token = state.connection_machine.token();
+    state.reduce(&CoreEvent::ConnectionLifecycle {
+        token,
+        event: LinkEvent::TransportConnected,
+    });
+    state.reduce(&CoreEvent::ConnectionLifecycle {
+        token,
+        event: LinkEvent::SyncStarted,
+    });
+    state.reduce(&CoreEvent::ChatsPageLoading { cursor: None });
+    state.reduce(&CoreEvent::ChatsPageLoaded(ChatPage {
+        requested_cursor: Some("stale".into()),
+        chats: Vec::new(),
+        next_cursor: None,
+    }));
+    assert_eq!(
+        state.connection_machine.phase(),
+        tg_mobile_core::LinkPhase::Synchronizing
+    );
+
+    state.reduce(&CoreEvent::ChatsPageLoaded(ChatPage {
+        requested_cursor: None,
+        chats: Vec::new(),
+        next_cursor: Some("peer-1".into()),
+    }));
+    assert_eq!(
+        state.connection_machine.phase(),
+        tg_mobile_core::LinkPhase::Ready
+    );
+    assert_eq!(state.connection_state, ConnectionState::Ready);
+}
+
+#[tokio::test]
+async fn runtime_completes_sync_on_first_page_and_fails_only_when_page_fails() {
+    for fail_page in [false, true] {
+        let (updates_tx, updates_rx) = mpsc::channel(8);
+        let core = spawn_core_with_store(
+            FirstPageBackend {
+                updates: Some(updates_rx),
+                fail_page,
+            },
+            MemoryStateStore::default(),
+        );
+        let mut events = core.subscribe();
+        core.send(CoreCommand::Start).await.unwrap();
+        let token = timeout(Duration::from_secs(1), async {
+            loop {
+                let state = core.state();
+                if state.account.authorization == AuthorizationState::Ready {
+                    break state.connection_machine.token();
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        send_lifecycle(&updates_tx, token, LinkEvent::TransportConnected).await;
+        send_lifecycle(&updates_tx, token, LinkEvent::SyncStarted).await;
+        timeout(Duration::from_secs(1), async {
+            loop {
+                if core.state().connection_machine.phase()
+                    == tg_mobile_core::LinkPhase::Synchronizing
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+
+        core.send(CoreCommand::LoadChatsPage {
+            cursor: None,
+            limit: 100,
+        })
+        .await
+        .unwrap();
+        let expected_phase = if fail_page {
+            tg_mobile_core::LinkPhase::Failed
+        } else {
+            tg_mobile_core::LinkPhase::Ready
+        };
+        timeout(Duration::from_secs(1), async {
+            loop {
+                if core.state().connection_machine.phase() == expected_phase {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        if !fail_page {
+            assert!(core.state().chat_pagination.loaded);
+            let mut connect_failed = false;
+            while let Ok(event) = events.try_recv() {
+                connect_failed |= matches!(
+                    event,
+                    CoreEvent::ConnectionLifecycle {
+                        event: LinkEvent::ConnectFailed { .. },
+                        ..
+                    }
+                );
+            }
+            assert!(!connect_failed);
+        }
+        core.shutdown().await.unwrap();
+    }
 }
 
 #[tokio::test]
