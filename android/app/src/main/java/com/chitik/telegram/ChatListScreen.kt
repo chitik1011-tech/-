@@ -79,6 +79,8 @@ fun ChatListScreen(
     onOpenContacts: () -> Unit,
     onLogout: () -> Unit,
     onChatSelected: (Long) -> Unit,
+    showEnableNotifications: Boolean = false,
+    onEnableNotifications: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val contentMode = resolveAsyncContentMode(isLoading, chats.isEmpty(), error != null)
@@ -165,6 +167,11 @@ fun ChatListScreen(
                     }
                 },
                 actions = {
+                    if (showEnableNotifications) {
+                        TextButton(onClick = onEnableNotifications) {
+                            Text("Enable alerts")
+                        }
+                    }
                     IconButton(onClick = { searching = !searching; if (!searching) query = "" }) {
                         Icon(if (searching) Icons.Default.Close else Icons.Default.Search, contentDescription = if (searching) "Close chat search" else "Search loaded chats")
                     }

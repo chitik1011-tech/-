@@ -20,6 +20,9 @@ import com.chitik.telegram.parseContactPage
 import com.chitik.telegram.ConversationPollOptionUi
 import com.chitik.telegram.ConversationPollUi
 import com.chitik.telegram.PeerProfileUi
+import com.chitik.telegram.notifications.NotificationCleanupPolicy
+import com.chitik.telegram.notifications.NotificationEventGate
+import com.chitik.telegram.notifications.TelegramNotificationPublisher
 import com.chitik.telegram.MediaAttachmentUi
 import com.chitik.telegram.matchesMutationTarget
 import com.chitik.telegram.mutationEventAcknowledges
@@ -47,6 +50,7 @@ data class NativeUiState(
     val telegramConfigured: Boolean = false,
     val authorization: AuthorizationUiStep = AuthorizationUiStep.Closed,
     val chats: List<ChatListEntry> = emptyList(),
+    val chatsLoaded: Boolean = false,
     val profiles: Map<Long, PeerProfileUi> = emptyMap(),
     val profileLoadingPeerId: Long? = null,
     val profileError: String? = null,
@@ -270,6 +274,8 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
     val state: StateFlow<NativeUiState> = _state.asStateFlow()
 
     private val lifecycle = NativeSessionLifecycle()
+    private val notifications = TelegramNotificationPublisher(application)
+    private val notificationEventGate = NotificationEventGate()
     @Volatile
     private var restartHandleAfterLogout = false
 
@@ -428,6 +434,8 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         markMessageMutationUnconfirmed("Сессия изменилась; проверьте сообщение в Telegram перед повтором")
         val creation = lifecycle.beginReplacement()
             ?: throw IllegalStateException("Native session replacement is already in progress")
+        notificationEventGate.reset(creation.generation)
+        _state.update { it.copy(chatsLoaded = false) }
 
         var createdHandle = 0L
         try {
@@ -1178,8 +1186,65 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
     private fun onNativeEvent(generation: Long, type: String, payload: String) {
         if (!lifecycle.onNativeEvent(generation, type)) return
         lifecycle.runIfCurrent(generation) {
+            handleNotificationEvent(generation, type, payload)
             handleNativeEvent(type, payload)
         }
+    }
+
+    /** Publishes only generation-validated live events; snapshots and history never notify. */
+    private fun handleNotificationEvent(generation: Long, type: String, payload: String) {
+        if (type == "authorization_changed") {
+            val nextAuthorization = runCatching {
+                val event = JSONObject(payload)
+                val rawAuthorization = event.optString("payload")
+                rawAuthorization.takeIf {
+                    it in setOf(
+                        "WaitingForPhoneNumber",
+                        "WaitingForCode",
+                        "WaitingForPassword",
+                        "Ready",
+                        "LoggingOut",
+                        "Closed",
+                    )
+                }?.let(::parseAuthorization)
+            }.getOrNull()
+            val wasReady = _state.value.authorization == AuthorizationUiStep.Ready
+            val isReady = nextAuthorization == AuthorizationUiStep.Ready
+            if (NotificationCleanupPolicy.shouldClearOnAuthorizationChange(
+                    wasAuthorized = wasReady,
+                    authorizationEventParsed = nextAuthorization != null,
+                    isAuthorizedNow = isReady,
+                )
+            ) {
+                notificationEventGate.reset(null)
+                notifications.cancelPublishedNotifications()
+            } else if (!wasReady && isReady) {
+                notificationEventGate.reset(generation)
+            }
+            return
+        }
+        val message = notificationEventGate.incoming(
+            generation = generation,
+            eventType = type,
+            payload = payload,
+            authorized = _state.value.authorization == AuthorizationUiStep.Ready,
+        ) ?: return
+        val chat = _state.value.chats.firstOrNull { it.id == message.chatId }
+        notifications.publish(
+            TelegramNotificationPublisher.IncomingMessage(
+                chatId = message.chatId,
+                chatTitle = chat?.title ?: "Telegram",
+                body = message.preview,
+                // Core peer IDs are positive for users and negative for groups/channels.
+                isGroup = message.chatId < 0L,
+            ),
+        )
+    }
+
+    /** Keeps both notification decision and publisher suppression aligned with Android UI state. */
+    fun setNotificationVisibility(foreground: Boolean, chatId: Long?) {
+        notificationEventGate.updateVisibility(foreground, chatId)
+        notifications.setVisibleChat(if (foreground) chatId else null)
     }
 
     private fun handleNativeEvent(type: String, payload: String) {
@@ -1232,8 +1297,15 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
             }
             "authorization_changed" -> applyAuthorizationEvent(payload)
             "chats_loaded" -> {
+                val loadedChats = runCatching {
+                    JSONObject(payload).optJSONArray("payload")?.let(::parseChats)
+                }.getOrNull()
                 _state.update {
                     it.copy(
+                        chats = loadedChats?.map { chat ->
+                            chat.copy(capabilities = it.chatCapabilities[chat.id] ?: ChatCapabilitiesUi())
+                        } ?: it.chats,
+                        chatsLoaded = loadedChats != null || it.chatsLoaded,
                         busy = false,
                         lastEventType = type,
                         lastEventPayload = payload,
@@ -1576,6 +1648,10 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         _state.update { current ->
             current.clearPendingReactionsAfterConnectionChange().copy(
                 chats = if (loggedOut) emptyList() else current.chats,
+                chatsLoaded = when {
+                    loggedOut || authorization != AuthorizationUiStep.Ready -> false
+                    else -> current.chatsLoaded
+                },
                 profiles = if (loggedOut) emptyMap() else current.profiles,
                 profileLoadingPeerId = if (loggedOut) null else current.profileLoadingPeerId,
                 profileError = if (loggedOut) null else current.profileError,
@@ -1691,6 +1767,8 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                                 ?: ChatCapabilitiesUi(),
                         )
                     },
+                    chatsLoaded = it.chatsLoaded ||
+                        (parsed.authorization == AuthorizationUiStep.Ready && parsed.chats.isNotEmpty()),
                     contacts = parsed.contacts,
                     contactTotal = maxOf(it.contactTotal, parsed.contacts.size),
                     messages = parsed.messages,
