@@ -723,6 +723,20 @@ pub(crate) async fn send_media_idempotent(
             ttl_seconds: None,
         }
         .into(),
+        OutgoingMediaKind::Voice => tl::types::InputMediaUploadedDocument {
+            nosound_video: false,
+            force_file: false,
+            spoiler: false,
+            file: uploaded.raw,
+            thumb: None,
+            mime_type: attachment.mime_type.clone(),
+            attributes: voice_document_attributes(attachment),
+            stickers: None,
+            video_cover: None,
+            video_timestamp: None,
+            ttl_seconds: None,
+        }
+        .into(),
         OutgoingMediaKind::Document => tl::types::InputMediaUploadedDocument {
             nosound_video: false,
             force_file: false,
@@ -796,6 +810,24 @@ pub(crate) async fn send_media_idempotent(
         ));
     }
     Ok(summary)
+}
+
+/// Build Telegram's voice marker and original filename for an uploaded Ogg/Opus recording.
+fn voice_document_attributes(
+    attachment: &OutgoingMediaAttachment,
+) -> Vec<tl::enums::DocumentAttribute> {
+    let duration_ms = attachment.voice_duration_ms.unwrap_or_default();
+    // Telegram stores this attribute as integer seconds; round up so short final fragments
+    // are not reported as a shorter duration (or as zero).
+    let duration_seconds = duration_ms.div_ceil(1_000);
+    vec![
+        Attribute::Voice {
+            duration: Duration::from_secs(duration_seconds),
+            waveform: None,
+        }
+        .into(),
+        Attribute::FileName(attachment.file_name.clone()).into(),
+    ]
 }
 
 pub(crate) async fn send_text_idempotent(
@@ -1075,12 +1107,42 @@ mod tests {
     use super::{
         MessageDeduplicator, MessageFields, finalize_message_page, finalize_search_page,
         media_to_location, message_summary_from_fields, service_action_to_message,
+        voice_document_attributes,
     };
     use grammers_client::{
         media::{Geo, Media, Venue as TelegramVenue},
         tl,
     };
-    use tg_mobile_core::{MessageLocation, MessageReaction, MessageReactionType, ServiceAction};
+    use tg_mobile_core::{
+        MessageLocation, MessageReaction, MessageReactionType, OutgoingMediaAttachment,
+        OutgoingMediaKind, ServiceAction,
+    };
+
+    #[test]
+    fn maps_voice_to_telegram_voice_audio_attribute_and_filename() {
+        let attachment = OutgoingMediaAttachment {
+            kind: OutgoingMediaKind::Voice,
+            path: "/tmp/voice.ogg".into(),
+            file_name: "voice.ogg".into(),
+            mime_type: "audio/ogg".into(),
+            size_bytes: 4096,
+            voice_duration_ms: Some(1_250),
+            video_duration_ms: None,
+            video_width: None,
+            video_height: None,
+        };
+        let attributes = voice_document_attributes(&attachment);
+        assert!(matches!(
+            &attributes[0],
+            tl::enums::DocumentAttribute::Audio(audio)
+                if audio.voice && audio.duration == 2 && audio.waveform.is_none()
+        ));
+        assert!(matches!(
+            &attributes[1],
+            tl::enums::DocumentAttribute::Filename(filename)
+                if filename.file_name == "voice.ogg"
+        ));
+    }
 
     #[test]
     fn maps_reaction_counts_chosen_state_and_custom_emoji_ids() {

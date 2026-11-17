@@ -1927,6 +1927,7 @@ mod interrupted_send_recovery_tests {
             file_name: "video.mp4".into(),
             mime_type: "video/mp4".into(),
             size_bytes: 4096,
+            voice_duration_ms: None,
             video_duration_ms: Some(1250),
             video_width: Some(640),
             video_height: Some(360),
