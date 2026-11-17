@@ -15,10 +15,16 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.text.font.FontWeight
@@ -45,6 +51,10 @@ fun ContactsScreen(
     onContactSelected: (ContactListEntry) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var searchQuery by rememberSaveable { mutableStateOf("") }
+    val visibleContacts = remember(contacts, searchQuery) {
+        filterLoadedContacts(contacts, searchQuery)
+    }
     Column(
         modifier = modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -57,15 +67,31 @@ fun ContactsScreen(
                 else Text("Refresh")
             }
         }
+        OutlinedTextField(
+            value = searchQuery,
+            onValueChange = { searchQuery = it },
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            singleLine = true,
+            label = { Text("Search loaded contacts") },
+            placeholder = { Text("Name or username") },
+        )
+        Text(
+            "Search applies to contacts loaded so far.",
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(horizontal = 16.dp),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         Text("${contacts.size} of $total contacts", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
         if (error != null) Text(error, color = MaterialTheme.colorScheme.error)
         if (contacts.isEmpty() && isLoading) {
             CircularProgressIndicator(modifier = Modifier.padding(24.dp))
         } else if (contacts.isEmpty()) {
             Text("No Telegram contacts found.", modifier = Modifier.padding(24.dp))
+        } else if (visibleContacts.isEmpty()) {
+            Text("No loaded contacts match this search.", modifier = Modifier.padding(24.dp))
         }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            items(contacts, key = ContactListEntry::userId) { contact ->
+            items(visibleContacts, key = ContactListEntry::userId) { contact ->
                 Row(
                     modifier = Modifier.fillMaxWidth().clickable { onContactSelected(contact) }
                         .padding(horizontal = TelegramUiTokens.horizontalInset, vertical = 10.dp),
