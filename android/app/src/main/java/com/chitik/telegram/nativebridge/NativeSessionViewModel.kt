@@ -55,6 +55,8 @@ data class NativeUiState(
     val contactsLoading: Boolean = false,
     val chatCapabilities: Map<Long, ChatCapabilitiesUi> = emptyMap(),
     val messages: Map<Long, List<ConversationMessageUi>> = emptyMap(),
+    val chatActivities: Map<Long, Map<Long, ChatActivityUi>> = emptyMap(),
+    val latestChatActivityGeneration: Long = 0L,
     val pendingReactionKeys: Set<String> = emptySet(),
     val reactionConnectionToken: Pair<Long, Long>? = null,
     val reactionErrors: Map<String, String> = emptyMap(),
@@ -146,7 +148,10 @@ internal fun NativeUiState.applyConnectionLifecycle(payload: String): NativeUiSt
         token != reactionConnectionToken
     val updated = copy(reactionConnectionToken = token ?: reactionConnectionToken)
     return if (disconnected || generationChanged) {
-        updated.clearPendingReactionsAfterConnectionChange()
+        updated.copy(
+            chatActivities = emptyMap(),
+            latestChatActivityGeneration = 0L,
+        ).clearPendingReactionsAfterConnectionChange()
     } else {
         updated
     }
@@ -230,6 +235,8 @@ internal fun NativeUiState.advanceSelectionGeneration(): NativeUiState = copy(
     failedTextSendId = activeTextSendId ?: failedTextSendId,
     failedTextSendText = activeTextSendText ?: failedTextSendText,
     textSendError = if (activeTextSendId != null) "Сессия сменилась: проверьте, доставлено ли сообщение, перед повтором" else textSendError,
+    chatActivities = emptyMap(),
+    latestChatActivityGeneration = 0L,
     pinnedMessages = emptyMap(),
     pendingPinnedMessageIds = emptySet(),
     pinnedError = null,
@@ -1198,6 +1205,19 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                     }
                 }
             }
+            "chat_activity_changed", "chat_activity_ended", "chat_activity_expired" -> {
+                val activityEvent = parseChatActivityEvent(type, payload)
+                _state.update { current ->
+                    val updated = activityEvent?.let(current::applyChatActivityEvent)
+                    current.copy(
+                        chatActivities = updated?.chatActivities ?: current.chatActivities,
+                        latestChatActivityGeneration = updated?.latestChatActivityGeneration
+                            ?: current.latestChatActivityGeneration,
+                        lastEventType = type,
+                        lastEventPayload = "",
+                    )
+                }
+            }
             "state" -> applyStatePayload(payload)
             "message_send_state_changed" -> {
                 val send = parseOutgoingTextSendEvent(payload)
@@ -1564,6 +1584,8 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 contactsLoading = false,
                 chatCapabilities = if (loggedOut) emptyMap() else current.chatCapabilities,
                 messages = if (loggedOut) emptyMap() else current.messages,
+                chatActivities = if (loggedOut) emptyMap() else current.chatActivities,
+                latestChatActivityGeneration = if (loggedOut) 0L else current.latestChatActivityGeneration,
                 pendingReactionKeys = if (loggedOut) emptySet() else current.pendingReactionKeys,
                 reactionConnectionToken = if (loggedOut) null else current.reactionConnectionToken,
                 reactionErrors = if (loggedOut) emptyMap() else current.reactionErrors,

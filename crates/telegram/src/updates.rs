@@ -1,4 +1,10 @@
-use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
+use std::{
+    collections::BTreeMap,
+    future::Future,
+    pin::Pin,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use grammers_client::{
     Client, InvocationError, client::UpdateStream, sender::UpdatesConfiguration,
@@ -6,8 +12,9 @@ use grammers_client::{
 };
 pub use tg_mobile_core::ConnectionState;
 use tg_mobile_core::{
-    BackendUpdateSender, ConnectionToken, CoreError, CoreEvent, LinkEvent, MessageReaction,
-    MessageSummary, PollSummary, ReactionRevision, ReadDirection,
+    BackendUpdateSender, ChatActivityKind, ConnectionToken, CoreError, CoreEvent,
+    DEFAULT_CHAT_ACTIVITY_TTL_MS, LinkEvent, MessageReaction, MessageSummary, PollSummary,
+    ReactionRevision, ReadDirection,
 };
 use tokio::sync::{broadcast, mpsc, watch};
 use tokio::time::sleep;
@@ -23,9 +30,9 @@ use crate::{
 
 /// Backend-native update model.
 ///
-/// It remains richer than `CoreEvent`; supported message mutations, backend
-/// errors, and connection state cross the core boundary, while chat/unread and
-/// typing updates remain backend-native until their core models are added.
+/// It remains richer than `CoreEvent`; supported message mutations, activity,
+/// backend errors, and connection state cross the core boundary, while other
+/// chat and unread updates remain backend-native.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TelegramUpdate {
     MessageAdded(MessageSummary),
@@ -63,7 +70,14 @@ pub enum TelegramUpdate {
     Typing {
         chat_id: i64,
         sender_id: i64,
-        active: bool,
+        generation: u64,
+        activity: ChatActivityKind,
+        ttl_ms: u64,
+    },
+    TypingEnded {
+        chat_id: i64,
+        sender_id: i64,
+        generation: u64,
     },
     ConnectionStateChanged(ConnectionState),
     ConnectionLifecycle {
@@ -119,6 +133,28 @@ impl TelegramUpdate {
                 direction: *direction,
                 max_message_id: *max_message_id,
             }),
+            Self::Typing {
+                chat_id,
+                sender_id,
+                generation,
+                activity,
+                ttl_ms,
+            } => Some(CoreEvent::ChatActivityChanged {
+                chat_id: *chat_id,
+                user_id: *sender_id,
+                generation: *generation,
+                activity: *activity,
+                ttl_ms: *ttl_ms,
+            }),
+            Self::TypingEnded {
+                chat_id,
+                sender_id,
+                generation,
+            } => Some(CoreEvent::ChatActivityEnded {
+                chat_id: *chat_id,
+                user_id: *sender_id,
+                generation: *generation,
+            }),
             Self::ConnectionStateChanged(_) => None,
             Self::ConnectionLifecycle { token, event } => Some(CoreEvent::ConnectionLifecycle {
                 token: *token,
@@ -127,6 +163,152 @@ impl TelegramUpdate {
             Self::Error(message) => Some(CoreEvent::Error(message.clone())),
             _ => None,
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ActivitySignal {
+    Started(ChatActivityKind),
+    Ended,
+    Ignored,
+}
+
+/// Allocates transient activity generations for one update stream. The map is
+/// session-worker local and never persisted; CoreEvent delivery is additionally
+/// wrapped in the connection token captured by the update worker.
+#[derive(Debug, Default)]
+struct ActivityGenerations {
+    next_generation: u64,
+    active: BTreeMap<(i64, i64), ActiveActivityGeneration>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ActiveActivityGeneration {
+    generation: u64,
+    expires_at: Instant,
+}
+
+const MAX_TRACKED_CHAT_ACTIVITIES: usize = 4_096;
+
+impl ActivityGenerations {
+    fn prune_expired(&mut self, now: Instant) {
+        self.active.retain(|_, activity| activity.expires_at > now);
+    }
+}
+
+impl ActivityGenerations {
+    fn update(
+        &mut self,
+        chat_id: i64,
+        sender_id: i64,
+        signal: ActivitySignal,
+    ) -> Option<TelegramUpdate> {
+        if chat_id == 0 || sender_id <= 0 {
+            return None;
+        }
+        let now = Instant::now();
+        self.prune_expired(now);
+        let key = (chat_id, sender_id);
+        match signal {
+            ActivitySignal::Started(activity) => {
+                self.next_generation = self.next_generation.checked_add(1)?;
+                let generation = self.next_generation;
+                if self.active.len() >= MAX_TRACKED_CHAT_ACTIVITIES {
+                    if let Some(oldest) = self
+                        .active
+                        .iter()
+                        .min_by_key(|(_, activity)| activity.expires_at)
+                        .map(|(key, _)| *key)
+                    {
+                        self.active.remove(&oldest);
+                    }
+                }
+                self.active.insert(
+                    key,
+                    ActiveActivityGeneration {
+                        generation,
+                        expires_at: now + Duration::from_millis(DEFAULT_CHAT_ACTIVITY_TTL_MS),
+                    },
+                );
+                Some(TelegramUpdate::Typing {
+                    chat_id,
+                    sender_id,
+                    generation,
+                    activity,
+                    ttl_ms: DEFAULT_CHAT_ACTIVITY_TTL_MS,
+                })
+            }
+            ActivitySignal::Ended => {
+                let generation = self.active.remove(&key)?.generation;
+                Some(TelegramUpdate::TypingEnded {
+                    chat_id,
+                    sender_id,
+                    generation,
+                })
+            }
+            ActivitySignal::Ignored => None,
+        }
+    }
+}
+
+fn activity_signal(action: &tl::enums::SendMessageAction) -> ActivitySignal {
+    use tl::enums::SendMessageAction as Action;
+    match action {
+        Action::SendMessageTypingAction => ActivitySignal::Started(ChatActivityKind::Typing),
+        Action::SendMessageRecordAudioAction => {
+            ActivitySignal::Started(ChatActivityKind::RecordingVoice)
+        }
+        Action::SendMessageUploadAudioAction(_)
+        | Action::SendMessageUploadPhotoAction(_)
+        | Action::SendMessageUploadDocumentAction(_)
+        | Action::SendMessageUploadVideoAction(_)
+        | Action::SendMessageUploadRoundAction(_) => {
+            ActivitySignal::Started(ChatActivityKind::UploadingMedia)
+        }
+        Action::SendMessageCancelAction => ActivitySignal::Ended,
+        Action::SendMessageRecordVideoAction | Action::SendMessageRecordRoundAction => {
+            ActivitySignal::Started(ChatActivityKind::RecordingVideo)
+        }
+        _ => ActivitySignal::Ignored,
+    }
+}
+
+fn map_raw_activity_update(
+    update: &tl::enums::Update,
+    generations: &mut ActivityGenerations,
+) -> Option<TelegramUpdate> {
+    use tl::enums::Update as RawUpdate;
+    match update {
+        RawUpdate::UserTyping(update) => generations.update(
+            update.user_id,
+            update.user_id,
+            activity_signal(&update.action),
+        ),
+        RawUpdate::ChatUserTyping(update) => {
+            if update.chat_id <= 0 {
+                return None;
+            }
+            let sender_id = match &update.from_id {
+                tl::enums::Peer::User(peer) => peer.user_id,
+                _ => return None,
+            };
+            generations.update(-update.chat_id, sender_id, activity_signal(&update.action))
+        }
+        RawUpdate::ChannelUserTyping(update) => {
+            if update.channel_id <= 0 {
+                return None;
+            }
+            let sender_id = match &update.from_id {
+                tl::enums::Peer::User(peer) => peer.user_id,
+                _ => return None,
+            };
+            generations.update(
+                crate::ids::channel_id_to_core(update.channel_id),
+                sender_id,
+                activity_signal(&update.action),
+            )
+        }
+        _ => None,
     }
 }
 
@@ -285,6 +467,7 @@ pub(crate) async fn run_update_worker(mut input: UpdateWorkerInput) {
     let handshake_token = *input.connection_token.borrow();
     let worker_generation = handshake_token.map(|token| token.generation());
     let mut active_token = handshake_token;
+    let mut activity_generations = ActivityGenerations::default();
     emit_update(
         &input.events,
         &input.core_updates,
@@ -449,7 +632,16 @@ pub(crate) async fn run_update_worker(mut input: UpdateWorkerInput) {
                     token: operation_token.unwrap_or_default(),
                     sequence: update_sequence,
                 };
-                match map_update(update, &input.peers, &input.dedup, &input.polls, revision).await {
+                match map_update(
+                    update,
+                    &input.peers,
+                    &input.dedup,
+                    &input.polls,
+                    revision,
+                    &mut activity_generations,
+                )
+                .await
+                {
                     Ok(events) => {
                         for event in events {
                             emit_update(&input.events, &input.core_updates, event, operation_token)
@@ -628,6 +820,7 @@ async fn map_update(
     dedup: &MessageDeduplicator,
     polls: &PollRegistry,
     reaction_revision: ReactionRevision,
+    activity_generations: &mut ActivityGenerations,
 ) -> tg_mobile_core::Result<Vec<TelegramUpdate>> {
     match update {
         Update::NewMessage(message) => {
@@ -682,6 +875,13 @@ async fn map_update(
             }])
         }
         Update::Raw(raw) => match &raw.raw {
+            tl::enums::Update::UserTyping(_)
+            | tl::enums::Update::ChatUserTyping(_)
+            | tl::enums::Update::ChannelUserTyping(_) => {
+                Ok(map_raw_activity_update(&raw.raw, activity_generations)
+                    .into_iter()
+                    .collect())
+            }
             tl::enums::Update::MessagePoll(update) => Ok(poll_from_update(update, polls)
                 .await?
                 .map(TelegramUpdate::PollUpdated)
@@ -773,20 +973,238 @@ fn peer_to_core_id(peer: &grammers_client::tl::enums::Peer) -> i64 {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::VecDeque, future::Future, pin::Pin, sync::Arc};
+    use std::{collections::VecDeque, future::Future, pin::Pin, sync::Arc, time::Instant};
 
     use grammers_client::{InvocationError, sender::RpcError};
     use tokio::sync::watch;
 
-    use super::{ConnectionState, TelegramUpdate, map_raw_pinned_update};
     use super::{
-        NextOutcome, RetryBackoff, UPDATE_RETRY_INITIAL_DELAY, UPDATE_RETRY_MAX_DELAY,
-        UpdateSource, is_transient_update_error, next_with_recovery, wait_for_current_attempt,
+        ActivityGenerations, ActivitySignal, MAX_TRACKED_CHAT_ACTIVITIES, NextOutcome,
+        RetryBackoff, UPDATE_RETRY_INITIAL_DELAY, UPDATE_RETRY_MAX_DELAY, UpdateSource,
+        activity_signal, is_transient_update_error, map_raw_activity_update, next_with_recovery,
+        wait_for_current_attempt,
     };
+    use super::{ConnectionState, TelegramUpdate, map_raw_pinned_update};
     use tg_mobile_core::{
-        ConnectionMachine, CoreEvent, LinkEvent, MessageSummary, ReadDirection,
+        ChatActivityKind, ChatActivityTracker, ConnectionMachine, CoreEvent,
+        DEFAULT_CHAT_ACTIVITY_TTL_MS, LinkEvent, MessageSummary, ReadDirection,
         backend_update_channel,
     };
+
+    #[test]
+    fn activity_actions_map_typing_recording_upload_and_cancel() {
+        use grammers_client::tl;
+
+        assert_eq!(
+            activity_signal(&tl::enums::SendMessageAction::SendMessageTypingAction),
+            ActivitySignal::Started(ChatActivityKind::Typing),
+        );
+        assert_eq!(
+            activity_signal(&tl::enums::SendMessageAction::SendMessageRecordAudioAction),
+            ActivitySignal::Started(ChatActivityKind::RecordingVoice),
+        );
+        assert_eq!(
+            activity_signal(&tl::enums::SendMessageAction::SendMessageRecordVideoAction),
+            ActivitySignal::Started(ChatActivityKind::RecordingVideo),
+        );
+        for action in [
+            tl::enums::SendMessageAction::SendMessageUploadPhotoAction(
+                tl::types::SendMessageUploadPhotoAction { progress: 50 },
+            ),
+            tl::enums::SendMessageAction::SendMessageUploadVideoAction(
+                tl::types::SendMessageUploadVideoAction { progress: 50 },
+            ),
+            tl::enums::SendMessageAction::SendMessageUploadAudioAction(
+                tl::types::SendMessageUploadAudioAction { progress: 50 },
+            ),
+            tl::enums::SendMessageAction::SendMessageUploadDocumentAction(
+                tl::types::SendMessageUploadDocumentAction { progress: 50 },
+            ),
+        ] {
+            assert_eq!(
+                activity_signal(&action),
+                ActivitySignal::Started(ChatActivityKind::UploadingMedia),
+            );
+        }
+        assert_eq!(
+            activity_signal(&tl::enums::SendMessageAction::SendMessageCancelAction),
+            ActivitySignal::Ended,
+        );
+        assert_eq!(
+            activity_signal(&tl::enums::SendMessageAction::SendMessageGeoLocationAction),
+            ActivitySignal::Ignored,
+        );
+    }
+
+    #[test]
+    fn activity_generations_advance_and_cancel_targets_only_current_activity() {
+        let mut generations = ActivityGenerations::default();
+        let first = generations
+            .update(12, 34, ActivitySignal::Started(ChatActivityKind::Typing))
+            .unwrap();
+        assert_eq!(
+            first.to_core_event(),
+            Some(CoreEvent::ChatActivityChanged {
+                chat_id: 12,
+                user_id: 34,
+                generation: 1,
+                activity: ChatActivityKind::Typing,
+                ttl_ms: tg_mobile_core::DEFAULT_CHAT_ACTIVITY_TTL_MS,
+            })
+        );
+        let ended = generations.update(12, 34, ActivitySignal::Ended).unwrap();
+        assert_eq!(
+            ended.to_core_event(),
+            Some(CoreEvent::ChatActivityEnded {
+                chat_id: 12,
+                user_id: 34,
+                generation: 1,
+            })
+        );
+        assert!(generations.update(12, 34, ActivitySignal::Ended).is_none());
+        let second = generations
+            .update(
+                12,
+                34,
+                ActivitySignal::Started(ChatActivityKind::UploadingMedia),
+            )
+            .unwrap();
+        assert!(matches!(
+            second,
+            TelegramUpdate::Typing { generation: 2, .. }
+        ));
+
+        let now = std::time::Instant::now();
+        let mut tracker = ChatActivityTracker::default();
+        tracker.apply(&first.to_core_event().unwrap(), now);
+        let second_event = second.to_core_event().unwrap();
+        tracker.apply(&second_event, now);
+        tracker.apply(&ended.to_core_event().unwrap(), now);
+        assert_eq!(
+            tracker.activity(12, 34),
+            Some(ChatActivityKind::UploadingMedia),
+            "a stop from an older generation must not clear newer activity",
+        );
+        let expired = tracker.expire(now + std::time::Duration::from_secs(7));
+        assert!(matches!(
+            expired.as_slice(),
+            [CoreEvent::ChatActivityExpired { generation: 2, .. }]
+        ));
+    }
+
+    #[test]
+    fn malformed_activity_peer_ids_are_dropped_without_panicking() {
+        let mut generations = ActivityGenerations::default();
+        assert!(
+            generations
+                .update(0, 9, ActivitySignal::Started(ChatActivityKind::Typing))
+                .is_none()
+        );
+        assert!(
+            generations
+                .update(-8, 0, ActivitySignal::Started(ChatActivityKind::Typing))
+                .is_none()
+        );
+        assert!(generations.update(9, -1, ActivitySignal::Ended).is_none());
+    }
+
+    #[test]
+    fn activity_generation_storage_is_bounded_and_expired_entries_are_pruned() {
+        let mut generations = ActivityGenerations::default();
+        for user_id in 1..=(MAX_TRACKED_CHAT_ACTIVITIES as i64 + 1) {
+            generations
+                .update(
+                    12,
+                    user_id,
+                    ActivitySignal::Started(ChatActivityKind::Typing),
+                )
+                .unwrap();
+        }
+        assert_eq!(generations.active.len(), MAX_TRACKED_CHAT_ACTIVITIES);
+
+        generations.prune_expired(
+            Instant::now() + std::time::Duration::from_millis(DEFAULT_CHAT_ACTIVITY_TTL_MS + 1),
+        );
+        assert!(generations.active.is_empty());
+        let next = generations
+            .update(12, 1, ActivitySignal::Started(ChatActivityKind::Typing))
+            .unwrap();
+        assert!(matches!(
+            next,
+            TelegramUpdate::Typing {
+                generation,
+                ..
+            } if generation == MAX_TRACKED_CHAT_ACTIVITIES as u64 + 2
+        ));
+    }
+
+    #[test]
+    fn raw_chat_typing_maps_the_chat_and_sender_peer() {
+        use grammers_client::tl;
+
+        let update = tl::enums::Update::ChatUserTyping(tl::types::UpdateChatUserTyping {
+            chat_id: 44,
+            from_id: tl::enums::Peer::User(tl::types::PeerUser { user_id: 77 }),
+            action: tl::enums::SendMessageAction::SendMessageTypingAction,
+        });
+        let mapped = map_raw_activity_update(&update, &mut ActivityGenerations::default()).unwrap();
+        assert!(matches!(
+            mapped,
+            TelegramUpdate::Typing {
+                chat_id: -44,
+                sender_id: 77,
+                generation: 1,
+                activity: ChatActivityKind::Typing,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn raw_user_and_channel_typing_are_mapped_and_invalid_peers_are_ignored() {
+        use grammers_client::tl;
+
+        let mut generations = ActivityGenerations::default();
+        let user = tl::enums::Update::UserTyping(tl::types::UpdateUserTyping {
+            user_id: 77,
+            top_msg_id: None,
+            action: tl::enums::SendMessageAction::SendMessageRecordAudioAction,
+        });
+        assert!(matches!(
+            map_raw_activity_update(&user, &mut generations),
+            Some(TelegramUpdate::Typing {
+                chat_id: 77,
+                sender_id: 77,
+                activity: ChatActivityKind::RecordingVoice,
+                ..
+            })
+        ));
+
+        let channel = tl::enums::Update::ChannelUserTyping(tl::types::UpdateChannelUserTyping {
+            channel_id: 44,
+            top_msg_id: None,
+            from_id: tl::enums::Peer::User(tl::types::PeerUser { user_id: 88 }),
+            action: tl::enums::SendMessageAction::SendMessageUploadPhotoAction(
+                tl::types::SendMessageUploadPhotoAction { progress: 20 },
+            ),
+        });
+        assert!(matches!(
+            map_raw_activity_update(&channel, &mut generations),
+            Some(TelegramUpdate::Typing {
+                chat_id,
+                sender_id: 88,
+                activity: ChatActivityKind::UploadingMedia,
+                ..
+            }) if chat_id == crate::ids::channel_id_to_core(44)
+        ));
+
+        let malformed = tl::enums::Update::UserTyping(tl::types::UpdateUserTyping {
+            user_id: 0,
+            top_msg_id: None,
+            action: tl::enums::SendMessageAction::SendMessageTypingAction,
+        });
+        assert!(map_raw_activity_update(&malformed, &mut generations).is_none());
+    }
 
     #[test]
     fn pinned_mtproto_updates_preserve_peer_message_ids_and_pts() {
@@ -1071,6 +1489,43 @@ mod tests {
             CoreEvent::SessionUpdate {
                 token: operation_token,
                 event: Box::new(CoreEvent::MessageAdded(message)),
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn typing_activity_is_delivered_through_the_session_scoped_core_path() {
+        let mut machine = ConnectionMachine::default();
+        machine.start_session();
+        let token = machine.token();
+        let (core_tx, mut core_rx) = backend_update_channel();
+        let (native_tx, _) = tokio::sync::broadcast::channel(1);
+
+        super::emit_update(
+            &native_tx,
+            &Some(core_tx),
+            TelegramUpdate::Typing {
+                chat_id: -42,
+                sender_id: 7,
+                generation: 3,
+                activity: ChatActivityKind::Typing,
+                ttl_ms: 6_000,
+            },
+            Some(token),
+        )
+        .await;
+
+        assert_eq!(
+            core_rx.recv().await.unwrap().unwrap(),
+            CoreEvent::SessionUpdate {
+                token,
+                event: Box::new(CoreEvent::ChatActivityChanged {
+                    chat_id: -42,
+                    user_id: 7,
+                    generation: 3,
+                    activity: ChatActivityKind::Typing,
+                    ttl_ms: 6_000,
+                }),
             }
         );
     }
