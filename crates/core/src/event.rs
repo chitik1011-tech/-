@@ -9,8 +9,7 @@ use crate::{
     forwarding::ForwardMessagesResult,
     model::{
         AccountState, AttachmentDownloadState, AuthorizationState, ChatActivityKind, ChatSummary,
-        LoginCodeDeliveryMethod,
-        MessageReaction, MessageSummary, PeerProfile, ReactionRevision,
+        LoginCodeDeliveryMethod, MessageReaction, MessageSummary, PeerProfile, ReactionRevision,
     },
     peer::PeerResolution,
     poll::PollSummary,

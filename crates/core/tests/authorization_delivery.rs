@@ -1,14 +1,13 @@
 use tg_mobile_core::{
-    AuthorizationState, CoreEvent, CoreState, LoginCodeDeliveryMethod, MemoryStateStore,
-    MockTelegramBackend, StateStore, encode_event, encode_state, spawn_core_with_store,
+    encode_event, encode_state, spawn_core_with_store, AuthorizationState, CoreEvent, CoreState,
+    LoginCodeDeliveryMethod, MemoryStateStore, MockTelegramBackend, StateStore,
 };
-use tokio::time::{Duration, timeout};
+use tokio::time::{timeout, Duration};
 
 #[test]
 fn delivery_event_has_stable_wire_shape_and_is_transient() {
-    let event = CoreEvent::AuthorizationCodeDeliveryChanged(Some(
-        LoginCodeDeliveryMethod::TelegramApp,
-    ));
+    let event =
+        CoreEvent::AuthorizationCodeDeliveryChanged(Some(LoginCodeDeliveryMethod::TelegramApp));
     assert_eq!(event.kind(), "authorization_code_delivery_changed");
     assert!(event.is_transient());
     assert_eq!(
@@ -34,7 +33,10 @@ fn reducer_does_not_persist_display_only_delivery_metadata() {
         LoginCodeDeliveryMethod::Sms,
     )));
 
-    assert_eq!(state.account.authorization, AuthorizationState::WaitingForCode);
+    assert_eq!(
+        state.account.authorization,
+        AuthorizationState::WaitingForCode
+    );
     let encoded_state = serde_json::to_string(&state).unwrap();
     assert!(!encoded_state.contains("login_code_delivery"));
     assert!(!encoded_state.contains("authorization_code_delivery_changed"));
@@ -77,8 +79,13 @@ async fn empty_store_also_completes_restore_before_auth_ui_can_open() {
     })
     .await
     .unwrap();
-    assert_eq!(state.borrow().account.authorization, AuthorizationState::Closed);
+    assert_eq!(
+        state.borrow().account.authorization,
+        AuthorizationState::Closed
+    );
     assert!(state.borrow().restore_complete);
-    assert!(encode_state(&state.borrow()).unwrap().contains("\"restore_complete\":true"));
+    assert!(encode_state(&state.borrow())
+        .unwrap()
+        .contains("\"restore_complete\":true"));
     core.shutdown().await.unwrap();
 }
