@@ -28,6 +28,7 @@ import com.chitik.telegram.ConversationPollUi
 import com.chitik.telegram.PeerProfileUi
 import com.chitik.telegram.notifications.NotificationCleanupPolicy
 import com.chitik.telegram.notifications.NotificationEventGate
+import com.chitik.telegram.notifications.NotificationWireParser
 import com.chitik.telegram.notifications.TelegramNotificationPublisher
 import com.chitik.telegram.MediaAttachmentUi
 import com.chitik.telegram.matchesMutationTarget
@@ -285,6 +286,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
     private val lifecycle = NativeSessionLifecycle()
     private val notifications = TelegramNotificationPublisher(application)
     private val notificationEventGate = NotificationEventGate()
+    private val liveReadReceiptPolicy = LiveReadReceiptPolicy()
     @Volatile
     private var restartHandleAfterLogout = false
 
@@ -388,6 +390,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
 
     fun logout() {
         if (_state.value.authorization != AuthorizationUiStep.Ready || _state.value.busy) return
+        liveReadReceiptPolicy.reset(null)
         restartHandleAfterLogout = true
         _state.update { it.copy(busy = true, error = null) }
         if (!sendCommand(JSONObject().put("type", "logout").toString())) {
@@ -444,6 +447,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         val creation = lifecycle.beginReplacement()
             ?: throw IllegalStateException("Native session replacement is already in progress")
         notificationEventGate.reset(creation.generation)
+        liveReadReceiptPolicy.reset(creation.generation)
         _state.update {
             it.copy(
                 chatsLoaded = false,
@@ -1208,7 +1212,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         if (!lifecycle.onNativeEvent(generation, type)) return
         lifecycle.runIfCurrent(generation) {
             handleNotificationEvent(generation, type, payload)
-            handleNativeEvent(type, payload)
+            handleNativeEvent(generation, type, payload)
         }
     }
 
@@ -1265,10 +1269,11 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
     /** Keeps both notification decision and publisher suppression aligned with Android UI state. */
     fun setNotificationVisibility(foreground: Boolean, chatId: Long?) {
         notificationEventGate.updateVisibility(foreground, chatId)
+        liveReadReceiptPolicy.updateVisibility(foreground, chatId)
         notifications.setVisibleChat(if (foreground) chatId else null)
     }
 
-    private fun handleNativeEvent(type: String, payload: String) {
+    private fun handleNativeEvent(generation: Long, type: String, payload: String) {
         when (type) {
             "connection_lifecycle" -> {
                 _state.update { current ->
@@ -1552,6 +1557,21 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
             "message_added",
             "chat_read",
             -> {
+                if (type == "message_added") {
+                    val message = NotificationWireParser.parseLiveMessage(payload)
+                    val maxMessageId = message?.let {
+                        liveReadReceiptPolicy.onIncomingMessage(
+                            generation = generation,
+                            chatId = it.chatId,
+                            messageId = it.messageId,
+                            outgoing = it.outgoing,
+                            authorized = _state.value.authorization == AuthorizationUiStep.Ready,
+                        )
+                    }
+                    if (message != null && maxMessageId != null) {
+                        markRead(message.chatId, maxMessageId)
+                    }
+                }
                 _state.update {
                     it.copy(
                         lastEventType = type,
