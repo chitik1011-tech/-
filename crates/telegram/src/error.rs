@@ -91,9 +91,9 @@ fn auth_rpc_error(context: &'static str, error: grammers_client::sender::RpcErro
 /// Grammers can expose Telegram flood limits either as `FLOOD_WAIT` plus a
 /// numeric RPC value or as the wire-style `FLOOD_WAIT_<seconds>` name. Keep
 /// both forms actionable without reflecting arbitrary RPC names to the UI.
-fn flood_wait_seconds(name: &str, value: Option<i32>) -> Option<u32> {
+fn flood_wait_seconds(name: &str, value: Option<u32>) -> Option<u32> {
     if name == "FLOOD_WAIT" {
-        return value.and_then(|seconds| u32::try_from(seconds).ok());
+        return value.filter(|seconds| *seconds > 0);
     }
 
     name.strip_prefix("FLOOD_WAIT_")
