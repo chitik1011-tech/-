@@ -1,7 +1,9 @@
 use std::{
     collections::{HashMap, VecDeque},
+    future::Future,
     path::Path,
     sync::Arc,
+    time::Duration,
 };
 
 use grammers_client::{
@@ -24,6 +26,7 @@ use tg_mobile_core::{
 use tokio::{
     sync::{broadcast, mpsc, watch},
     task::JoinHandle,
+    time::timeout,
 };
 
 use crate::{
@@ -49,6 +52,18 @@ use crate::{
 const MESSAGE_DEDUP_CAPACITY: usize = 4096;
 const RELIABLE_SEND_CACHE_CAPACITY: usize = 4096;
 const MEDIA_CACHE_MAX_BYTES: u64 = 512 * 1024 * 1024;
+const INITIAL_AUTHORIZATION_CHECK_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// Bound the initial MTProto authorization probe so an unavailable network
+/// cannot leave startup waiting forever. This deliberately does not wrap later
+/// login or update-stream operations.
+async fn with_initial_connection_timeout<T>(
+    future: impl Future<Output = tg_mobile_core::Result<T>>,
+) -> tg_mobile_core::Result<T> {
+    timeout(INITIAL_AUTHORIZATION_CHECK_TIMEOUT, future)
+        .await
+        .map_err(|_| CoreError::from(TelegramBackendError::InitialConnectionTimeout))?
+}
 
 #[derive(Debug, Clone)]
 struct ReliableSendRecord {
@@ -244,7 +259,7 @@ impl GrammersBackend {
 
     async fn require_ready(&mut self) -> tg_mobile_core::Result<()> {
         if self.auth.state() != AuthorizationState::Ready {
-            let state = self.auth.start(&self.client).await?;
+            let state = with_initial_connection_timeout(self.auth.start(&self.client)).await?;
             if state != AuthorizationState::Ready {
                 return Err(CoreError::InvalidInput(
                     "Telegram authorization is not ready".into(),
@@ -880,7 +895,7 @@ impl GrammersBackend {
 
         let command_events = match command {
             CoreCommand::Start => {
-                let state = self.auth.start(&self.client).await?;
+                let state = with_initial_connection_timeout(self.auth.start(&self.client)).await?;
                 if state == AuthorizationState::Ready {
                     self.ensure_update_worker().await?;
                 }
@@ -1792,6 +1807,34 @@ mod reliable_send_error_tests {
             ambiguous.state,
             OutgoingSendState::AwaitingConfirmation { .. }
         ));
+    }
+}
+
+#[cfg(test)]
+mod initial_connection_timeout_tests {
+    use std::future::pending;
+
+    use tg_mobile_core::CoreError;
+
+    use super::{INITIAL_AUTHORIZATION_CHECK_TIMEOUT, with_initial_connection_timeout};
+
+    #[tokio::test(start_paused = true)]
+    async fn stalled_initial_authorization_check_returns_distinct_retryable_error() {
+        let check = with_initial_connection_timeout::<()>(pending());
+        tokio::pin!(check);
+        tokio::time::advance(INITIAL_AUTHORIZATION_CHECK_TIMEOUT).await;
+
+        assert!(matches!(
+            check.await,
+            Err(CoreError::TransientTransport(message))
+                if message.contains("initial connection timed out")
+        ));
+    }
+
+    #[tokio::test]
+    async fn completed_initial_authorization_check_preserves_its_result() {
+        let result = with_initial_connection_timeout(async { Ok(true) }).await;
+        assert!(matches!(result, Ok(true)));
     }
 }
 

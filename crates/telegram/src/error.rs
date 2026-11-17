@@ -19,6 +19,9 @@ pub enum TelegramBackendError {
     #[error("Telegram session error: {0}")]
     Session(String),
 
+    #[error("Telegram initial connection timed out while checking authorization")]
+    InitialConnectionTimeout,
+
     #[error("chat {0} is not available in the peer cache; load chats first")]
     UnknownChat(i64),
 
@@ -32,6 +35,9 @@ pub enum TelegramBackendError {
 impl From<TelegramBackendError> for CoreError {
     fn from(value: TelegramBackendError) -> Self {
         match value {
+            TelegramBackendError::InitialConnectionTimeout => CoreError::TransientTransport(
+                "Telegram initial connection timed out while checking authorization".into(),
+            ),
             TelegramBackendError::Configuration(message)
             | TelegramBackendError::InvalidInput(message) => CoreError::InvalidInput(message),
             TelegramBackendError::UnknownChat(chat_id) => CoreError::InvalidInput(format!(
