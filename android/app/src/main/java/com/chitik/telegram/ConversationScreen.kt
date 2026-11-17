@@ -170,6 +170,9 @@ data class ConversationScreenState(
     val sending: Boolean = false,
     val sendStatus: String? = null,
     val outgoingMediaSend: OutgoingTextSendUi? = null,
+    val voiceRecordingChatId: Long? = null,
+    val voiceRecordingDurationMs: Long = 0L,
+    val voiceRecordingError: String? = null,
     val error: String? = null,
     val pendingReactionKeys: Set<String> = emptySet(),
     val reactionErrors: Map<String, String> = emptyMap(),
@@ -276,6 +279,9 @@ fun ConversationScreen(
     onDownloadMedia: (messageId: Long, attachmentIndex: Int, retry: Boolean) -> Unit,
     onCancelMedia: (messageId: Long, attachmentIndex: Int) -> Unit,
     onOpenDocument: (MediaAttachmentUi) -> Unit,
+    onStartVoiceRecording: (chatId: Long) -> Unit = {},
+    onStopVoiceRecording: (chatId: Long) -> Unit = {},
+    onCancelVoiceRecording: (chatId: Long) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -605,6 +611,19 @@ fun ConversationScreen(
                         sending = state.sending,
                         canSend = state.capabilities.canSendNow == true,
                         canSendMedia = state.capabilities.canSendMedia == true,
+                        voiceRecording = state.voiceRecordingChatId != null &&
+                            state.voiceRecordingChatId == state.chatId.toLongOrNull(),
+                        voiceRecordingDurationMs = state.voiceRecordingDurationMs,
+                        voiceRecordingError = state.voiceRecordingError,
+                        onStartVoiceRecording = {
+                            state.chatId.toLongOrNull()?.let(onStartVoiceRecording)
+                        },
+                        onStopVoiceRecording = {
+                            state.chatId.toLongOrNull()?.let(onStopVoiceRecording)
+                        },
+                        onCancelVoiceRecording = {
+                            state.chatId.toLongOrNull()?.let(onCancelVoiceRecording)
+                        },
                         onDraftChange = onDraftChange,
                         onSend = submitMessage,
                         onSendLocation = { onSendLocation(state.chatId) },
@@ -1721,6 +1740,12 @@ private fun ComposerBar(
     sending: Boolean,
     canSend: Boolean,
     canSendMedia: Boolean,
+    voiceRecording: Boolean = false,
+    voiceRecordingDurationMs: Long = 0L,
+    voiceRecordingError: String? = null,
+    onStartVoiceRecording: (() -> Unit)? = null,
+    onStopVoiceRecording: (() -> Unit)? = null,
+    onCancelVoiceRecording: (() -> Unit)? = null,
     onDraftChange: (String) -> Unit,
     onSend: () -> Unit,
     sendLabel: String = "Отправить",
@@ -1733,7 +1758,7 @@ private fun ComposerBar(
     replyingToPreview: String? = null,
     onCancelReply: () -> Unit = {},
 ) {
-    val canSubmit = draft.isNotBlank() && !sending && canSend
+    val canSubmit = draft.isNotBlank() && !sending && canSend && !voiceRecording
     var attachmentMenuExpanded by remember { mutableStateOf(false) }
     val showAttachmentAction = canSendMedia &&
         (onPickPhotoOrVideo != null || onPickDocument != null)
@@ -1747,6 +1772,14 @@ private fun ComposerBar(
     ) {
         Column {
             HorizontalDivider()
+            voiceRecordingError?.let { error ->
+                Text(
+                    text = error,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
             replyingToPreview?.let { preview ->
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 4.dp),
@@ -1757,81 +1790,125 @@ private fun ComposerBar(
                     TextButton(onClick = onCancelReply) { Text("Отмена") }
                 }
             }
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.Bottom,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                if (showLocationAction) {
-                    TextButton(
-                        onClick = onSendLocation,
-                        enabled = !sending && canSend && canSendMedia,
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 12.dp),
+            if (voiceRecording) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        text = "●",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    Text(
+                        text = formatVoiceRecordingDuration(voiceRecordingDurationMs),
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Medium,
+                    )
+                    TextButton(onClick = { onCancelVoiceRecording?.invoke() }) {
+                        Text("Отмена")
+                    }
+                    Button(
+                        onClick = { onStopVoiceRecording?.invoke() },
+                        enabled = !sending,
+                        shape = CircleShape,
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
                     ) {
-                        Text("📍")
+                        Text("Отправить")
                     }
                 }
-                if (showAttachmentAction) {
-                    Box {
+            } else {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.Bottom,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    if (showLocationAction) {
                         TextButton(
-                            onClick = { attachmentMenuExpanded = true },
-                            enabled = !sending && canSend,
+                            onClick = onSendLocation,
+                            enabled = !sending && canSend && canSendMedia,
                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 12.dp),
                         ) {
-                            Text("📎")
+                            Text("📍")
                         }
-                        DropdownMenu(
-                            expanded = attachmentMenuExpanded,
-                            onDismissRequest = { attachmentMenuExpanded = false },
-                        ) {
-                            onPickPhotoOrVideo?.let { pick ->
-                                DropdownMenuItem(
-                                    text = { Text("Фото или видео") },
-                                    onClick = {
-                                        attachmentMenuExpanded = false
-                                        pick()
-                                    },
-                                )
+                    }
+                    if (showAttachmentAction) {
+                        Box {
+                            TextButton(
+                                onClick = { attachmentMenuExpanded = true },
+                                enabled = !sending && canSend,
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 12.dp),
+                            ) {
+                                Text("📎")
                             }
-                            onPickDocument?.let { pick ->
-                                DropdownMenuItem(
-                                    text = { Text("Файл") },
-                                    onClick = {
-                                        attachmentMenuExpanded = false
-                                        pick()
-                                    },
-                                )
+                            DropdownMenu(
+                                expanded = attachmentMenuExpanded,
+                                onDismissRequest = { attachmentMenuExpanded = false },
+                            ) {
+                                onPickPhotoOrVideo?.let { pick ->
+                                    DropdownMenuItem(
+                                        text = { Text("Фото или видео") },
+                                        onClick = {
+                                            attachmentMenuExpanded = false
+                                            pick()
+                                        },
+                                    )
+                                }
+                                onPickDocument?.let { pick ->
+                                    DropdownMenuItem(
+                                        text = { Text("Файл") },
+                                        onClick = {
+                                            attachmentMenuExpanded = false
+                                            pick()
+                                        },
+                                    )
+                                }
                             }
                         }
                     }
-                }
-                OutlinedTextField(
-                    value = draft,
-                    onValueChange = onDraftChange,
-                    modifier = Modifier.weight(1f),
-                    placeholder = { Text(placeholder) },
-                    enabled = !sending,
-                    maxLines = 6,
-                    shape = RoundedCornerShape(TelegramUiTokens.composerCorner),
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Text,
-                        imeAction = ImeAction.Send,
-                    ),
-                    keyboardActions = KeyboardActions(
-                        onSend = { if (canSubmit) onSend() },
-                    ),
-                )
-                onCancel?.let { cancel -> TextButton(onClick = cancel, enabled = !sending) { Text("Отмена") } }
-                Button(
-                    onClick = onSend,
-                    enabled = canSubmit,
-                    modifier = if (sendLabel == "Отправить") Modifier.size(48.dp) else Modifier,
-                    shape = CircleShape,
-                    contentPadding = PaddingValues(0.dp),
-                ) {
-                    Text(if (sending) "…" else if (sendLabel == "Отправить") "➤" else sendLabel)
+                    OutlinedTextField(
+                        value = draft,
+                        onValueChange = onDraftChange,
+                        modifier = Modifier.weight(1f),
+                        placeholder = { Text(placeholder) },
+                        enabled = !sending,
+                        maxLines = 6,
+                        shape = RoundedCornerShape(TelegramUiTokens.composerCorner),
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Text,
+                            imeAction = ImeAction.Send,
+                        ),
+                        keyboardActions = KeyboardActions(
+                            onSend = { if (canSubmit) onSend() },
+                        ),
+                    )
+                    onCancel?.let { cancel -> TextButton(onClick = cancel, enabled = !sending) { Text("Отмена") } }
+                    if (draft.isBlank() && canSendMedia && onStartVoiceRecording != null && sendLabel == "Отправить") {
+                        androidx.compose.material3.IconButton(
+                            onClick = onStartVoiceRecording,
+                            enabled = !sending && canSend,
+                            modifier = Modifier.size(48.dp),
+                        ) {
+                            androidx.compose.material3.Icon(
+                                imageVector = androidx.compose.material.icons.Icons.Default.Mic,
+                                contentDescription = "Записать голосовое сообщение",
+                            )
+                        }
+                    } else {
+                        Button(
+                            onClick = onSend,
+                            enabled = canSubmit,
+                            modifier = if (sendLabel == "Отправить") Modifier.size(48.dp) else Modifier,
+                            shape = CircleShape,
+                            contentPadding = PaddingValues(0.dp),
+                        ) {
+                            Text(if (sending) "…" else if (sendLabel == "Отправить") "➤" else sendLabel)
+                        }
+                    }
                 }
             }
         }
