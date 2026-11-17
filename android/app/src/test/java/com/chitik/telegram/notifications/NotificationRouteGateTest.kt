@@ -5,7 +5,7 @@ import org.junit.Test
 
 class NotificationRouteGateTest {
     @Test
-    fun waitsForAuthorizationAndDelayedChatRestoreBeforeConsumingTap() {
+    fun waitsForAuthorizationAndInitialSnapshotThenOpensTargetFoundOnAPage() {
         assertEquals(
             NotificationRouteResolution.Wait,
             resolveNotificationRoute(
@@ -31,12 +31,23 @@ class NotificationRouteGateTest {
                 authorized = true,
                 chatsLoaded = true,
                 availableChatIds = listOf(5L, -7L),
+                chatListExhausted = false,
             ),
         )
     }
 
     @Test
-    fun discardsOnlyAfterTheCurrentAccountChatListIsLoaded() {
+    fun missingTargetWaitsUntilPaginationConfirmsExhaustion() {
+        assertEquals(
+            NotificationRouteResolution.Wait,
+            resolveNotificationRoute(
+                5L,
+                authorized = true,
+                chatsLoaded = true,
+                availableChatIds = listOf(-7L),
+                chatListExhausted = false,
+            ),
+        )
         assertEquals(
             NotificationRouteResolution.Discard,
             resolveNotificationRoute(
@@ -44,6 +55,7 @@ class NotificationRouteGateTest {
                 authorized = true,
                 chatsLoaded = true,
                 availableChatIds = listOf(-7L),
+                chatListExhausted = true,
             ),
         )
         assertEquals(

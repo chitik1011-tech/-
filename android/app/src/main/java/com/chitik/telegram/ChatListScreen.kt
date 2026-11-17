@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.material3.AlertDialog
@@ -42,9 +43,12 @@ import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -53,6 +57,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.collect
 
 /** Data projected exclusively from Rust CoreState; never inject sample chats. */
 data class ChatListEntry(
@@ -81,6 +86,11 @@ fun ChatListScreen(
     onOpenContacts: () -> Unit,
     onLogout: () -> Unit,
     onChatSelected: (Long) -> Unit,
+    hasMoreChats: Boolean = false,
+    isLoadingMoreChats: Boolean = false,
+    chatPageError: String? = null,
+    onLoadMoreChats: () -> Unit = {},
+    onRetryChatPage: () -> Unit = {},
     showEnableNotifications: Boolean = false,
     onEnableNotifications: () -> Unit = {},
     modifier: Modifier = Modifier,
@@ -92,6 +102,19 @@ fun ChatListScreen(
     var query by rememberSaveable { mutableStateOf("") }
     var confirmLogout by rememberSaveable { mutableStateOf(false) }
     val visibleChats = filterLoadedChats(chats, query)
+    val listState = rememberLazyListState()
+    val latestLoadMore by rememberUpdatedState(onLoadMoreChats)
+    LaunchedEffect(listState, visibleChats.size, hasMoreChats, isLoadingMoreChats, chatPageError, query) {
+        if (!hasMoreChats || isLoadingMoreChats || chatPageError != null || query.isNotBlank()) {
+            return@LaunchedEffect
+        }
+        snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
+            .collect { lastVisibleIndex ->
+                if (lastVisibleIndex >= (visibleChats.size - 5).coerceAtLeast(0)) {
+                    latestLoadMore()
+                }
+            }
+    }
     ModalNavigationDrawer(
         modifier = modifier.fillMaxSize(),
         drawerState = drawerState,
@@ -223,13 +246,14 @@ fun ChatListScreen(
                 AsyncContentMode.Empty -> EmptyState(
                     title = "No conversations yet",
                     description = "Your Telegram conversations will appear here.",
-                    actionLabel = "Refresh chats",
-                    onAction = onRefresh,
+                    actionLabel = if (hasMoreChats && query.isBlank()) "Load more chats" else "Refresh chats",
+                    onAction = if (hasMoreChats && query.isBlank()) onLoadMoreChats else onRefresh,
                     modifier = Modifier.weight(1f).fillMaxWidth().padding(24.dp),
                 )
                 AsyncContentMode.Error -> Unit
                 AsyncContentMode.Content -> LazyColumn(
                     modifier = Modifier.weight(1f).fillMaxWidth(),
+                    state = listState,
                 ) {
                     if (visibleChats.isEmpty()) {
                         item(key = "search_empty") {
@@ -251,6 +275,27 @@ fun ChatListScreen(
                             thickness = 0.5.dp,
                             color = MaterialTheme.colorScheme.outlineVariant,
                         )
+                    }
+                    if (chatPageError != null) {
+                        item(key = "chat_page_error") {
+                            ErrorRetryState(
+                                title = "Couldn’t load more chats",
+                                message = chatPageError,
+                                retryLabel = "Retry",
+                                retryEnabled = !isLoadingMoreChats,
+                                onRetry = onRetryChatPage,
+                                modifier = Modifier.padding(16.dp),
+                            )
+                        }
+                    } else if (hasMoreChats && isLoadingMoreChats) {
+                        item(key = "chat_page_loading") {
+                            Box(
+                                modifier = Modifier.fillMaxWidth().padding(20.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                            }
+                        }
                     }
                 }
             }

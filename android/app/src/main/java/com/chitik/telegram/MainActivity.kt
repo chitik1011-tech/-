@@ -162,15 +162,30 @@ private fun TelegramRustApp(
             onDismissNotification()
         }
     }
-    LaunchedEffect(incomingNotificationChatId, state.authorization, state.chatsLoaded, state.chats) {
+    LaunchedEffect(
+        incomingNotificationChatId,
+        state.authorization,
+        state.chatsLoaded,
+        state.chats,
+        state.chatPagination,
+    ) {
         val resolution = com.chitik.telegram.notifications.resolveNotificationRoute(
             chatId = incomingNotificationChatId,
             authorized = state.authorization == AuthorizationUiStep.Ready,
             chatsLoaded = state.chatsLoaded,
             availableChatIds = state.chats.map(ChatListEntry::id),
+            chatListExhausted = state.chatPagination.exhausted && !state.chatPagination.loading,
         )
         when (resolution) {
-            NotificationRouteResolution.Wait -> Unit
+            NotificationRouteResolution.Wait -> {
+                if (state.authorization == AuthorizationUiStep.Ready && !state.chatPagination.loading) {
+                    if (!state.chatPagination.loaded && state.chatPagination.error == null) {
+                        viewModel.loadChats()
+                    } else if (state.chatPagination.loaded && state.chatPagination.error == null) {
+                        viewModel.loadNextChatsPage()
+                    }
+                }
+            }
             is NotificationRouteResolution.OpenChat -> {
                 selectedChatId = resolution.chatId
                 showContacts = false
@@ -336,9 +351,17 @@ private fun TelegramRustApp(
         selectedChatId == 0L -> ChatListScreen(
             chats = state.chats,
             selectedChatId = null,
-            isLoading = state.busy,
-            error = state.error,
-            onRefresh = { viewModel.loadChats() },
+            isLoading = state.busy || state.chatPagination.loading,
+            error = state.error ?: state.chatPagination.error.takeIf { state.chats.isEmpty() },
+            onRefresh = {
+                if (state.chatPagination.error != null) viewModel.retryChatsPage()
+                else viewModel.loadChats()
+            },
+            hasMoreChats = state.chatPagination.nextCursor != null && !state.chatPagination.exhausted,
+            isLoadingMoreChats = state.chatPagination.loading && state.chatsLoaded,
+            chatPageError = state.chatPagination.error.takeIf { state.chats.isNotEmpty() },
+            onLoadMoreChats = viewModel::loadNextChatsPage,
+            onRetryChatPage = viewModel::retryChatsPage,
             showEnableNotifications = showEnableNotifications,
             onEnableNotifications = onEnableNotifications,
             onOpenContacts = {
