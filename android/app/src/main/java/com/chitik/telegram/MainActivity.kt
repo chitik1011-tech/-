@@ -37,6 +37,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -150,7 +151,45 @@ private fun TelegramRustApp(
     var jumpToMessageId by rememberSaveable { mutableStateOf<String?>(null) }
     var replySelectionGeneration by rememberSaveable { mutableLongStateOf(state.selectionGeneration) }
     var pendingLocationChatId by rememberSaveable { mutableLongStateOf(0L) }
+    var pendingVoiceRecordingChatId by rememberSaveable { mutableLongStateOf(0L) }
     var activeLocationRequest by remember { mutableStateOf<LocationRequestHandle?>(null) }
+    val currentSelectedChatId by rememberUpdatedState(selectedChatId)
+    val activeVoiceRecordingChatId by rememberUpdatedState(state.voiceRecording.chatId)
+    val voiceRecordingPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        val chatId = pendingVoiceRecordingChatId
+        pendingVoiceRecordingChatId = 0L
+        voiceRecordingChatAfterPermission(granted, chatId, currentSelectedChatId)?.let {
+            viewModel.startVoiceRecording(it)
+        }
+        if (!granted && chatId != 0L && currentSelectedChatId == chatId) {
+            Toast.makeText(context, "Разрешите доступ к микрофону для записи голосового сообщения", Toast.LENGTH_LONG).show()
+        }
+    }
+    val requestVoiceRecording: (Long) -> Unit = { chatId ->
+        if (chatId != 0L && selectedChatId == chatId) {
+            val permissionGranted = context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+            if (permissionGranted) {
+                viewModel.startVoiceRecording(chatId)
+            } else {
+                pendingVoiceRecordingChatId = chatId
+                voiceRecordingPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            }
+        }
+    }
+    LaunchedEffect(selectedChatId) {
+        pendingVoiceRecordingChatId = pendingVoicePermissionChatAfterNavigation(
+            pendingChatId = pendingVoiceRecordingChatId,
+            selectedChatId = selectedChatId,
+        )
+    }
+    LaunchedEffect(selectedChatId, state.voiceRecording.chatId) {
+        val recordingChatId = state.voiceRecording.chatId
+        if (shouldCancelVoiceRecordingForChatChange(recordingChatId, selectedChatId)) {
+            viewModel.cancelVoiceRecording(recordingChatId)
+        }
+    }
     LaunchedEffect(incomingNotificationChatId, state.sessionRestoreComplete, state.authorization) {
         val sessionDecision = decidePendingNotificationSessionRestore(
             restoreComplete = state.sessionRestoreComplete,
@@ -222,6 +261,7 @@ private fun TelegramRustApp(
                     activeLocationRequest?.cancel()
                     activeLocationRequest = null
                     pendingLocationChatId = 0L
+                    activeVoiceRecordingChatId?.let { chatId -> viewModel.cancelVoiceRecording(chatId) }
                 }
             }
             lifecycleOwner.lifecycle.addObserver(observer)
@@ -430,6 +470,9 @@ private fun TelegramRustApp(
                     sendStatus = if (state.mediaImportInProgress) "Подготовка файла…" else
                         state.textSendStatusForChat(selectedChatId),
                     outgoingMediaSend = state.mediaSendForChat(selectedChatId),
+                    voiceRecordingChatId = state.voiceRecording.chatId,
+                    voiceRecordingDurationMs = state.voiceRecording.durationMs,
+                    voiceRecordingError = state.voiceRecording.error,
                     error = state.textSendError ?: state.error,
                     pendingReactionKeys = state.pendingReactionKeys,
                     reactionErrors = state.reactionErrors,
@@ -497,6 +540,15 @@ private fun TelegramRustApp(
                 onPickDocument = { documentPickerLauncher.launch(arrayOf("*/*")) },
                 onRetryMediaSend = viewModel::retryMediaSend,
                 onCancelMediaSend = viewModel::cancelMediaSend,
+                onStartVoiceRecording = requestVoiceRecording,
+                onStopVoiceRecording = { chatId ->
+                    if (selectedChatId == chatId && state.voiceRecording.chatId == chatId) {
+                        viewModel.stopAndSendVoiceRecording(chatId)
+                    }
+                },
+                onCancelVoiceRecording = { chatId ->
+                    if (state.voiceRecording.chatId == chatId) viewModel.cancelVoiceRecording(chatId)
+                },
                 onSend = { chatId, text ->
                     chatId.toLongOrNull()?.let { numericChatId ->
                         val target = replyToMessageId
