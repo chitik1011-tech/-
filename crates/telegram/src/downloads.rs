@@ -184,18 +184,16 @@ async fn run_download(
         .await
         .map_err(|_| "Telegram media download failed".to_owned())?
     {
-        writer
-            .write_all(&chunk)
-            .map_err(|error| {
-                if error.kind() == std::io::ErrorKind::FileTooLarge {
-                    format!(
-                        "media is larger than the {}-byte download cache limit",
-                        cache.max_bytes()
-                    )
-                } else {
-                    "could not write downloaded media".to_owned()
-                }
-            })?;
+        writer.write_all(&chunk).map_err(|error| {
+            if error.kind() == std::io::ErrorKind::FileTooLarge {
+                format!(
+                    "media is larger than the {}-byte download cache limit",
+                    cache.max_bytes()
+                )
+            } else {
+                "could not write downloaded media".to_owned()
+            }
+        })?;
         transferred = transferred.saturating_add(chunk.len() as u64);
         transfers
             .report_progress(active, transferred)
