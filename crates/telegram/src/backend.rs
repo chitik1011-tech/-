@@ -1831,6 +1831,81 @@ mod initial_connection_timeout_tests {
     }
 }
 
+#[cfg(test)]
+mod sqlite_session_persistence_tests {
+    use std::{
+        net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6},
+        path::PathBuf,
+        sync::atomic::{AtomicU64, Ordering},
+    };
+
+    use grammers_client::session::{Session, storages::SqliteSession, types::DcOption};
+
+    static NEXT_TEMP_DIR: AtomicU64 = AtomicU64::new(0);
+
+    struct TemporarySessionDirectory(PathBuf);
+
+    impl TemporarySessionDirectory {
+        fn new() -> Self {
+            loop {
+                let sequence = NEXT_TEMP_DIR.fetch_add(1, Ordering::Relaxed);
+                let path = std::env::temp_dir().join(format!(
+                    "tg-mobile-session-reopen-{}-{sequence}",
+                    std::process::id()
+                ));
+                match std::fs::create_dir(&path) {
+                    Ok(()) => return Self(path),
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                    Err(error) => panic!("create temporary session directory: {error}"),
+                }
+            }
+        }
+    }
+
+    impl Drop for TemporarySessionDirectory {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[tokio::test]
+    async fn grammers_sqlite_session_persists_dc_and_auth_key_after_reopen() {
+        let temporary_directory = TemporarySessionDirectory::new();
+        let session_path = temporary_directory.0.join("session.sqlite3");
+        let dc_option = DcOption {
+            id: 42,
+            ipv4: SocketAddrV4::new(Ipv4Addr::LOCALHOST, 443),
+            ipv6: SocketAddrV6::new(Ipv6Addr::LOCALHOST, 443, 0, 0),
+            auth_key: Some([0x5a; 256]),
+        };
+
+        {
+            let session = SqliteSession::open(&session_path)
+                .await
+                .expect("open initial Grammers SQLite session");
+            session
+                .set_home_dc_id(dc_option.id)
+                .await
+                .expect("persist home DC");
+            session
+                .set_dc_option(&dc_option)
+                .await
+                .expect("persist DC option and auth key");
+        }
+
+        let reopened = SqliteSession::open(&session_path)
+            .await
+            .expect("reopen Grammers SQLite session");
+        assert_eq!(reopened.home_dc_id().expect("read home DC"), dc_option.id);
+        assert_eq!(
+            reopened
+                .dc_option(dc_option.id)
+                .expect("read DC option after reopen"),
+            Some(dc_option)
+        );
+    }
+}
+
 impl TelegramBackend for GrammersBackend {
     fn handle<'a>(&'a mut self, command: CoreCommand) -> BackendFuture<'a> {
         Box::pin(async move { self.handle_command(command).await })
