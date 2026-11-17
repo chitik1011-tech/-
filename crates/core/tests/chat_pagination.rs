@@ -152,3 +152,38 @@ fn repeated_cursor_stops_pagination_and_old_state_defaults_cursor_bookkeeping() 
     assert!(!restored.chat_pagination.loaded);
     assert!(restored.chat_pagination.can_load_next());
 }
+
+#[test]
+fn first_page_refresh_clears_consumed_cursors_before_accepting_new_snapshot() {
+    let mut state = CoreState::default();
+    state.reduce(&CoreEvent::ChatsPageLoading { cursor: None });
+    state.reduce(&CoreEvent::ChatsPageLoaded(ChatPage {
+        requested_cursor: None,
+        chats: vec![chat(1, "one", 0)],
+        next_cursor: Some("peer-1".into()),
+    }));
+    state.reduce(&CoreEvent::ChatsPageLoading {
+        cursor: Some("peer-1".into()),
+    });
+    state.reduce(&CoreEvent::ChatsPageLoaded(ChatPage {
+        requested_cursor: Some("peer-1".into()),
+        chats: vec![chat(2, "two", 0)],
+        next_cursor: Some("peer-2".into()),
+    }));
+    assert!(state
+        .chat_pagination
+        .consumed_cursors
+        .contains("peer-1"));
+
+    // A `None` cursor is a refresh request even after pagination has begun.
+    state.reduce(&CoreEvent::ChatsPageLoading { cursor: None });
+    state.reduce(&CoreEvent::ChatsPageLoaded(ChatPage {
+        requested_cursor: None,
+        chats: vec![chat(3, "refreshed", 0)],
+        next_cursor: Some("peer-1".into()),
+    }));
+    assert_eq!(state.account.chats[0].id, 3);
+    assert_eq!(state.chat_pagination.next_cursor.as_deref(), Some("peer-1"));
+    assert!(state.chat_pagination.consumed_cursors.is_empty());
+    assert!(state.chat_pagination.error.is_none());
+}
