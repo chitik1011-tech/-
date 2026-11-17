@@ -87,14 +87,19 @@ impl MediaCache {
             }),
         };
         if is_new_state {
-            let state = cache.lock_state()?;
+            let mut state = cache.lock_state()?;
             cache.recover_temporary_files()?;
             // Completed entries survive process restarts. Reapply the current
             // bound before serving any cache hits, including after a config or
             // app-version change lowers `max_bytes`.
-            cache.enforce_limit(&state)?;
+            cache.enforce_limit(&mut state)?;
         }
         Ok(cache)
+    }
+
+    /// Maximum size of one completed cache entry and its staging write.
+    pub fn max_bytes(&self) -> u64 {
+        self.inner.max_bytes
     }
 
     /// Return a lease for a cached reference, if present.
@@ -117,8 +122,14 @@ impl MediaCache {
         let mut state = self.lock_state()?;
         let metadata = match fs::symlink_metadata(&path) {
             Ok(metadata) if metadata.file_type().is_file() => metadata,
-            Ok(_) => return Ok(None),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Ok(_) => {
+                state.last_access.remove(&key);
+                return Ok(None);
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                state.last_access.remove(&key);
+                return Ok(None);
+            }
             Err(error) => return Err(error.into()),
         };
         if expected_size.is_some_and(|expected| metadata.len() != expected) {
@@ -153,6 +164,8 @@ impl MediaCache {
             key,
             temp_path,
             file: Some(file),
+            written_bytes: 0,
+            max_bytes: self.inner.max_bytes,
             committed: false,
         })
     }
@@ -169,8 +182,14 @@ impl MediaCache {
         }
         let metadata = match fs::symlink_metadata(&path) {
             Ok(metadata) if metadata.file_type().is_file() => metadata,
-            Ok(_) => return Ok(false),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+            Ok(_) => {
+                state.last_access.remove(&key);
+                return Ok(false);
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                state.last_access.remove(&key);
+                return Ok(false);
+            }
             Err(error) => return Err(error.into()),
         };
         let _ = metadata;
@@ -248,7 +267,7 @@ impl MediaCache {
         Ok(entries)
     }
 
-    fn enforce_limit(&self, state: &State) -> Result<(), CacheError> {
+    fn enforce_limit(&self, state: &mut State) -> Result<(), CacheError> {
         let entries = self.entries()?;
         let mut total: u64 = entries.iter().map(|entry| entry.size).sum();
         if total <= self.inner.max_bytes {
@@ -275,6 +294,7 @@ impl MediaCache {
                 continue;
             }
             fs::remove_file(entry.path)?;
+            state.last_access.remove(&entry.key);
             total = total.saturating_sub(entry.size);
         }
         if total > self.inner.max_bytes {
@@ -397,6 +417,8 @@ pub struct CacheWriter {
     key: String,
     temp_path: PathBuf,
     file: Option<File>,
+    written_bytes: u64,
+    max_bytes: u64,
     committed: bool,
 }
 
@@ -449,8 +471,9 @@ impl CacheWriter {
         mark_accessed(&mut state, &self.key);
         *state.leases.entry(self.key.clone()).or_default() += 1;
 
-        if let Err(error) = self.cache.enforce_limit(&state) {
+        if let Err(error) = self.cache.enforce_limit(&mut state) {
             let _ = fs::remove_file(&final_path);
+            state.last_access.remove(&self.key);
             if let Some(count) = state.leases.get_mut(&self.key) {
                 *count = count.saturating_sub(1);
                 if *count == 0 {
@@ -469,10 +492,26 @@ impl CacheWriter {
 
 impl Write for CacheWriter {
     fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
-        self.file
+        if buffer.is_empty() {
+            return Ok(0);
+        }
+        let remaining = self.max_bytes.saturating_sub(self.written_bytes);
+        if remaining == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::FileTooLarge,
+                "cache entry exceeds its configured size limit",
+            ));
+        }
+        let allowed = buffer
+            .len()
+            .min(usize::try_from(remaining).unwrap_or(usize::MAX));
+        let written = self
+            .file
             .as_mut()
             .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "cache writer is closed"))?
-            .write(buffer)
+            .write(&buffer[..allowed])?;
+        self.written_bytes = self.written_bytes.saturating_add(written as u64);
+        Ok(written)
     }
 
     fn flush(&mut self) -> io::Result<()> {
@@ -562,6 +601,24 @@ mod tests {
     }
 
     #[test]
+    fn missing_entry_lookup_prunes_stale_lru_metadata() {
+        let (_dir, cache) = cache(128);
+        let mut writer = cache.begin_write("externally-removed").expect("writer");
+        writer.write_all(b"media").expect("write");
+        let lease = writer.commit().expect("commit");
+        let path = lease.path().to_path_buf();
+        drop(lease);
+        fs::remove_file(path).expect("external removal");
+
+        assert!(cache.get("externally-removed").expect("lookup").is_none());
+        assert!(cache
+            .lock_state()
+            .expect("cache state")
+            .last_access
+            .is_empty());
+    }
+
+    #[test]
     fn explicit_removal_is_confined_and_respects_leases() {
         let (_dir, cache) = cache(128);
         let mut writer = cache.begin_write("../unsafe-name").expect("writer");
@@ -647,6 +704,41 @@ mod tests {
         assert!(matches!(second.commit(), Err(CacheError::CacheFull)));
         assert_eq!(fs::read(lease.path()).expect("leased read"), b"abc");
         assert_eq!(cache.used_bytes().expect("size"), 3);
+    }
+
+    #[test]
+    fn staging_writer_never_writes_past_the_single_item_cache_limit() {
+        let (_dir, cache) = cache(4);
+        let mut writer = cache.begin_write("bounded-staging").expect("writer");
+        writer.write_all(b"1234").expect("write to limit");
+        let error = writer.write(b"5").expect_err("reject byte over limit");
+        assert_eq!(error.kind(), io::ErrorKind::FileTooLarge);
+        assert_eq!(
+            fs::metadata(&writer.temp_path)
+                .expect("temp metadata")
+                .len(),
+            4
+        );
+        drop(writer);
+        assert!(cache
+            .get("bounded-staging")
+            .expect("cache lookup")
+            .is_none());
+    }
+
+    #[test]
+    fn evicting_entries_prunes_their_lru_metadata() {
+        let (_dir, cache) = cache(3);
+        for index in 0..32 {
+            let mut writer = cache
+                .begin_write(&format!("media-{index}"))
+                .expect("writer");
+            writer.write_all(b"123").expect("write");
+            drop(writer.commit().expect("commit"));
+
+            let state = cache.lock_state().expect("cache state");
+            assert!(state.last_access.len() <= 1);
+        }
     }
 
     #[test]
