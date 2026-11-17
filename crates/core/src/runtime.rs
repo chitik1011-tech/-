@@ -818,13 +818,9 @@ where
                     persistence_dirty |= event_is_persistent;
 
                     if stopped {
-                        let _ = persist_state(
-                            &store,
-                            &mut reduced_state,
-                            &state_tx,
-                            &event_tx_task,
-                        )
-                        .await;
+                        let _ =
+                            persist_state(&store, &mut reduced_state, &state_tx, &event_tx_task)
+                                .await;
                         stop_backend_worker(&shutdown_signal_tx, &mut worker).await;
                         break;
                     }
@@ -854,13 +850,8 @@ where
                     }
                 }
                 RuntimeInput::Persist => {
-                    persistence_dirty = !persist_state(
-                        &store,
-                        &mut reduced_state,
-                        &state_tx,
-                        &event_tx_task,
-                    )
-                    .await;
+                    persistence_dirty =
+                        !persist_state(&store, &mut reduced_state, &state_tx, &event_tx_task).await;
                 }
             }
         }
