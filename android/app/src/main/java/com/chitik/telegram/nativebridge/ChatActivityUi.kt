@@ -2,19 +2,19 @@ package com.chitik.telegram.nativebridge
 
 import org.json.JSONObject
 
-internal enum class ChatActivityKindUi {
+enum class ChatActivityKindUi {
     TYPING,
     RECORDING_VOICE,
     RECORDING_VIDEO,
     UPLOADING_MEDIA,
 }
 
-internal data class ChatActivityUi(
+data class ChatActivityUi(
     val generation: Long,
     val kind: ChatActivityKindUi,
 )
 
-internal data class ChatActivityGenerationUi(
+data class ChatActivityGenerationUi(
     val generation: Long,
     val active: Boolean,
 )
