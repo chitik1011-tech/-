@@ -53,7 +53,7 @@ class VoiceAttachmentTest {
         val coordinator = VoicePlaybackCoordinator(player, FakeScheduler())
         try {
             coordinator.toggle(audio)
-            player.listener?.onPlayingChanged(true)
+            player.currentListener?.onPlayingChanged(true)
             coordinator.onHostStop()
             coordinator.onHostStop()
             coordinator.onHostStart()
@@ -72,17 +72,17 @@ class VoiceAttachmentTest {
     }
 
     private class FakeVoicePlayer : VoicePlayerPort {
-        var listener: VoicePlayerPort.Listener? = null
+        var currentListener: VoicePlayerPort.Listener? = null
         var playCalls = 0
         var stopCalls = 0
         var released = false
         override fun play(file: File) { playCalls++ }
-        override fun pause() { listener?.onPlayingChanged(false) }
+        override fun pause() { currentListener?.onPlayingChanged(false) }
         override fun stop() { stopCalls++ }
         override fun seekTo(positionMs: Long) = Unit
         override fun currentPositionMs(): Long = 0L
         override fun durationMs(): Long = 0L
-        override fun setListener(listener: VoicePlayerPort.Listener?) { this.listener = listener }
+        override fun setListener(listener: VoicePlayerPort.Listener?) { currentListener = listener }
         override fun release() { released = true }
     }
 }
