@@ -353,12 +353,10 @@ mod tests {
 
     #[test]
     fn preserves_exact_telegram_code_delivery_type() {
-        let app = tl::enums::auth::SentCodeType::App(tl::types::auth::SentCodeTypeApp {
-            length: 5,
-        });
-        let sms = tl::enums::auth::SentCodeType::Sms(tl::types::auth::SentCodeTypeSms {
-            length: 5,
-        });
+        let app =
+            tl::enums::auth::SentCodeType::App(tl::types::auth::SentCodeTypeApp { length: 5 });
+        let sms =
+            tl::enums::auth::SentCodeType::Sms(tl::types::auth::SentCodeTypeSms { length: 5 });
 
         assert_eq!(
             LoginCodeDeliveryMethod::from(app),
