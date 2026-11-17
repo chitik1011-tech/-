@@ -8,6 +8,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Bundle
 import android.os.Build
 import androidx.core.content.ContextCompat
 import java.util.concurrent.atomic.AtomicReference
@@ -38,6 +39,7 @@ class TelegramNotificationPublisher(context: Context) {
      */
     data class IncomingMessage(
         val chatId: Long,
+        val messageId: Long? = null,
         val chatTitle: String,
         val body: String,
         val isGroup: Boolean,
@@ -66,6 +68,22 @@ class TelegramNotificationPublisher(context: Context) {
                 cancelSafely(manager, notificationTag(chatId))
                 refreshGroupSummary(manager)
             }
+        }
+    }
+
+    /** Cancels this chat's preview only when its latest message is within the inbox read boundary. */
+    fun cancelReadThrough(chatId: Long, maxMessageId: Long) {
+        if (chatId == 0L || maxMessageId <= 0L) return
+        cancelMatchingChatNotification(chatId) { messageId ->
+            NotificationCancellationPolicy.isReadByBoundary(messageId, maxMessageId)
+        }
+    }
+
+    /** Cancels this chat's preview only when its message was edited or deleted. */
+    fun cancelForMessages(chatId: Long, messageIds: Set<Long>) {
+        if (chatId == 0L || messageIds.isEmpty()) return
+        cancelMatchingChatNotification(chatId) { messageId ->
+            NotificationCancellationPolicy.matchesChangedMessage(messageId, messageIds)
         }
     }
 
@@ -111,6 +129,11 @@ class TelegramNotificationPublisher(context: Context) {
         }
 
         val notification = notificationBuilder
+            .setExtras(Bundle().apply {
+                message.messageId?.takeIf { it > 0L }?.let {
+                    putLong(NOTIFICATION_MESSAGE_ID_EXTRA, it)
+                }
+            })
             .setPublicVersion(
                 Notification.Builder(appContext, channelId)
                     .setSmallIcon(android.R.drawable.sym_action_chat)
@@ -221,6 +244,31 @@ class TelegramNotificationPublisher(context: Context) {
         runCatching { manager.cancel(tag, id) }
     }
 
+    private fun cancelMatchingChatNotification(
+        chatId: Long,
+        shouldCancel: (Long?) -> Boolean,
+    ) {
+        val manager = notificationManager ?: return
+        synchronized(notificationLock) {
+            val matching = activeChatNotifications(manager)
+                ?.filter { status ->
+                    telegramMessageNotificationChatId(status.tag) == chatId &&
+                        shouldCancel(status.notification?.extras?.let { extras ->
+                            if (extras.containsKey(NOTIFICATION_MESSAGE_ID_EXTRA)) {
+                                extras.getLong(NOTIFICATION_MESSAGE_ID_EXTRA)
+                            } else {
+                                null
+                            }
+                        })
+                }
+                .orEmpty()
+            matching.forEach { status ->
+                status.tag?.let { cancelSafely(manager, it, status.id) }
+            }
+            if (matching.isNotEmpty()) refreshGroupSummary(manager)
+        }
+    }
+
     private fun ensureChannels() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val manager = notificationManager ?: return
@@ -260,6 +308,7 @@ class TelegramNotificationPublisher(context: Context) {
         const val GROUP_CHANNEL_ID = "telegram_group_messages"
         const val NOTIFICATION_ID = 1
         const val GROUP_SUMMARY_REQUEST_CODE = 0x5447
+        const val NOTIFICATION_MESSAGE_ID_EXTRA = "com.chitik.telegram.extra.NOTIFICATION_MESSAGE_ID"
     }
 }
 
@@ -271,3 +320,9 @@ internal fun isTelegramMessageNotificationTag(tag: String?): Boolean {
         ?: return false
     return value != 0L && tag == "$TELEGRAM_MESSAGE_NOTIFICATION_TAG_PREFIX$value"
 }
+
+/** Returns the chat ID only for canonical tags emitted by this publisher. */
+internal fun telegramMessageNotificationChatId(tag: String?): Long? =
+    tag?.takeIf(::isTelegramMessageNotificationTag)
+        ?.removePrefix(TELEGRAM_MESSAGE_NOTIFICATION_TAG_PREFIX)
+        ?.toLongOrNull()
