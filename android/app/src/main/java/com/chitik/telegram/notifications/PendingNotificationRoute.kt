@@ -14,6 +14,12 @@ internal fun restorePendingNotificationRoute(
     TelegramNotificationRoute(savedChatId, savedAccountUserId)
 }.getOrNull()
 
+/** The consumed notification route must not remain in Activity.intent as a restore source. */
+internal fun shouldClearNotificationIntentAfterDismiss(
+    dismissedRoute: TelegramNotificationRoute?,
+    activityIntentRoute: TelegramNotificationRoute?,
+): Boolean = dismissedRoute != null && dismissedRoute == activityIntentRoute
+
 /** Whether a pending route may remain after the native session restore finishes. */
 internal enum class PendingNotificationSessionDecision {
     WaitForRestore,

@@ -60,6 +60,7 @@ import com.chitik.telegram.notifications.TelegramNotificationRoute
 import com.chitik.telegram.notifications.PendingNotificationSessionDecision
 import com.chitik.telegram.notifications.decidePendingNotificationSessionRestore
 import com.chitik.telegram.notifications.restorePendingNotificationRoute
+import com.chitik.telegram.notifications.shouldClearNotificationIntentAfterDismiss
 import com.chitik.telegram.deeplink.TelegramDeepLinkRouter
 import com.chitik.telegram.deeplink.pendingTelegramLinkAfterNewIntent
 import com.chitik.telegram.deeplink.TelegramJoinInviteIntent
@@ -101,7 +102,7 @@ class MainActivity : ComponentActivity() {
                     TelegramRustApp(
                         incomingLink = pendingTelegramLink,
                         incomingNotificationRoute = pendingNotificationRoute,
-                        onDismissNotification = { pendingNotificationRoute = null },
+                        onDismissNotification = { dismissPendingNotificationRoute() },
                         showEnableNotifications = !notificationPermissionGranted,
                         onEnableNotifications = { notificationPermissionRequester.request() },
         onDismissLink = { dismissPendingTelegramLink() },
@@ -134,6 +135,22 @@ class MainActivity : ComponentActivity() {
                 android.content.Intent(this, MainActivity::class.java)
                     .setAction(android.content.Intent.ACTION_MAIN),
             )
+        }
+    }
+
+    private fun dismissPendingNotificationRoute() {
+        val dismissedRoute = pendingNotificationRoute
+        pendingNotificationRoute = null
+        if (shouldClearNotificationIntentAfterDismiss(
+                dismissedRoute = dismissedRoute,
+                activityIntentRoute = TelegramNotificationRoute.parse(intent),
+            )) {
+            setIntent(android.content.Intent(intent).apply {
+                action = android.content.Intent.ACTION_MAIN
+                data = null
+                removeExtra(TelegramNotificationRoute.EXTRA_CHAT_ID)
+                removeExtra(TelegramNotificationRoute.EXTRA_ACCOUNT_USER_ID)
+            })
         }
     }
 
