@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use tg_mobile_core::{
     decode_command, AttachmentDownloadState, AttachmentKind, CoreCommand, CoreEvent, CoreState,
-    MediaAttachment, MessageSummary,
+    LinkEvent, MediaAttachment, MessageSummary,
 };
 
 fn message_with_photo() -> MessageSummary {
@@ -114,6 +114,7 @@ fn media_transfer_events_update_only_the_target_attachment() {
         chat_id: 42,
         message_id: 7,
         attachment_index: 0,
+        session_generation: 0,
         generation: 0,
         state: AttachmentDownloadState::Downloading {
             bytes_transferred: 25,
@@ -133,6 +134,7 @@ fn media_transfer_events_update_only_the_target_attachment() {
         chat_id: 42,
         message_id: 7,
         attachment_index: 0,
+        session_generation: 0,
         generation: 0,
         state: AttachmentDownloadState::Downloaded {
             local_path: path.clone(),
@@ -147,6 +149,7 @@ fn media_transfer_events_update_only_the_target_attachment() {
         chat_id: 42,
         message_id: 7,
         attachment_index: 0,
+        session_generation: 0,
         generation: 1,
         state: AttachmentDownloadState::NotDownloaded,
     });
@@ -165,6 +168,7 @@ fn stale_progress_cannot_overwrite_cancellation_or_a_newer_retry() {
         chat_id: 42,
         message_id: 7,
         attachment_index: 0,
+        session_generation: 0,
         generation: 2,
         state: AttachmentDownloadState::Cancelled,
     });
@@ -172,6 +176,7 @@ fn stale_progress_cannot_overwrite_cancellation_or_a_newer_retry() {
         chat_id: 42,
         message_id: 7,
         attachment_index: 0,
+        session_generation: 0,
         generation: 1,
         state: AttachmentDownloadState::Downloading {
             bytes_transferred: 40,
@@ -187,6 +192,7 @@ fn stale_progress_cannot_overwrite_cancellation_or_a_newer_retry() {
         chat_id: 42,
         message_id: 7,
         attachment_index: 0,
+        session_generation: 0,
         generation: 3,
         state: AttachmentDownloadState::Queued,
     });
@@ -194,6 +200,7 @@ fn stale_progress_cannot_overwrite_cancellation_or_a_newer_retry() {
         chat_id: 42,
         message_id: 7,
         attachment_index: 0,
+        session_generation: 0,
         generation: 2,
         state: AttachmentDownloadState::Cancelled,
     });
@@ -204,5 +211,81 @@ fn stale_progress_cannot_overwrite_cancellation_or_a_newer_retry() {
     assert_eq!(
         state.messages_for_chat(42)[0].attachments[0].download_generation,
         3
+    );
+}
+
+#[test]
+fn transfer_updates_from_a_replaced_account_cannot_mutate_same_id_messages() {
+    let mut state = CoreState::default();
+    state.reduce(&CoreEvent::ConnectionSessionStarted);
+    for event in [
+        LinkEvent::TransportConnected,
+        LinkEvent::SyncStarted,
+        LinkEvent::SyncCompleted,
+    ] {
+        let token = state.connection_machine.token();
+        state.reduce(&CoreEvent::ConnectionLifecycle { token, event });
+    }
+    let old_session_generation = state
+        .connection_machine
+        .token()
+        .generation()
+        .as_u64();
+    state.reduce(&CoreEvent::MessageAdded(message_with_photo()));
+
+    state.reduce(&CoreEvent::ConnectionLifecycle {
+        token: state.connection_machine.token(),
+        event: LinkEvent::Logout,
+    });
+    state.reduce(&CoreEvent::ConnectionSessionStarted);
+    let new_session_generation = state
+        .connection_machine
+        .token()
+        .generation()
+        .as_u64();
+    assert_ne!(old_session_generation, new_session_generation);
+    state.reduce(&CoreEvent::MessageAdded(message_with_photo()));
+
+    for event in [
+        LinkEvent::TransportConnected,
+        LinkEvent::SyncStarted,
+        LinkEvent::SyncCompleted,
+        LinkEvent::TransportLost,
+    ] {
+        let token = state.connection_machine.token();
+        state.reduce(&CoreEvent::ConnectionLifecycle { token, event });
+    }
+    assert_eq!(
+        state.connection_machine.token().generation().as_u64(),
+        new_session_generation,
+        "a reconnect changes the connection epoch, not the account session"
+    );
+
+    state.reduce(&CoreEvent::MediaTransferUpdated {
+        chat_id: 42,
+        message_id: 7,
+        attachment_index: 0,
+        session_generation: old_session_generation,
+        generation: 1,
+        state: AttachmentDownloadState::Downloaded {
+            local_path: PathBuf::from("/old-account/cache/item.media"),
+        },
+    });
+    assert_eq!(
+        state.messages_for_chat(42)[0].attachments[0].download_state,
+        AttachmentDownloadState::NotDownloaded
+    );
+
+    state.reduce(&CoreEvent::MediaTransferUpdated {
+        chat_id: 42,
+        message_id: 7,
+        attachment_index: 0,
+        session_generation: new_session_generation,
+        generation: 1,
+        state: AttachmentDownloadState::Queued,
+    });
+    assert_eq!(
+        state.messages_for_chat(42)[0].attachments[0].download_state,
+        AttachmentDownloadState::Queued
     );
 }

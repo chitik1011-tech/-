@@ -165,6 +165,9 @@ pub enum CoreEvent {
         chat_id: i64,
         message_id: i64,
         attachment_index: usize,
+        /// Account session owning this download. Stable across reconnects.
+        #[serde(default)]
+        session_generation: u64,
         #[serde(default)]
         generation: u64,
         state: AttachmentDownloadState,
