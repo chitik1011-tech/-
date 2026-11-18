@@ -64,6 +64,24 @@ pub enum CoreEvent {
         offset: usize,
         total: usize,
         contacts: Vec<Contact>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        query: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        request_id: Option<u64>,
+    },
+    /// Marks the newest contact load/search so late results cannot replace it.
+    ContactsLoadStarted {
+        request_id: u64,
+        offset: usize,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        query: Option<String>,
+    },
+    ContactsLoadFailed {
+        request_id: Option<u64>,
+        offset: usize,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        query: Option<String>,
+        error: String,
     },
     /// Telegram invalidated its local contact snapshot; the client should reload it.
     ContactsRefreshRequested,
@@ -255,6 +273,8 @@ impl CoreEvent {
             Self::ChatsPageFailed { .. } => "chats_page_failed",
             Self::ChatCapabilitiesUpdated(_) => "chat_capabilities_updated",
             Self::ContactsLoaded { .. } => "contacts_loaded",
+            Self::ContactsLoadStarted { .. } => "contacts_load_started",
+            Self::ContactsLoadFailed { .. } => "contacts_load_failed",
             Self::ContactsRefreshRequested => "contacts_refresh_requested",
             Self::MessagesLoaded { .. } => "messages_loaded",
             Self::MessagesPageLoading { .. } => "messages_page_loading",
@@ -307,6 +327,7 @@ impl CoreEvent {
                 | Self::PollVoteSubmitted { .. }
                 | Self::PollVoteFailed { .. }
                 | Self::ContactsRefreshRequested
+                | Self::ContactsLoadStarted { .. }
                 | Self::MessagesForwarded(_)
                 | Self::ChatActivityChanged { .. }
                 | Self::ChatActivityEnded { .. }

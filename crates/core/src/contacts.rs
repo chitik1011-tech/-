@@ -6,6 +6,7 @@ use crate::error::{CoreError, Result};
 
 /// Maximum number of contacts returned by one paginated list request.
 pub const MAX_CONTACT_PAGE_LIMIT: usize = 100;
+pub const MAX_CONTACT_SEARCH_QUERY_BYTES: usize = 256;
 const MAX_DISPLAY_NAME_CHARS: usize = 256;
 const MIN_USERNAME_CHARS: usize = 5;
 const MAX_USERNAME_CHARS: usize = 32;
@@ -18,11 +19,18 @@ pub struct Contact {
     pub display_name: String,
     pub username: Option<String>,
     pub is_mutual: bool,
+    /// Whether this user is already in the account's Telegram contact list.
+    #[serde(default = "contact_is_saved")]
+    pub is_contact: bool,
     #[serde(default)]
     pub is_bot: bool,
     /// Opaque Telegram profile-photo identifier; photo bytes are resolved separately.
     #[serde(default)]
     pub avatar_photo_id: Option<i64>,
+}
+
+fn contact_is_saved() -> bool {
+    true
 }
 
 impl Contact {
@@ -144,6 +152,26 @@ pub fn validate_contact_page(limit: usize) -> Result<()> {
     }
 }
 
+pub fn validate_contact_search(query: &str, limit: usize) -> Result<()> {
+    validate_contact_page(limit)?;
+    let query = normalize_contact_search_query(query);
+    if query.is_empty() || query.chars().count() < 2 {
+        return Err(CoreError::InvalidInput(
+            "contact search query must contain at least two characters".into(),
+        ));
+    }
+    if query.len() > MAX_CONTACT_SEARCH_QUERY_BYTES {
+        return Err(CoreError::InvalidInput(format!(
+            "contact search query exceeds {MAX_CONTACT_SEARCH_QUERY_BYTES} UTF-8 bytes"
+        )));
+    }
+    Ok(())
+}
+
+pub fn normalize_contact_search_query(query: &str) -> String {
+    query.trim().trim_start_matches('@').trim().to_owned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -154,6 +182,7 @@ mod tests {
             display_name: format!("Person {user_id}"),
             username: username.map(str::to_owned),
             is_mutual: false,
+            is_contact: true,
             is_bot: false,
             avatar_photo_id: None,
         }
@@ -223,5 +252,32 @@ mod tests {
         let json = serde_json::to_value(contact(42, Some("sample_user"))).unwrap();
         assert!(json.get("phone").is_none());
         assert_eq!(json["user_id"], 42);
+    }
+
+    #[test]
+    fn contact_search_requires_a_usable_query_and_bounded_limit() {
+        assert!(validate_contact_search("ada", 25).is_ok());
+        assert!(validate_contact_search(" @ada ", 25).is_ok());
+        assert!(validate_contact_search("@a", 25).is_err());
+        assert!(validate_contact_search(" a ", 25).is_err());
+        assert!(validate_contact_search(" ", 25).is_err());
+        assert!(validate_contact_search(
+            &"x".repeat(MAX_CONTACT_SEARCH_QUERY_BYTES + 1),
+            25
+        )
+        .is_err());
+        assert!(validate_contact_search("ada", 0).is_err());
+    }
+
+    #[test]
+    fn legacy_contact_snapshots_default_to_saved_contacts() {
+        let contact: Contact = serde_json::from_value(serde_json::json!({
+            "user_id": 42,
+            "display_name": "Ada",
+            "username": "ada",
+            "is_mutual": true
+        }))
+        .unwrap();
+        assert!(contact.is_contact);
     }
 }

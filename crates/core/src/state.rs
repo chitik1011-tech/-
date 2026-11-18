@@ -22,6 +22,13 @@ pub const MAX_CACHED_MESSAGES_PER_CHAT: usize = 512;
 pub const MAX_CACHED_POLLS: usize = 512;
 pub const MAX_CACHED_PROFILES: usize = 128;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ContactsRequestState {
+    request_id: u64,
+    offset: usize,
+    query: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CoreState {
     pub running: bool,
@@ -32,6 +39,11 @@ pub struct CoreState {
     /// Server-provided contact names and stable IDs; phone numbers are never stored here.
     #[serde(default)]
     pub contacts: ContactBook,
+    /// Runtime-only correlation key for the newest contact page/search request.
+    #[serde(skip)]
+    active_contacts_request: Option<ContactsRequestState>,
+    #[serde(skip)]
+    last_contacts_request_id: Option<u64>,
     /// Session-scoped permissions reported by Telegram, keyed by stable chat ID.
     #[serde(default)]
     pub chat_capabilities: BTreeMap<i64, ChatCapabilities>,
@@ -98,6 +110,8 @@ impl Default for CoreState {
             restore_complete: false,
             account: AccountState::default(),
             contacts: ContactBook::default(),
+            active_contacts_request: None,
+            last_contacts_request_id: None,
             chat_capabilities: BTreeMap::new(),
             connection_state: ConnectionState::Disconnected,
             connection_machine: ConnectionMachine::default(),
@@ -128,6 +142,8 @@ impl CoreState {
     pub fn persistence_snapshot(&self) -> Self {
         let mut snapshot = self.clone();
         snapshot.contacts = ContactBook::default();
+        snapshot.active_contacts_request = None;
+        snapshot.last_contacts_request_id = None;
         snapshot.profiles.clear();
         snapshot.profile_order.clear();
         snapshot.chat_capabilities.clear();
@@ -502,11 +518,65 @@ impl CoreState {
                         .insert(capabilities.chat_id, capabilities.clone());
                 }
             }
-            CoreEvent::ContactsLoaded {
-                offset, contacts, ..
+            CoreEvent::ContactsLoadStarted {
+                request_id,
+                offset,
+                query,
             } => {
+                if self
+                    .last_contacts_request_id
+                    .is_some_and(|last| *request_id <= last)
+                {
+                    return;
+                }
+                self.last_contacts_request_id = Some(*request_id);
+                self.active_contacts_request = Some(ContactsRequestState {
+                    request_id: *request_id,
+                    offset: *offset,
+                    query: query.clone(),
+                });
+            }
+            CoreEvent::ContactsLoaded {
+                offset,
+                contacts,
+                query,
+                request_id,
+                ..
+            } => {
+                if let Some(active) = &self.active_contacts_request {
+                    if Some(active.request_id) != *request_id
+                        || active.offset != *offset
+                        || active.query.as_deref().map(str::trim)
+                            != query.as_deref().map(str::trim)
+                    {
+                        return;
+                    }
+                } else if request_id.is_some() {
+                    return;
+                }
+                self.active_contacts_request = None;
                 self.contacts.apply_page(*offset, contacts);
                 self.last_error = None;
+            }
+            CoreEvent::ContactsLoadFailed {
+                request_id,
+                offset,
+                query,
+                error,
+            } => {
+                if let Some(active) = &self.active_contacts_request {
+                    if Some(active.request_id) != *request_id
+                        || active.offset != *offset
+                        || active.query.as_deref().map(str::trim)
+                            != query.as_deref().map(str::trim)
+                    {
+                        return;
+                    }
+                } else if request_id.is_some() {
+                    return;
+                }
+                self.active_contacts_request = None;
+                self.last_error = Some(error.clone());
             }
             CoreEvent::ContactsRefreshRequested => {}
             CoreEvent::MessagesLoaded { chat_id, messages } => {

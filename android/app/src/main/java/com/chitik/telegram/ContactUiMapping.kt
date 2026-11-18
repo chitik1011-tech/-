@@ -28,6 +28,7 @@ internal fun parseContactListState(root: JSONObject?): List<ContactListEntry> {
             displayName = displayName,
             username = contact.optString("username").takeIf(String::isNotEmpty),
             isMutual = contact.optBoolean("is_mutual"),
+            isContact = contact.optBoolean("is_contact", true),
             isBot = contact.optBoolean("is_bot"),
             avatarPhotoId = contact.optLong("avatar_photo_id").takeIf { it > 0L },
         )
@@ -37,6 +38,8 @@ internal fun parseContactListState(root: JSONObject?): List<ContactListEntry> {
 internal data class ContactPage(
     val offset: Int,
     val total: Int,
+    val requestId: Long?,
+    val query: String?,
     val contacts: List<ContactListEntry>,
 )
 
@@ -45,6 +48,7 @@ internal fun parseContactPage(payload: String): ContactPage? = runCatching {
     val eventPayload = JSONObject(payload).optJSONObject("payload") ?: return null
     val offset = eventPayload.optInt("offset", -1)
     val total = eventPayload.optInt("total", -1)
+    val requestId = eventPayload.optLong("request_id", 0L).takeIf { it > 0L }
     val values = eventPayload.optJSONArray("contacts") ?: return null
     if (offset < 0 || total < 0) return null
 
@@ -60,11 +64,21 @@ internal fun parseContactPage(payload: String): ContactPage? = runCatching {
                     displayName = displayName,
                     username = contact.optString("username").takeIf(String::isNotEmpty),
                     isMutual = contact.optBoolean("is_mutual"),
+                    isContact = contact.optBoolean("is_contact", true),
                     isBot = contact.optBoolean("is_bot"),
                     avatarPhotoId = contact.optLong("avatar_photo_id").takeIf { it > 0L },
                 ),
             )
         }
-    }.distinctBy(ContactListEntry::userId).sortedBy(ContactListEntry::userId)
-    ContactPage(offset, total, contacts)
+    }.distinctBy(ContactListEntry::userId).let { parsed ->
+        if (eventPayload.optString("query").isNotEmpty()) parsed
+        else parsed.sortedBy(ContactListEntry::userId)
+    }
+    ContactPage(
+        offset = offset,
+        total = total,
+        requestId = requestId,
+        query = eventPayload.optString("query").takeIf(String::isNotEmpty),
+        contacts = contacts,
+    )
 }.getOrNull()

@@ -43,7 +43,10 @@ pub use connection_machine::{
     ConnectionEpoch, ConnectionMachine, ConnectionToken, LinkError, LinkEvent, LinkPhase,
     Outcome as ConnectionOutcome, SessionGeneration,
 };
-pub use contacts::{Contact, ContactBook, MAX_CONTACT_PAGE_LIMIT};
+pub use contacts::{
+    Contact, ContactBook, MAX_CONTACT_PAGE_LIMIT, MAX_CONTACT_SEARCH_QUERY_BYTES,
+    normalize_contact_search_query, validate_contact_search,
+};
 pub use error::{CoreError, Result};
 pub use event::{CoreEvent, MessageMutationAction};
 pub use forwarding::{
