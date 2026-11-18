@@ -14,6 +14,7 @@ import androidx.core.content.ContextCompat
 import java.util.concurrent.atomic.AtomicReference
 
 internal const val TELEGRAM_MESSAGE_NOTIFICATION_TAG_PREFIX = "telegram_chat_"
+internal const val TELEGRAM_ACCOUNT_NOTIFICATION_TAG_PREFIX = "telegram_account_"
 
 /**
  * Publishes message notifications from caller-supplied Rust event data.
@@ -26,7 +27,7 @@ class TelegramNotificationPublisher(context: Context) {
     private val appContext = context.applicationContext
     private val notificationManager =
         appContext.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
-    private val visibleChatId = AtomicReference<Long?>(null)
+    private val visibleChat = AtomicReference<NotificationChatScope?>(null)
     private val notificationLock = Any()
 
     init {
@@ -49,41 +50,57 @@ class TelegramNotificationPublisher(context: Context) {
     )
 
     /** Marks the currently visible chat; its incoming events are not shown as notifications. */
-    fun setVisibleChat(chatId: Long?) {
-        visibleChatId.set(chatId)
-        if (chatId != null) {
+    fun setVisibleChat(chatId: Long?, accountUserId: Long?) {
+        visibleChat.set(NotificationChatScope(accountUserId, chatId))
+        if (chatId != null && accountUserId != null) {
             synchronized(notificationLock) {
                 notificationManager?.let { manager ->
-                    cancelSafely(manager, notificationTag(chatId))
+                    cancelSafely(manager, notificationTag(accountUserId, chatId))
                     refreshGroupSummary(manager)
                 }
             }
         }
     }
 
+    /** Retires previews belonging to every other or legacy unscoped account. */
+    fun reconcileAccount(activeAccountUserId: Long?) {
+        val manager = notificationManager ?: return
+        synchronized(notificationLock) {
+            val stale = activeChatNotifications(manager).orEmpty().filter { status ->
+                val scope = telegramMessageNotificationScope(status.tag)
+                !NotificationAccountScopePolicy.belongsToActiveAccount(
+                    notificationAccountUserId = scope?.accountUserId,
+                    activeAccountUserId = activeAccountUserId,
+                )
+            }
+            stale.forEach { status -> status.tag?.let { cancelSafely(manager, it, status.id) } }
+            if (stale.isNotEmpty()) refreshGroupSummary(manager)
+        }
+    }
+
     /** Dismisses one chat's notification and keeps the group summary in sync. */
-    fun cancelChat(chatId: Long) {
+    fun cancelChat(accountUserId: Long, chatId: Long) {
         if (chatId == 0L) return
         synchronized(notificationLock) {
             notificationManager?.let { manager ->
-                cancelSafely(manager, notificationTag(chatId))
+                cancelSafely(manager, notificationTag(accountUserId, chatId))
                 refreshGroupSummary(manager)
             }
         }
     }
 
     /** Cancels this chat's preview only when its latest message is within the inbox read boundary. */
-    fun cancelReadThrough(chatId: Long, maxMessageId: Long) {
+    fun cancelReadThrough(accountUserId: Long, chatId: Long, maxMessageId: Long) {
         if (chatId == 0L || maxMessageId <= 0L) return
-        cancelMatchingChatNotification(chatId) { messageId ->
+        cancelMatchingChatNotification(accountUserId, chatId) { messageId ->
             NotificationCancellationPolicy.isReadByBoundary(messageId, maxMessageId)
         }
     }
 
     /** Cancels this chat's preview only when its message was edited or deleted. */
-    fun cancelForMessages(chatId: Long, messageIds: Set<Long>) {
+    fun cancelForMessages(accountUserId: Long, chatId: Long, messageIds: Set<Long>) {
         if (chatId == 0L || messageIds.isEmpty()) return
-        cancelMatchingChatNotification(chatId) { messageId ->
+        cancelMatchingChatNotification(accountUserId, chatId) { messageId ->
             NotificationCancellationPolicy.matchesChangedMessage(messageId, messageIds)
         }
     }
@@ -131,6 +148,7 @@ class TelegramNotificationPublisher(context: Context) {
 
         val notification = notificationBuilder
             .setExtras(Bundle().apply {
+                putLong(NOTIFICATION_ACCOUNT_USER_ID_EXTRA, message.accountUserId)
                 message.messageId?.takeIf { it > 0L }?.let {
                     putLong(NOTIFICATION_MESSAGE_ID_EXTRA, it)
                 }
@@ -154,9 +172,11 @@ class TelegramNotificationPublisher(context: Context) {
             .build()
 
         return synchronized(notificationLock) {
-            if (visibleChatId.get() == message.chatId) return@synchronized false
+            if (visibleChat.get() == NotificationChatScope(message.accountUserId, message.chatId)) {
+                return@synchronized false
+            }
             try {
-                manager.notify(notificationTag(message.chatId), NOTIFICATION_ID, notification)
+                manager.notify(notificationTag(message.accountUserId, message.chatId), NOTIFICATION_ID, notification)
             } catch (_: SecurityException) {
                 // Permission can be revoked between the check and notify.
                 return@synchronized false
@@ -250,6 +270,7 @@ class TelegramNotificationPublisher(context: Context) {
     }
 
     private fun cancelMatchingChatNotification(
+        accountUserId: Long,
         chatId: Long,
         shouldCancel: (Long?) -> Boolean,
     ) {
@@ -257,7 +278,8 @@ class TelegramNotificationPublisher(context: Context) {
         synchronized(notificationLock) {
             val matching = activeChatNotifications(manager)
                 ?.filter { status ->
-                    telegramMessageNotificationChatId(status.tag) == chatId &&
+                    telegramMessageNotificationScope(status.tag) ==
+                        NotificationAccountChatScope(accountUserId, chatId) &&
                         shouldCancel(status.notification?.extras?.let { extras ->
                             if (extras.containsKey(NOTIFICATION_MESSAGE_ID_EXTRA)) {
                                 extras.getLong(NOTIFICATION_MESSAGE_ID_EXTRA)
@@ -306,28 +328,50 @@ class TelegramNotificationPublisher(context: Context) {
                 Manifest.permission.POST_NOTIFICATIONS,
             ) == PackageManager.PERMISSION_GRANTED
 
-    private fun notificationTag(chatId: Long): String = "$TELEGRAM_MESSAGE_NOTIFICATION_TAG_PREFIX$chatId"
-
     private companion object {
         const val PRIVATE_CHANNEL_ID = "telegram_private_messages"
         const val GROUP_CHANNEL_ID = "telegram_group_messages"
         const val NOTIFICATION_ID = 1
         const val GROUP_SUMMARY_REQUEST_CODE = 0x5447
         const val NOTIFICATION_MESSAGE_ID_EXTRA = "com.chitik.telegram.extra.NOTIFICATION_MESSAGE_ID"
+        const val NOTIFICATION_ACCOUNT_USER_ID_EXTRA = "com.chitik.telegram.extra.NOTIFICATION_ACCOUNT_USER_ID"
     }
 }
 
 /** Recognizes only the exact tag format emitted for this publisher's chat notifications. */
-internal fun isTelegramMessageNotificationTag(tag: String?): Boolean {
+internal fun isTelegramMessageNotificationTag(tag: String?): Boolean =
+    telegramMessageNotificationScope(tag) != null || legacyTelegramMessageNotificationChatId(tag) != null
+
+internal data class NotificationAccountChatScope(val accountUserId: Long, val chatId: Long)
+private data class NotificationChatScope(val accountUserId: Long?, val chatId: Long?)
+
+internal fun telegramMessageNotificationScope(tag: String?): NotificationAccountChatScope? {
+    val value = tag?.takeIf { it.startsWith(TELEGRAM_ACCOUNT_NOTIFICATION_TAG_PREFIX) }
+        ?.removePrefix(TELEGRAM_ACCOUNT_NOTIFICATION_TAG_PREFIX) ?: return null
+    val parts = value.split("_chat_", limit = 2)
+    if (parts.size != 2) return null
+    val accountId = parts[0].toLongOrNull()?.takeIf { it > 0L } ?: return null
+    val chatId = parts[1].toLongOrNull()?.takeIf { it != 0L } ?: return null
+    if (tag != notificationTag(accountId, chatId)) return null
+    return NotificationAccountChatScope(accountId, chatId)
+}
+
+private fun notificationTag(accountUserId: Long, chatId: Long): String =
+    "$TELEGRAM_ACCOUNT_NOTIFICATION_TAG_PREFIX${accountUserId}_chat_$chatId"
+
+private fun legacyTelegramMessageNotificationChatId(tag: String?): Long? {
     val value = tag?.takeIf { it.startsWith(TELEGRAM_MESSAGE_NOTIFICATION_TAG_PREFIX) }
         ?.removePrefix(TELEGRAM_MESSAGE_NOTIFICATION_TAG_PREFIX)
         ?.toLongOrNull()
-        ?: return false
-    return value != 0L && tag == "$TELEGRAM_MESSAGE_NOTIFICATION_TAG_PREFIX$value"
+        ?: return null
+    return value.takeIf { it != 0L && tag == "$TELEGRAM_MESSAGE_NOTIFICATION_TAG_PREFIX$value" }
 }
 
 /** Returns the chat ID only for canonical tags emitted by this publisher. */
 internal fun telegramMessageNotificationChatId(tag: String?): Long? =
-    tag?.takeIf(::isTelegramMessageNotificationTag)
-        ?.removePrefix(TELEGRAM_MESSAGE_NOTIFICATION_TAG_PREFIX)
-        ?.toLongOrNull()
+    telegramMessageNotificationScope(tag)?.chatId ?: legacyTelegramMessageNotificationChatId(tag)
+
+internal object NotificationAccountScopePolicy {
+    fun belongsToActiveAccount(notificationAccountUserId: Long?, activeAccountUserId: Long?): Boolean =
+        activeAccountUserId != null && activeAccountUserId > 0L && notificationAccountUserId == activeAccountUserId
+}
