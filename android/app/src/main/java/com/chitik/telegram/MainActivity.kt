@@ -144,10 +144,12 @@ class MainActivity : ComponentActivity() {
                 dismissedRoute = dismissedRoute,
                 activityIntentRoute = TelegramNotificationRoute.parse(intent),
             )) {
-            setIntent(
-                android.content.Intent(this, MainActivity::class.java)
-                    .setAction(android.content.Intent.ACTION_MAIN),
-            )
+            setIntent(android.content.Intent(intent).apply {
+                action = android.content.Intent.ACTION_MAIN
+                data = null
+                removeExtra(TelegramNotificationRoute.EXTRA_CHAT_ID)
+                removeExtra(TelegramNotificationRoute.EXTRA_ACCOUNT_USER_ID)
+            })
         }
     }
 
