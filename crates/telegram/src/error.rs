@@ -104,28 +104,13 @@ fn auth_rpc_error(context: &'static str, error: grammers_client::sender::RpcErro
 }
 
 fn safe_rpc_name(name: &str) -> String {
-    let mut safe = String::new();
-    let mut previous_was_separator = true;
-    for character in name.chars() {
-        if character.is_ascii_uppercase() || character.is_ascii_digit() {
-            safe.push(character);
-            previous_was_separator = false;
-        } else if !previous_was_separator {
-            safe.push('_');
-            previous_was_separator = true;
-        }
-        if safe.len() == 80 {
-            break;
-        }
-    }
-    while safe.ends_with('_') {
-        safe.pop();
-    }
-    if safe.is_empty() {
-        "UNKNOWN".into()
-    } else {
-        safe
-    }
+    let bytes = name.as_bytes();
+    let valid = bytes.len() <= 80
+        && bytes.first().is_some_and(|byte| byte.is_ascii_uppercase())
+        && bytes
+            .iter()
+            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || *byte == b'_');
+    if valid { name.to_owned() } else { "UNKNOWN".into() }
 }
 
 /// Grammers can expose Telegram flood limits either as `FLOOD_WAIT` plus a
@@ -206,18 +191,31 @@ mod tests {
             assert!(matches!(error, CoreError::Backend(message) if message.contains(expected)));
         }
 
-        let unknown = super::auth_api_error(
+        let valid_unknown = super::auth_api_error(
             "request login code",
             InvocationError::Rpc(RpcError {
                 code: 400,
-                name: "UNSAFE=RPC_NAME".into(),
+                name: "CUSTOM_RPC_42".into(),
                 value: None,
                 caused_by: None,
             }),
         );
-        assert!(matches!(unknown, CoreError::Backend(message)
-            if message.contains("RPC UNSAFE_RPC_NAME, code 400")
-                && !message.contains("UNSAFE=")));
+        assert!(matches!(valid_unknown, CoreError::Backend(message)
+            if message.contains("RPC CUSTOM_RPC_42, code 400")));
+
+        let parameter_like = super::auth_api_error(
+            "request login code",
+            InvocationError::Rpc(RpcError {
+                code: 400,
+                name: "SECRET=API_HASH".into(),
+                value: None,
+                caused_by: None,
+            }),
+        );
+        assert!(matches!(parameter_like, CoreError::Backend(message)
+            if message.contains("RPC UNKNOWN, code 400")
+                && !message.contains("SECRET")
+                && !message.contains("API_HASH")));
     }
 
     #[test]
