@@ -6,6 +6,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.chitik.telegram.AuthorizationUiStep
 import com.chitik.telegram.LoginCodeDeliveryMethod
+import com.chitik.telegram.canSubmitAuthorizationInput
 import com.chitik.telegram.authorizationFromRestoreSnapshot
 import com.chitik.telegram.deliveryAfterAuthorizationChange
 import com.chitik.telegram.deliveryAfterAuthorizationError
@@ -575,13 +576,11 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
     }
 
     fun submitPhoneNumber(phone: String) {
-        _state.update {
-            it.copy(
-                busy = true,
-                error = null,
-                loginCodeDeliveryMethod = deliveryAfterPhoneRequest(),
+        if (!beginAuthorizationSubmission(
+                AuthorizationUiStep.WaitingForPhoneNumber,
+                resetCodeDelivery = true,
             )
-        }
+        ) return
         sendCommand(
             JSONObject()
                 .put("type", "set_phone_number")
@@ -591,7 +590,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
     }
 
     fun submitCode(code: String) {
-        _state.update { it.copy(busy = true, error = null) }
+        if (!beginAuthorizationSubmission(AuthorizationUiStep.WaitingForCode)) return
         sendCommand(
             JSONObject()
                 .put("type", "submit_code")
@@ -601,13 +600,36 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
     }
 
     fun submitPassword(password: String) {
-        _state.update { it.copy(busy = true, error = null) }
+        if (!beginAuthorizationSubmission(AuthorizationUiStep.WaitingForPassword)) return
         sendCommand(
             JSONObject()
                 .put("type", "submit_password")
                 .put("payload", password)
                 .toString(),
         )
+    }
+
+    /** Atomically reserve the current auth input stage before dispatching a native command. */
+    private fun beginAuthorizationSubmission(
+        expectedStep: AuthorizationUiStep,
+        resetCodeDelivery: Boolean = false,
+    ): Boolean {
+        while (true) {
+            val current = _state.value
+            if (!canSubmitAuthorizationInput(current.authorization, expectedStep, current.busy)) {
+                return false
+            }
+            val next = current.copy(
+                busy = true,
+                error = null,
+                loginCodeDeliveryMethod = if (resetCodeDelivery) {
+                    deliveryAfterPhoneRequest()
+                } else {
+                    current.loginCodeDeliveryMethod
+                },
+            )
+            if (_state.compareAndSet(current, next)) return true
+        }
     }
 
     /** Reloads the first page of dialogs using Rust's cursor pagination contract. */
