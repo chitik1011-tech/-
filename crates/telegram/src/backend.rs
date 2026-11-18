@@ -268,10 +268,10 @@ impl GrammersBackend {
                 tl::enums::User::Empty(_) => None,
             }
         })
-            .await
-            .ok()
-            .flatten()
-            .filter(|user_id| *user_id > 0);
+        .await
+        .ok()
+        .flatten()
+        .filter(|user_id| *user_id > 0);
         CoreEvent::AccountIdentityUpdated(user_id)
     }
 
