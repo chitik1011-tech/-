@@ -276,8 +276,8 @@ impl TransferManager {
         })
     }
 
-    /// Retry a failed or cancelled transfer, preserving monotonic byte progress
-    /// and returning a new token generation for callbacks from the new attempt.
+    /// Retry a failed or cancelled transfer from byte zero and return a new
+    /// token generation for callbacks from the new attempt.
     pub fn retry(&self, token: TransferToken) -> Result<TransferToken, TransferError> {
         self.mutate(token, |record| {
             let retry_state = match (record.key.direction, record.state) {
@@ -296,6 +296,11 @@ impl TransferManager {
                 .checked_add(1)
                 .ok_or(TransferError::IdExhausted)?;
             record.state = retry_state;
+            // Current upload and download backends restart from the beginning:
+            // downloads discard their staging writer, and uploads reopen the
+            // source file. Carrying old bytes into this generation makes the
+            // reducer reject valid early progress from the fresh attempt.
+            record.bytes_transferred = 0;
             Ok(())
         })
     }
@@ -461,7 +466,7 @@ mod tests {
             manager.get(retry).unwrap().state,
             TransferState::Upload(UploadState::Pending)
         );
-        assert_eq!(manager.get(retry).unwrap().bytes_transferred, 8);
+        assert_eq!(manager.get(retry).unwrap().bytes_transferred, 0);
         assert_eq!(
             manager.report_progress(failed, 9),
             Err(TransferError::StaleToken)
@@ -471,6 +476,30 @@ mod tests {
             manager.complete(active_retry).unwrap().generation,
             retry.generation
         );
+    }
+
+    #[test]
+    fn failed_download_retry_resets_discarded_partial_progress_and_rejects_old_callbacks() {
+        let manager = TransferManager::new();
+        let remote = manager
+            .request(TransferDirection::Download, "retry-download", Some(100))
+            .unwrap();
+        let queued = manager.queue_download(remote.token).unwrap();
+        let active = manager.start_download(queued).unwrap();
+        manager.report_progress(active, 80).unwrap();
+        let failed = manager.fail(active).unwrap();
+
+        let retry = manager.retry(failed).unwrap();
+        assert_eq!(retry.generation, failed.generation + 1);
+        assert_eq!(manager.get(retry).unwrap().bytes_transferred, 0);
+        assert_eq!(
+            manager.report_progress(failed, 90),
+            Err(TransferError::StaleToken)
+        );
+
+        let retry_active = manager.start_download(retry).unwrap();
+        manager.report_progress(retry_active, 5).unwrap();
+        assert_eq!(manager.get(retry_active).unwrap().bytes_transferred, 5);
     }
 
     #[test]
