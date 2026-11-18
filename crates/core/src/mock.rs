@@ -585,6 +585,14 @@ impl MockTelegramBackend {
                     "message reactions are not implemented by the mock backend".into(),
                 ))
             }
+            CoreCommand::LeaveChat { chat_id } => {
+                if self.authorization != AuthorizationState::Ready {
+                    return Err(CoreError::Backend("not authorized".into()));
+                }
+                self.chats.retain(|chat| chat.id != chat_id);
+                self.pinned_messages.remove(&chat_id);
+                Ok(vec![CoreEvent::ChatLeft { chat_id }])
+            }
             CoreCommand::Logout => {
                 self.authorization = AuthorizationState::Closed;
                 Ok(vec![CoreEvent::AuthorizationChanged(

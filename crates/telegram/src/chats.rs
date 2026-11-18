@@ -22,6 +22,10 @@ pub(crate) async fn find_peer(registry: &PeerRegistry, chat_id: i64) -> Option<P
     registry.read().await.get(&chat_id).cloned()
 }
 
+pub(crate) async fn forget_peer(registry: &PeerRegistry, chat_id: i64) {
+    registry.write().await.remove(&chat_id);
+}
+
 pub(crate) async fn clear_peer_registry(registry: &PeerRegistry) {
     registry.write().await.clear();
 }

@@ -728,6 +728,19 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         }
     }
 
+    fun leaveChat(chatId: Long) {
+        if (chatId == 0L) return
+        val accepted = sendCommand(
+            JSONObject()
+                .put("type", "leave_chat")
+                .put("payload", JSONObject().put("chat_id", chatId))
+                .toString(),
+        )
+        if (!accepted) {
+            _state.update { it.copy(error = it.error ?: "Rust rejected the leave request") }
+        }
+    }
+
 /* loadMessagesBefore is shared by reply and pinned navigation below. */
     fun loadMessages(chatId: Long, limit: Int = 100) {
         _state.update { it.copy(busy = true, error = null, deleteError = null) }
@@ -1518,6 +1531,15 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
             return
         }
         if (_state.value.authorization == AuthorizationUiStep.Ready) {
+            if (type == "chat_left") {
+                val chatId = runCatching {
+                    JSONObject(payload).optJSONObject("payload")?.optLong("chat_id")
+                }.getOrNull()?.takeIf { it != 0L }
+                val accountUserId = _state.value.accountUserId
+                if (chatId != null && accountUserId != null && accountUserId > 0L) {
+                    notifications.cancelChat(accountUserId, chatId)
+                }
+            }
             when (val cancellation = NotificationCancellationPolicy.fromEvent(type, payload)) {
                 is NotificationCancellation.ReadThrough -> {
                     notifications.cancelReadThrough(
@@ -1688,6 +1710,29 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                         lastEventType = type,
                         lastEventPayload = "{\"peer_id\":${profile.peerId}}",
                     )
+                }
+            }
+            "chat_left" -> {
+                val chatId = runCatching {
+                    JSONObject(payload).optJSONObject("payload")?.optLong("chat_id")
+                }.getOrNull() ?: 0L
+                if (chatId != 0L) {
+                    _state.update { current ->
+                        current.copy(
+                            chats = current.chats.filterNot { it.id == chatId },
+                            chatCapabilities = current.chatCapabilities - chatId,
+                            profiles = current.profiles - chatId,
+                            profileLoadingPeerId = current.profileLoadingPeerId.takeUnless { it == chatId },
+                            profileError = if (current.profileLoadingPeerId == chatId) null else current.profileError,
+                            messages = current.messages - chatId,
+                            chatActivities = current.chatActivities - chatId,
+                            pinnedMessages = current.pinnedMessages - chatId,
+                            outbox = current.outbox.filterValues { it.chatId != chatId },
+                            lastEventType = type,
+                            lastEventPayload = payload,
+                            error = null,
+                        )
+                    }
                 }
             }
             "contacts_loaded" -> {

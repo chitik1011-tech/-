@@ -438,6 +438,23 @@ private fun TelegramRustApp(
         }
         previousAuthorizationReady = authorizationReady
     }
+    LaunchedEffect(state.lastEventType, state.lastEventPayload) {
+        if (state.lastEventType == "chat_left") {
+            val chatId = runCatching {
+                org.json.JSONObject(state.lastEventPayload)
+                    .optJSONObject("payload")
+                    ?.optLong("chat_id")
+            }.getOrNull()
+            if (chatId != null && chatId == selectedChatId) {
+                setCurrentDraft("")
+                selectedChatId = 0L
+                profilePeerId = 0L
+                replyToMessageId = null
+                replyToPreview = null
+                jumpToMessageId = null
+            }
+        }
+    }
     var confirmedJoinIntent by remember(incomingLink) { mutableStateOf<TelegramJoinInviteIntent?>(null) }
 
     when {
@@ -793,8 +810,9 @@ private fun TelegramRustApp(
         PeerProfileDialog(
             profile = state.profiles[profilePeerId],
             loading = state.profileLoadingPeerId == profilePeerId,
-            error = state.profileError,
+            error = state.profileError ?: state.error,
             onDismiss = { profilePeerId = 0L },
+            onLeaveChat = viewModel::leaveChat,
         )
     }
     if (showForwardTargets) {

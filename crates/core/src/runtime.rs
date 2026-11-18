@@ -1154,6 +1154,30 @@ fn command_capability_error(command: &CoreCommand, state: &CoreState) -> Option<
             }
             None
         }
+        CoreCommand::LeaveChat { chat_id } => {
+            if state
+                .outbox
+                .values()
+                .any(|send| send.chat_id == *chat_id && !send.state.is_terminal())
+            {
+                return Some("Finish or cancel pending sends before leaving this chat".into());
+            }
+            match state
+                .chat_capabilities
+                .get(chat_id)
+                .map(|cap| cap.chat_kind)
+            {
+                Some(
+                    crate::capabilities::ChatKind::Group
+                    | crate::capabilities::ChatKind::Supergroup
+                    | crate::capabilities::ChatKind::Channel,
+                ) => None,
+                Some(_) => Some("Leaving is only supported for groups and channels".into()),
+                None => {
+                    Some("Telegram has not confirmed this chat type; refresh chats first".into())
+                }
+            }
+        }
         _ => None,
     }
 }
@@ -1248,6 +1272,45 @@ mod capability_tests {
         let mut no_media = allowed(3);
         no_media.can_send_media = CapabilityValue::Known(false);
         state.chat_capabilities.insert(3, no_media);
+        assert!(command_capability_error(&command, &state).is_some());
+    }
+
+    #[test]
+    fn leaving_requires_group_kind_and_no_pending_sends() {
+        let command = CoreCommand::LeaveChat { chat_id: 12 };
+        let mut state = CoreState::default();
+        state.account.authorization = crate::model::AuthorizationState::Ready;
+        assert!(command_capability_error(&command, &state).is_some());
+
+        state.chat_capabilities.insert(
+            12,
+            ChatCapabilities {
+                chat_id: 12,
+                chat_kind: crate::capabilities::ChatKind::Group,
+                ..ChatCapabilities::default()
+            },
+        );
+        assert_eq!(command_capability_error(&command, &state), None);
+
+        state
+            .outbox
+            .insert(99, OutgoingSend::sending(99, 12, "queued"));
+        assert!(command_capability_error(&command, &state).is_some());
+    }
+
+    #[test]
+    fn leaving_rejects_private_peers() {
+        let command = CoreCommand::LeaveChat { chat_id: 12 };
+        let mut state = CoreState::default();
+        state.account.authorization = crate::model::AuthorizationState::Ready;
+        state.chat_capabilities.insert(
+            12,
+            ChatCapabilities {
+                chat_id: 12,
+                chat_kind: crate::capabilities::ChatKind::Private,
+                ..ChatCapabilities::default()
+            },
+        );
         assert!(command_capability_error(&command, &state).is_some());
     }
 }
