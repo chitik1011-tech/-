@@ -59,6 +59,7 @@ import com.chitik.telegram.notifications.PendingNotificationSessionDecision
 import com.chitik.telegram.notifications.decidePendingNotificationSessionRestore
 import com.chitik.telegram.notifications.restorePendingNotificationRoute
 import com.chitik.telegram.deeplink.TelegramDeepLinkRouter
+import com.chitik.telegram.deeplink.pendingTelegramLinkAfterNewIntent
 import com.chitik.telegram.deeplink.TelegramJoinInviteIntent
 import com.chitik.telegram.deeplink.TelegramLinkAppRouter
 import com.chitik.telegram.deeplink.TelegramLinkIntent
@@ -101,7 +102,7 @@ class MainActivity : ComponentActivity() {
                         onDismissNotification = { pendingNotificationRoute = null },
                         showEnableNotifications = !notificationPermissionGranted,
                         onEnableNotifications = { notificationPermissionRequester.request() },
-                        onDismissLink = { pendingTelegramLink = null },
+        onDismissLink = { dismissPendingTelegramLink() },
                     )
                 }
             }
@@ -110,13 +111,28 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
-        setIntent(intent)
-        pendingTelegramLink = TelegramDeepLinkRouter.parseIntent(intent.action, intent.dataString)
+        val incomingLink = TelegramDeepLinkRouter.parseIntent(intent.action, intent.dataString)
+        val incomingNotificationRoute = TelegramNotificationRoute.parse(intent)
+        // Launcher and unrelated intents can be delivered to this singleTop Activity while a
+        // link review is open. Keep the original route as the Activity intent so recreation can
+        // parse it again; replace the base intent only when a recognized route arrives.
+        if (incomingLink != null || incomingNotificationRoute != null) setIntent(intent)
+        pendingTelegramLink = pendingTelegramLinkAfterNewIntent(pendingTelegramLink, incomingLink)
         pendingNotificationRoute = restorePendingNotificationRoute(
             savedChatId = pendingNotificationRoute?.chatId,
             savedAccountUserId = pendingNotificationRoute?.accountUserId,
-            freshIntentRoute = TelegramNotificationRoute.parse(intent),
+            freshIntentRoute = incomingNotificationRoute,
         )
+    }
+
+    private fun dismissPendingTelegramLink() {
+        pendingTelegramLink = null
+        if (TelegramDeepLinkRouter.parseIntent(intent?.action, intent?.dataString) != null) {
+            setIntent(
+                android.content.Intent(this, MainActivity::class.java)
+                    .setAction(android.content.Intent.ACTION_MAIN),
+            )
+        }
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
