@@ -911,8 +911,14 @@ impl CoreState {
                 let mut update = update.clone();
                 if update.media.is_some() {
                     let token = self.connection_machine.token();
+                    // Media uploads run as detached tasks and may complete after the
+                    // connection reconnects within the same account session. Their
+                    // transfer_generation orders retries, while session_generation
+                    // prevents a result from crossing account replacement. Requiring
+                    // an exact connection epoch would strand a valid outbox entry in
+                    // Uploading when its final callback arrives after reconnect.
                     if update.session_generation != token.generation().as_u64()
-                        || update.session_epoch != token.epoch().as_u64()
+                        || update.session_epoch > token.epoch().as_u64()
                     {
                         return;
                     }

@@ -3,8 +3,8 @@ use std::sync::{Arc, Mutex};
 use tg_mobile_core::{
     backend_update_channel, decode_command, spawn_core_with_store, BackendFuture,
     BackendUpdateReceiver, BackendUpdateSender, CoreCommand, CoreError, CoreEvent, CoreState,
-    MemoryStateStore, MessageSummary, MockTelegramBackend, OutgoingSend, OutgoingSendState,
-    StateStore, TelegramBackend,
+    LinkEvent, MemoryStateStore, MessageSummary, MockTelegramBackend, OutgoingMediaAttachment,
+    OutgoingMediaKind, OutgoingSend, OutgoingSendState, StateStore, TelegramBackend,
 };
 use tokio::time::{timeout, Duration};
 
@@ -18,6 +18,111 @@ async fn authorize(backend: &mut MockTelegramBackend) {
         .handle(CoreCommand::SubmitCode("12345".into()))
         .await
         .unwrap();
+}
+
+#[test]
+fn media_send_completion_survives_reconnect_but_not_retry_or_account_replacement() {
+    let mut state = CoreState::default();
+    state.reduce(&CoreEvent::ConnectionSessionStarted);
+    for event in [
+        LinkEvent::TransportConnected,
+        LinkEvent::SyncStarted,
+        LinkEvent::SyncCompleted,
+    ] {
+        let token = state.connection_machine.token();
+        state.reduce(&CoreEvent::ConnectionLifecycle { token, event });
+    }
+    let first_token = state.connection_machine.token();
+    let media = OutgoingMediaAttachment {
+        kind: OutgoingMediaKind::Voice,
+        path: "/private/voice.ogg".into(),
+        file_name: "voice.ogg".into(),
+        mime_type: "audio/ogg".into(),
+        size_bytes: 100,
+        voice_duration_ms: Some(1_000),
+        video_duration_ms: None,
+        video_width: None,
+        video_height: None,
+    };
+
+    let initial_upload = OutgoingSend::uploading_media(700, 42, media.clone(), "", 0, 1)
+        .with_session_token(
+            first_token.generation().as_u64(),
+            first_token.epoch().as_u64(),
+        );
+    state.reduce(&CoreEvent::MessageSendStateChanged(initial_upload));
+
+    state.reduce(&CoreEvent::ConnectionLifecycle {
+        token: first_token,
+        event: LinkEvent::TransportLost,
+    });
+    let reconnected_token = state.connection_machine.token();
+    assert_eq!(reconnected_token.generation(), first_token.generation());
+    assert!(reconnected_token.epoch() > first_token.epoch());
+
+    // A callback from the same account and same upload attempt may arrive after
+    // reconnect; accepting it prevents the durable outbox from remaining stuck
+    // at its last pre-disconnect progress value.
+    let reconnect_progress = OutgoingSend::uploading_media(700, 42, media.clone(), "", 25, 1)
+        .with_session_token(
+            first_token.generation().as_u64(),
+            first_token.epoch().as_u64(),
+        );
+    state.reduce(&CoreEvent::MessageSendStateChanged(reconnect_progress));
+    assert!(matches!(
+        state.outbox.get(&700).map(|send| &send.state),
+        Some(OutgoingSendState::Uploading {
+            bytes_transferred: 25,
+            ..
+        })
+    ));
+
+    // Retrying creates a newer attempt, so callbacks from the old attempt stay
+    // stale even though same-session callbacks may cross connection epochs.
+    let retried_upload = OutgoingSend::uploading_media(700, 42, media.clone(), "", 0, 2)
+        .with_session_token(
+            reconnected_token.generation().as_u64(),
+            reconnected_token.epoch().as_u64(),
+        );
+    state.reduce(&CoreEvent::MessageSendStateChanged(retried_upload));
+    let stale_attempt = OutgoingSend::uploading_media(700, 42, media.clone(), "", 50, 1)
+        .with_session_token(
+            first_token.generation().as_u64(),
+            first_token.epoch().as_u64(),
+        );
+    state.reduce(&CoreEvent::MessageSendStateChanged(stale_attempt));
+    assert_eq!(state.outbox.get(&700).unwrap().transfer_generation, 2);
+    assert_eq!(state.outbox.get(&700).unwrap().bytes_transferred, 0);
+
+    let sent = OutgoingSend::sent_media(700, 42, media.clone(), "", 800, 2).with_session_token(
+        reconnected_token.generation().as_u64(),
+        first_token.epoch().as_u64(),
+    );
+    state.reduce(&CoreEvent::MessageSendStateChanged(sent));
+    assert!(!state.outbox.contains_key(&700));
+
+    state.reduce(&CoreEvent::ConnectionLifecycle {
+        token: reconnected_token,
+        event: LinkEvent::Logout,
+    });
+    state.reduce(&CoreEvent::ConnectionSessionStarted);
+    let replacement_token = state.connection_machine.token();
+    let replacement_upload = OutgoingSend::uploading_media(700, 42, media.clone(), "", 0, 1)
+        .with_session_token(
+            replacement_token.generation().as_u64(),
+            replacement_token.epoch().as_u64(),
+        );
+    state.reduce(&CoreEvent::MessageSendStateChanged(replacement_upload));
+    let old_account_completion = OutgoingSend::sent_media(700, 42, media, "", 800, 1)
+        .with_session_token(
+            first_token.generation().as_u64(),
+            first_token.epoch().as_u64(),
+        );
+    state.reduce(&CoreEvent::MessageSendStateChanged(old_account_completion));
+    assert!(matches!(
+        state.outbox.get(&700).map(|send| &send.state),
+        Some(OutgoingSendState::Uploading { .. })
+    ));
 }
 
 #[tokio::test]
