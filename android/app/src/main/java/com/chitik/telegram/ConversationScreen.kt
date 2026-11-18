@@ -338,7 +338,7 @@ fun ConversationScreen(
     var hasOpenedConversation by rememberSaveable(state.chatId) { mutableStateOf(false) }
     var showNewMessages by rememberSaveable(state.chatId) { mutableStateOf(false) }
     var lastObservedLatestMessageId by rememberSaveable(state.chatId) { mutableStateOf<String?>(null) }
-    var viewerKey by rememberSaveable { mutableStateOf<String?>(null) }
+    var viewerKey by rememberSaveable(state.chatId) { mutableStateOf<String?>(null) }
     var missingPinnedTarget by remember(state.chatId, state.selectionGeneration) { mutableStateOf<String?>(null) }
     var actionTarget by remember(state.chatId, state.selectionGeneration) { mutableStateOf<ConversationMessageUi?>(null) }
     var editingMessage by remember(state.chatId, state.selectionGeneration) { mutableStateOf<ConversationMessageUi?>(null) }
@@ -855,7 +855,7 @@ fun ConversationScreen(
                                             }
                                         },
                                         onOpenViewer = { attachment ->
-                                            viewerKey = "${message.id}:${attachment.index}"
+                                            viewerKey = mediaViewerKey(state.chatId, message.id, attachment.index)
                                         },
                                         onOpenDocument = onOpenDocument,
                                         onOpenReplyTarget = onOpenReplyTarget,
@@ -920,17 +920,8 @@ fun ConversationScreen(
         }
     }
 
-    val viewerSelection = remember(state.messages, viewerKey) {
-        val key = viewerKey ?: return@remember null
-        val separator = key.lastIndexOf(':')
-        if (separator <= 0) return@remember null
-        val messageId = key.substring(0, separator)
-        val attachmentIndex = key.substring(separator + 1).toIntOrNull() ?: return@remember null
-        state.messages
-            .firstOrNull { it.id == messageId }
-            ?.attachments
-            ?.firstOrNull { it.index == attachmentIndex }
-            ?.let { attachment -> messageId.toLongOrNull()?.let { it to attachment } }
+    val viewerSelection = remember(state.chatId, state.messages, viewerKey) {
+        resolveMediaViewerSelection(state.chatId, state.messages, viewerKey)
     }
 
     actionTarget?.let { message ->
