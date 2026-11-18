@@ -1,3 +1,6 @@
+Warning: truncated output (original token count: 10409)
+Total output lines: 844
+
 package com.chitik.telegram
 
 import android.Manifest
@@ -59,6 +62,7 @@ import com.chitik.telegram.notifications.PendingNotificationSessionDecision
 import com.chitik.telegram.notifications.decidePendingNotificationSessionRestore
 import com.chitik.telegram.notifications.restorePendingNotificationRoute
 import com.chitik.telegram.deeplink.TelegramDeepLinkRouter
+import com.chitik.telegram.deeplink.pendingTelegramLinkAfterNewIntent
 import com.chitik.telegram.deeplink.TelegramJoinInviteIntent
 import com.chitik.telegram.deeplink.TelegramLinkAppRouter
 import com.chitik.telegram.deeplink.TelegramLinkIntent
@@ -101,7 +105,7 @@ class MainActivity : ComponentActivity() {
                         onDismissNotification = { pendingNotificationRoute = null },
                         showEnableNotifications = !notificationPermissionGranted,
                         onEnableNotifications = { notificationPermissionRequester.request() },
-                        onDismissLink = { pendingTelegramLink = null },
+        onDismissLink = { dismissPendingTelegramLink() },
                     )
                 }
             }
@@ -110,13 +114,28 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
-        setIntent(intent)
-        pendingTelegramLink = TelegramDeepLinkRouter.parseIntent(intent.action, intent.dataString)
+        val incomingLink = TelegramDeepLinkRouter.parseIntent(intent.action, intent.dataString)
+        val incomingNotificationRoute = TelegramNotificationRoute.parse(intent)
+        // Launcher and unrelated intents can be delivered to this singleTop Activity while a
+        // link review is open. Keep the original route as the Activity intent so recreation can
+        // parse it again; replace the base intent only when a recognized route arrives.
+        if (incomingLink != null || incomingNotificationRoute != null) setIntent(intent)
+        pendingTelegramLink = pendingTelegramLinkAfterNewIntent(pendingTelegramLink, incomingLink)
         pendingNotificationRoute = restorePendingNotificationRoute(
             savedChatId = pendingNotificationRoute?.chatId,
             savedAccountUserId = pendingNotificationRoute?.accountUserId,
-            freshIntentRoute = TelegramNotificationRoute.parse(intent),
+            freshIntentRoute = incomingNotificationRoute,
         )
+    }
+
+    private fun dismissPendingTelegramLink() {
+        pendingTelegramLink = null
+        if (TelegramDeepLinkRouter.parseIntent(intent?.action, intent?.dataString) != null) {
+            setIntent(
+                android.content.Intent(this, MainActivity::class.java)
+                    .setAction(android.content.Intent.ACTION_MAIN),
+            )
+        }
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -222,363 +241,7 @@ private fun TelegramRustApp(
         state.accountUserId,
         state.chatsLoaded,
         state.chats,
-        state.chatPagination,
-    ) {
-        val resolution = com.chitik.telegram.notifications.resolveNotificationRoute(
-            route = incomingNotificationRoute,
-            authorized = state.authorization == AuthorizationUiStep.Ready,
-            accountIdentityResolved = state.accountIdentityResolved,
-            activeAccountUserId = state.accountUserId,
-            chatsLoaded = state.chatsLoaded,
-            availableChatIds = state.chats.map(ChatListEntry::id),
-            chatListExhausted = state.chatPagination.exhausted && !state.chatPagination.loading,
-        )
-        when (resolution) {
-            NotificationRouteResolution.Wait -> {
-                if (state.authorization == AuthorizationUiStep.Ready && !state.chatPagination.loading) {
-                    if (!state.chatPagination.loaded && state.chatPagination.error == null) {
-                        viewModel.loadChats()
-                    } else if (state.chatPagination.loaded && state.chatPagination.error == null) {
-                        viewModel.loadNextChatsPage()
-                    }
-                }
-            }
-            is NotificationRouteResolution.OpenChat -> {
-                selectedChatId = resolution.chatId
-                showContacts = false
-                viewModel.loadMessages(resolution.chatId)
-                viewModel.loadPinnedMessages(resolution.chatId)
-                onDismissNotification()
-            }
-            NotificationRouteResolution.Discard -> onDismissNotification()
-        }
-    }
-    val queuePickedMedia: (Uri?) -> Unit = { uri ->
-        val chatId = selectedChatId
-        val caption = draft
-        if (uri != null && chatId != 0L) {
-            viewModel.sendMediaFromUri(chatId, uri, caption) { accepted ->
-                if (accepted && selectedChatId == chatId && draft == caption) draft = ""
-            }
-        }
-    }
-    val photoPickerLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.PickVisualMedia(),
-        queuePickedMedia,
-    )
-    val documentPickerLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocument(),
-        queuePickedMedia,
-    )
-    DisposableEffect(lifecycleOwner) {
-        if (lifecycleOwner == null) {
-            onDispose { }
-        } else {
-            val observer = LifecycleEventObserver { _, event ->
-                if (event == Lifecycle.Event.ON_STOP) {
-                    activeLocationRequest?.cancel()
-                    activeLocationRequest = null
-                    pendingLocationChatId = 0L
-                    activeVoiceRecordingChatId?.let { chatId -> viewModel.cancelVoiceRecording(chatId) }
-                }
-            }
-            lifecycleOwner.lifecycle.addObserver(observer)
-            onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-        }
-    }
-    DisposableEffect(lifecycleOwner, selectedChatId, viewModel) {
-        if (lifecycleOwner == null) {
-            viewModel.setNotificationVisibility(false, null)
-            onDispose { viewModel.setNotificationVisibility(false, null) }
-        } else {
-            fun updateVisibility(foreground: Boolean) {
-                viewModel.setNotificationVisibility(
-                    foreground = foreground,
-                    chatId = selectedChatId.takeIf { it != 0L },
-                )
-            }
-            updateVisibility(lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))
-            val observer = LifecycleEventObserver { _, event ->
-                when (event) {
-                    Lifecycle.Event.ON_START -> updateVisibility(true)
-                    Lifecycle.Event.ON_STOP -> updateVisibility(false)
-                    else -> Unit
-                }
-            }
-            lifecycleOwner.lifecycle.addObserver(observer)
-            onDispose {
-                lifecycleOwner.lifecycle.removeObserver(observer)
-                viewModel.setNotificationVisibility(false, null)
-            }
-        }
-    }
-    DisposableEffect(selectedChatId) {
-        onDispose {
-            activeLocationRequest?.cancel()
-            activeLocationRequest = null
-            pendingLocationChatId = 0L
-        }
-    }
-    LaunchedEffect(state.failedTextSendId, state.failedTextSendText, selectedChatId) {
-        val failedId = state.failedTextSendId
-        if (failedId != null && failedId != lastRestoredFailureId &&
-            selectedChatId == state.outbox[failedId]?.chatId) {
-            if (draft.isBlank()) draft = state.failedTextSendText.orEmpty()
-            lastRestoredFailureId = failedId
-        }
-    }
-    val sendCurrentLocation: (Long) -> Unit = { chatId ->
-        activeLocationRequest?.cancel()
-        activeLocationRequest = requestCurrentLocation(context) { result ->
-            if (selectedChatId == chatId) {
-                result.onSuccess { point ->
-                    viewModel.sendLocation(chatId, point.latitude, point.longitude, point.accuracyRadiusMeters)
-                }.onFailure {
-                    viewModel.reportLocationError("Unable to get current location")
-                }
-            }
-        }
-    }
-    val locationPermissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions(),
-    ) { grants ->
-        val chatId = pendingLocationChatId
-        pendingLocationChatId = 0L
-        val granted = grants[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
-            grants[Manifest.permission.ACCESS_COARSE_LOCATION] == true
-        if (granted && chatId != 0L && selectedChatId == chatId) sendCurrentLocation(chatId)
-        else if (chatId != 0L && selectedChatId == chatId) viewModel.reportLocationError("Location permission is required to send your location")
-    }
-    var showForwardTargets by remember { mutableStateOf(false) }
-    var forwardingSourceChatId by remember { mutableLongStateOf(0L) }
-    var forwardingMessageIds by remember { mutableStateOf<List<Long>>(emptyList()) }
-    var profilePeerId by rememberSaveable { mutableLongStateOf(0L) }
-    var previousAuthorizationReady by remember { mutableStateOf(state.authorization == AuthorizationUiStep.Ready) }
-    LaunchedEffect(state.selectionGeneration, state.authorization) {
-        showForwardTargets = false
-        forwardingMessageIds = emptyList()
-        if (replySelectionGeneration != state.selectionGeneration || state.authorization != AuthorizationUiStep.Ready) {
-            replyToMessageId = null
-            replyToPreview = null
-            jumpToMessageId = null
-            replySelectionGeneration = state.selectionGeneration
-        }
-    }
-    LaunchedEffect(state.authorization) {
-        val authorizationReady = state.authorization == AuthorizationUiStep.Ready
-        if (shouldResetNavigationAfterAuthorizationChange(
-                wasAuthorizationReady = previousAuthorizationReady,
-                isAuthorizationReady = authorizationReady,
-            )) {
-            selectedChatId = 0L
-            showContacts = false
-            profilePeerId = 0L
-            draft = ""
-            replyToMessageId = null
-            replyToPreview = null
-            jumpToMessageId = null
-            pendingLocationChatId = 0L
-        }
-        previousAuthorizationReady = authorizationReady
-    }
-    var confirmedJoinIntent by remember(incomingLink) { mutableStateOf<TelegramJoinInviteIntent?>(null) }
-
-    when {
-        !authorizationUiCanOpen(state.libraryLoaded, state.sessionRestoreComplete) -> StartupScreen(state)
-
-        state.authorization != AuthorizationUiStep.Ready -> AuthorizationScreen(
-            state = AuthorizationUiState(
-                authorization = state.authorization,
-                loginCodeDeliveryMethod = state.loginCodeDeliveryMethod,
-                retryRemainingSeconds = state.authorizationRetryRemainingSeconds,
-                isTelegramConfigured = state.telegramConfigured,
-                isLoading = state.busy,
-                error = state.error,
-            ),
-            onStart = viewModel::sendStartCommand,
-            onSubmitPhoneNumber = viewModel::submitPhoneNumber,
-            onSubmitCode = viewModel::submitCode,
-            onSubmitPassword = viewModel::submitPassword,
-            onBack = {
-                if (state.telegramConfigured) {
-                    selectedChatId = 0L
-                    viewModel.restartAuthorization()
-                }
-            },
-        )
-
-        selectedChatId == 0L && showContacts -> ContactsScreen(
-            contacts = state.contacts,
-            total = state.contactTotal,
-            isLoading = state.contactsLoading,
-            error = state.error,
-            onBack = { showContacts = false },
-            onRefresh = { viewModel.loadContacts(offset = 0) },
-            onLoadMore = { viewModel.loadContacts(offset = state.contacts.size) },
-            onContactSelected = { contact ->
-                selectedChatId = contact.userId
-                replyToMessageId = null
-                replyToPreview = null
-                jumpToMessageId = null
-                viewModel.loadMessages(contact.userId)
-                viewModel.loadPinnedMessages(contact.userId)
-            },
-        )
-
-        selectedChatId == 0L -> ChatListScreen(
-            chats = state.chats,
-            selectedChatId = null,
-            isLoading = state.busy || state.chatPagination.loading,
-            error = state.error ?: state.chatPagination.error.takeIf { state.chats.isEmpty() },
-            onRefresh = {
-                if (state.chatPagination.error != null) viewModel.retryChatsPage()
-                else viewModel.loadChats()
-            },
-            hasMoreChats = state.chatPagination.nextCursor != null && !state.chatPagination.exhausted,
-            isLoadingMoreChats = state.chatPagination.loading && state.chatsLoaded,
-            chatPageError = state.chatPagination.error.takeIf { state.chats.isNotEmpty() },
-            onLoadMoreChats = viewModel::loadNextChatsPage,
-            onRetryChatPage = viewModel::retryChatsPage,
-            showEnableNotifications = showEnableNotifications,
-            onEnableNotifications = onEnableNotifications,
-            onOpenContacts = {
-                showContacts = true
-                viewModel.loadContacts(offset = 0)
-            },
-            onLogout = {
-                onDismissNotification()
-                selectedChatId = 0L
-                showContacts = false
-                draft = ""
-                replyToMessageId = null
-                replyToPreview = null
-                jumpToMessageId = null
-                viewModel.logout()
-            },
-            onChatSelected = { chatId ->
-                selectedChatId = chatId
-                replyToMessageId = null
-                replyToPreview = null
-                jumpToMessageId = null
-                viewModel.loadMessages(chatId)
-                viewModel.loadPinnedMessages(chatId)
-            },
-        )
-
-        else -> {
-            val chat = state.chats.firstOrNull { it.id == selectedChatId }
-            val contact = state.contacts.firstOrNull { it.userId == selectedChatId }
-            val rawMessages = state.messages[selectedChatId].orEmpty()
-            val messagesById = rawMessages.associateBy { it.id }
-            val messages = rawMessages.map { message ->
-                val pollId = message.poll?.id
-                val replyId = message.replyToMessageId
-                val original = replyId?.let(messagesById::get)
-                val summary = replyId?.let {
-                    if (original == null) "Сообщение $it недоступно"
-                    else {
-                        val sender = if (original.isOutgoing) "Вы"
-                        else original.senderId.takeIf { id -> id != 0L }?.let { id -> "Пользователь $id" } ?: "Пользователь"
-                        val body = original.text.takeIf(String::isNotBlank)
-                            ?: original.attachments.firstOrNull()?.kind?.name?.lowercase()
-                            ?: "Медиа"
-                        "$sender: $body"
-                    }
-                }
-                message.copy(
-                    pollVoting = pollId != null && pollId in state.votingPollIds,
-                    pollError = pollId?.let(state.pollVoteErrors::get),
-                    replyToSummary = summary,
-                )
-            }
-
-            ConversationScreen(
-                state = ConversationScreenState(
-                    chatId = selectedChatId.toString(),
-                    chatTitle = chat?.title ?: contact?.displayName.orEmpty(),
-                    messages = messages,
-                    activityStatus = com.chitik.telegram.nativebridge.chatActivityStatus(
-                        state.chatActivities[selectedChatId].orEmpty(),
-                    ),
-                    draft = draft,
-                    loading = state.busy,
-                    sending = state.mediaImportInProgress ||
-                        (state.sendingText && state.activeTextSendChatId == selectedChatId),
-                    sendStatus = if (state.mediaImportInProgress) "Подготовка файла…" else
-                        state.textSendStatusForChat(selectedChatId),
-                    outgoingMediaSend = state.mediaSendForChat(selectedChatId),
-                    voiceRecordingChatId = state.voiceRecording.chatId,
-                    voiceRecordingDurationMs = state.voiceRecording.durationMs,
-                    voiceRecordingError = voiceErrorForSelectedChat(
-                        state.voiceRecording.error,
-                        state.voiceRecording.errorChatId,
-                        selectedChatId,
-                    ),
-                    error = state.textSendError ?: state.error,
-                    pendingReactionKeys = state.pendingReactionKeys,
-                    reactionErrors = state.reactionErrors,
-                    forwardingError = state.forwardError,
-                    forwardSuccessCount = state.forwardSuccessCount,
-                    selectionGeneration = state.selectionGeneration,
-                    deletingMessages = state.deletingMessages,
-                    deleteError = state.deleteError,
-                    messageMutationPending = state.messageMutationPending,
-                    messageMutationError = state.messageMutationError,
-                    messageMutationChatId = state.messageMutationChatId,
-                    messageMutationMessageId = state.messageMutationMessageId,
-                    messageMutationSuccessCount = state.messageMutationSuccessCount,
-                    messageMutationSuccessChatId = state.messageMutationSuccessChatId,
-                    messageMutationSuccessMessageId = state.messageMutationSuccessMessageId,
-                    capabilities = state.chatCapabilities[selectedChatId] ?: ChatCapabilitiesUi(),
-                    pinnedMessageIds = state.pinnedMessages[selectedChatId].orEmpty().map(Long::toString),
-                    pendingPinnedMessageIds = state.pendingPinnedMessageIds
-                        .filter { it.startsWith("$selectedChatId:") }
-                        .map { it.substringAfter(':') }
-                        .toSet(),
-                    pinnedError = state.pinnedFailureKey
-                        ?.takeIf { it.startsWith("$selectedChatId:") }
-                        ?.let { key -> "Сообщение #${key.substringAfter(':')}: ${state.pinnedError.orEmpty()}" },
-                    historyPageLoadingBeforeMessageId = state.loadingHistoryBefore[selectedChatId],
-                    historyPageCompletedBeforeMessageId = state.completedHistoryBefore[selectedChatId],
-                    historyPageError = state.historyPageErrors[selectedChatId],
-                    replyingToMessageId = replyToMessageId?.toString(),
-                    replyingToPreview = replyToPreview,
-                    jumpToMessageId = jumpToMessageId,
-                ),
-                onBack = {
-                    selectedChatId = 0L
-                    draft = ""
-                    replyToMessageId = null
-                    replyToPreview = null
-                    jumpToMessageId = null
-                },
-                onDraftChange = { draft = it },
-                onReplyMessage = { message ->
-                    replyToMessageId = message.id.toLongOrNull()
-                    replyToPreview = message.text.takeIf(String::isNotBlank)
-                        ?: message.attachments.firstOrNull()?.kind?.name?.lowercase()
-                        ?: "Медиа"
-                },
-                onCancelReply = {
-                    replyToMessageId = null
-                    replyToPreview = null
-                },
-                onOpenReplyTarget = { targetId ->
-                    jumpToMessageId = targetId
-                    if (replyTargetIndex(messages, targetId) < 0) {
-                        targetId.toLongOrNull()?.takeIf { it in 1 until Long.MAX_VALUE }?.let {
-                            viewModel.loadMessagesBefore(selectedChatId, it + 1L)
-                        }
-                        Toast.makeText(context, "Загружаю исходное сообщение", Toast.LENGTH_SHORT).show()
-                    }
-                },
-                onJumpComplete = { jumpToMessageId = null },
-                onPickPhotoOrVideo = {
-                    photoPickerLauncher.launch(
-                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo),
-                    )
-                },
-                onPickDocument = { documentPickerLauncher.launch(arrayOf("*/*")) },
+        state.c…4409 tokens truncated…kerLauncher.launch(arrayOf("*/*")) },
                 onRetryMediaSend = viewModel::retryMediaSend,
                 onCancelMediaSend = viewModel::cancelMediaSend,
                 onStartVoiceRecording = requestVoiceRecording,
