@@ -64,15 +64,20 @@ pub(crate) fn auth_api_error(context: &'static str, error: InvocationError) -> C
 }
 
 fn auth_rpc_error(context: &'static str, error: grammers_client::sender::RpcError) -> CoreError {
+    let rpc_name = safe_rpc_name(&error.name);
     if let Some(seconds) = flood_wait_seconds(&error.name, error.value) {
         return CoreError::FloodWait { seconds };
     }
     if error.code >= 500 {
-        return CoreError::TransientSend(format!("{context}: Telegram server error"));
+        return CoreError::TransientSend(format!(
+            "{context}: Telegram RPC {rpc_name} (code {})",
+            error.code
+        ));
     }
 
-    // Never interpolate an arbitrary upstream error string: it can contain
-    // request parameters. Only expose explicitly allowlisted RPC classes.
+    // Keep the server's actual RPC class visible for diagnosis, but constrain
+    // it to Telegram's identifier alphabet so arbitrary error text or
+    // request parameters cannot reach the UI.
     let detail = match error.name.as_str() {
         "PHONE_NUMBER_INVALID" => "PHONE_NUMBER_INVALID: enter a valid international phone number",
         "PHONE_NUMBER_BANNED" => "PHONE_NUMBER_BANNED: Telegram has banned this number",
@@ -89,9 +94,28 @@ fn auth_rpc_error(context: &'static str, error: grammers_client::sender::RpcErro
         }
         "PHONE_NUMBER_FLOOD" => "PHONE_NUMBER_FLOOD: too many attempts for this number",
         "AUTH_RESTART" => "AUTH_RESTART: restart Telegram login",
-        _ => "Telegram rejected the authorization request (unclassified RPC error)",
+        _ => "Telegram rejected the authorization request",
     };
-    TelegramBackendError::Authorization(format!("{context}: {detail}")).into()
+    TelegramBackendError::Authorization(format!(
+        "{context}: {detail} (RPC {rpc_name}, code {})",
+        error.code
+    ))
+    .into()
+}
+
+fn safe_rpc_name(name: &str) -> String {
+    let name: String = name
+        .chars()
+        .filter(|character| {
+            character.is_ascii_uppercase() || character.is_ascii_digit() || *character == '_'
+        })
+        .take(80)
+        .collect();
+    if name.is_empty() {
+        "UNKNOWN".into()
+    } else {
+        name
+    }
 }
 
 /// Grammers can expose Telegram flood limits either as `FLOOD_WAIT` plus a
@@ -150,7 +174,7 @@ mod tests {
     }
 
     #[test]
-    fn auth_rpc_errors_preserve_safe_actionable_classes() {
+    fn auth_rpc_errors_preserve_real_rpc_class_without_reflecting_arbitrary_text() {
         for (name, expected) in [
             ("PHONE_NUMBER_INVALID", "PHONE_NUMBER_INVALID"),
             ("PHONE_NUMBER_BANNED", "PHONE_NUMBER_BANNED"),
@@ -176,12 +200,14 @@ mod tests {
             "request login code",
             InvocationError::Rpc(RpcError {
                 code: 400,
-                name: "SECRET=should_not_leak".into(),
+                name: "UNSAFE=RPC_NAME".into(),
                 value: None,
                 caused_by: None,
             }),
         );
-        assert!(matches!(unknown, CoreError::Backend(message) if !message.contains("SECRET=")));
+        assert!(matches!(unknown, CoreError::Backend(message)
+            if message.contains("RPC UNSAFE_RPC_NAME, code 400")
+                && !message.contains("UNSAFE=")));
     }
 
     #[test]
@@ -206,7 +232,8 @@ mod tests {
                 caused_by: None,
             }),
         );
-        assert!(matches!(temporary, CoreError::TransientSend(_)));
+        assert!(matches!(temporary, CoreError::TransientSend(message)
+            if message.contains("RPC INTERNAL (code 500")));
     }
 
     #[test]
