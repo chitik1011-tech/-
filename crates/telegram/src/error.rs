@@ -110,7 +110,11 @@ fn safe_rpc_name(name: &str) -> String {
         && bytes
             .iter()
             .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || *byte == b'_');
-    if valid { name.to_owned() } else { "UNKNOWN".into() }
+    if valid {
+        name.to_owned()
+    } else {
+        "UNKNOWN".into()
+    }
 }
 
 /// Grammers can expose Telegram flood limits either as `FLOOD_WAIT` plus a
