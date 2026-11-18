@@ -29,6 +29,7 @@ import com.chitik.telegram.parseContactListState
 import com.chitik.telegram.ConversationPollOptionUi
 import com.chitik.telegram.ConversationPollUi
 import com.chitik.telegram.PeerProfileUi
+import com.chitik.telegram.ChatMemberUi
 import com.chitik.telegram.notifications.NotificationCleanupPolicy
 import com.chitik.telegram.notifications.NotificationCancellation
 import com.chitik.telegram.notifications.NotificationCancellationPolicy
@@ -2351,6 +2352,21 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 } else status.replaceFirstChar(Char::uppercase)
             }
         val avatar = root.optJSONObject("avatar")
+        val members = root.optJSONArray("members")?.let { array ->
+            buildList {
+                for (index in 0 until array.length()) {
+                    val member = array.optJSONObject(index) ?: continue
+                    add(
+                        ChatMemberUi(
+                            userId = member.optLong("user_id"),
+                            displayName = member.optString("display_name"),
+                            username = member.optString("username").takeIf(String::isNotBlank),
+                            role = member.optString("role", "member"),
+                        ),
+                    )
+                }
+            }
+        }
         return PeerProfileUi(
             peerId = root.getLong("peer_id"),
             kind = root.optString("kind", "unknown"),
@@ -2360,6 +2376,8 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
             username = root.optString("username").takeIf(String::isNotBlank),
             bio = root.optString("bio").takeIf(String::isNotBlank),
             memberCount = root.optInt("member_count").takeIf { root.has("member_count") && !root.isNull("member_count") },
+            members = members,
+            membersTruncated = root.optBoolean("members_truncated", false),
             presence = presence,
             isBot = root.optionalBoolean("is_bot"),
             isVerified = root.optionalBoolean("is_verified"),

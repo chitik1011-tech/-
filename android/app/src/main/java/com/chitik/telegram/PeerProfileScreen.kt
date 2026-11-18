@@ -43,6 +43,8 @@ data class PeerProfileUi(
     val username: String?,
     val bio: String?,
     val memberCount: Int?,
+    val members: List<ChatMemberUi>?,
+    val membersTruncated: Boolean,
     val presence: String?,
     val isBot: Boolean?,
     val isVerified: Boolean?,
@@ -53,6 +55,13 @@ data class PeerProfileUi(
     val canPostMessages: Boolean?,
     val avatarFileId: String?,
     val avatarLocalPath: String?,
+)
+
+data class ChatMemberUi(
+    val userId: Long,
+    val displayName: String,
+    val username: String?,
+    val role: String,
 )
 
 @Composable
@@ -108,6 +117,45 @@ fun PeerProfileDialog(
                     }
                     details.bio?.let { ProfileInfoRow(label = "Bio", value = it) }
                     details.memberCount?.let { ProfileInfoRow(label = "Members", value = it.toString()) }
+                    if (profile.kind in setOf("basic_group", "supergroup", "channel")) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        Text("Group members", style = MaterialTheme.typography.labelLarge)
+                        val members = profile.members
+                        if (members == null) {
+                            Text(
+                                "Member list unavailable from Telegram",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        } else if (members.isEmpty()) {
+                            Text("No members returned")
+                        } else {
+                            members.forEach { member ->
+                                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    Text(
+                                        member.displayName.ifBlank { "User ${member.userId}" },
+                                        style = MaterialTheme.typography.bodyMedium,
+                                    )
+                                    val details = buildList {
+                                        member.username?.takeIf(String::isNotBlank)?.let { add("@$it") }
+                                        add(member.role.replaceFirstChar(Char::uppercase))
+                                    }.joinToString(" · ")
+                                    Text(
+                                        details,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                            if (profile.membersTruncated) {
+                                Text(
+                                    "Showing the first ${members.size} members",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
                     if (details.badges.isNotEmpty()) {
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             details.badges.forEach { label -> ProfileBadge(label) }

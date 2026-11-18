@@ -84,7 +84,7 @@ fn search_command_is_additive_and_validates_input() {
             ..valid.clone()
         },
         SearchMessagesRequest {
-            chat_id: -7,
+            chat_id: 0,
             ..valid.clone()
         },
         SearchMessagesRequest {
@@ -105,24 +105,12 @@ fn search_command_is_additive_and_validates_input() {
         },
         SearchMessagesRequest {
             limit: MAX_MESSAGE_SEARCH_LIMIT + 1,
-            ..valid.clone()
+            ..valid
         },
     ];
     for request in invalid {
         assert!(request.validate().is_err(), "accepted {request:?}");
     }
-
-    let account_wide = SearchMessagesRequest {
-        chat_id: 0,
-        ..valid.clone()
-    };
-    assert!(account_wide.validate().is_ok());
-    assert!(SearchMessagesRequest {
-        before_message_id: Some(100),
-        ..account_wide
-    }
-    .validate()
-    .is_err());
 }
 
 #[test]
@@ -134,11 +122,7 @@ fn search_results_are_transient_and_do_not_pollute_chat_history() {
         5,
         "needle",
         None,
-        vec![message(30, 300, "needle"), message(20, 200, "needle"), {
-            let mut other_chat = message(31, 310, "wrong chat");
-            other_chat.chat_id = 8;
-            other_chat
-        }],
+        vec![message(30, 300, "needle"), message(20, 200, "needle")],
         Some(20),
         true,
     )));
@@ -155,39 +139,6 @@ fn search_results_are_transient_and_do_not_pollute_chat_history() {
     assert_eq!(search.next_before_message_id, Some(20));
     assert!(search.has_more);
     assert!(state.messages_for_chat(7).is_empty());
-}
-
-#[test]
-fn account_wide_search_keeps_global_scope_separate_from_result_chat_ids() {
-    let mut state = CoreState::default();
-    let request = SearchMessagesRequest {
-        request_id: 3,
-        chat_id: 0,
-        query: "needle".into(),
-        before_message_id: None,
-        limit: 20,
-    };
-    state.reduce(&CoreEvent::MessageSearchStarted(request));
-    state.reduce(&CoreEvent::MessageSearchCompleted(MessageSearchPage {
-        request_id: 3,
-        chat_id: 0,
-        query: "needle".into(),
-        requested_before_message_id: None,
-        messages: vec![message(45, 450, "needle in first chat"), {
-            let mut other_chat = message(45, 440, "needle in second chat");
-            other_chat.chat_id = 8;
-            other_chat
-        }],
-        next_before_message_id: None,
-        has_more: false,
-    }));
-
-    let search = state.message_search.chat(0).expect("global search scope");
-    assert_eq!(search.results.len(), 2);
-    assert_eq!(search.results[0].chat_id, 7);
-    assert_eq!(search.results[1].chat_id, 8);
-    assert!(state.messages.get(&7).is_none_or(Vec::is_empty));
-    assert!(state.messages.get(&8).is_none_or(Vec::is_empty));
 }
 
 #[test]

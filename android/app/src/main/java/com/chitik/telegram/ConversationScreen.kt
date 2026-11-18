@@ -338,7 +338,7 @@ fun ConversationScreen(
     var hasOpenedConversation by rememberSaveable(state.chatId) { mutableStateOf(false) }
     var showNewMessages by rememberSaveable(state.chatId) { mutableStateOf(false) }
     var lastObservedLatestMessageId by rememberSaveable(state.chatId) { mutableStateOf<String?>(null) }
-    var viewerKey by rememberSaveable { mutableStateOf<String?>(null) }
+    var viewerKey by rememberSaveable(state.chatId) { mutableStateOf<String?>(null) }
     var missingPinnedTarget by remember(state.chatId, state.selectionGeneration) { mutableStateOf<String?>(null) }
     var actionTarget by remember(state.chatId, state.selectionGeneration) { mutableStateOf<ConversationMessageUi?>(null) }
     var editingMessage by remember(state.chatId, state.selectionGeneration) { mutableStateOf<ConversationMessageUi?>(null) }
@@ -855,7 +855,7 @@ fun ConversationScreen(
                                             }
                                         },
                                         onOpenViewer = { attachment ->
-                                            viewerKey = "${message.id}:${attachment.index}"
+                                            viewerKey = mediaViewerKey(state.chatId, message.id, attachment.index)
                                         },
                                         onOpenDocument = onOpenDocument,
                                         onOpenReplyTarget = onOpenReplyTarget,
@@ -920,17 +920,8 @@ fun ConversationScreen(
         }
     }
 
-    val viewerSelection = remember(state.messages, viewerKey) {
-        val key = viewerKey ?: return@remember null
-        val separator = key.lastIndexOf(':')
-        if (separator <= 0) return@remember null
-        val messageId = key.substring(0, separator)
-        val attachmentIndex = key.substring(separator + 1).toIntOrNull() ?: return@remember null
-        state.messages
-            .firstOrNull { it.id == messageId }
-            ?.attachments
-            ?.firstOrNull { it.index == attachmentIndex }
-            ?.let { attachment -> messageId.toLongOrNull()?.let { it to attachment } }
+    val viewerSelection = remember(state.chatId, state.messages, viewerKey) {
+        resolveMediaViewerSelection(state.chatId, state.messages, viewerKey)
     }
 
     actionTarget?.let { message ->
@@ -1328,36 +1319,26 @@ private fun PollContent(
     Spacer(Modifier.height(6.dp))
 
     poll.options.forEach { option ->
-        val checked = if (poll.multipleChoice) {
-            option.optionId in selected
-        } else {
-            option.chosen
-        }
+        val checked = option.optionId in selected
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(enabled = enabled) {
+                    selected = selectPollOption(selected, option.optionId, poll.multipleChoice)
+                },
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (poll.multipleChoice) {
                 Checkbox(
                     checked = checked,
                     enabled = enabled,
-                    onCheckedChange = { value ->
-                        selected = selected.toMutableSet().apply {
-                            if (value) {
-                                add(option.optionId)
-                            } else {
-                                remove(option.optionId)
-                            }
-                        }
-                    },
+                    onCheckedChange = null,
                 )
             } else {
                 RadioButton(
                     selected = checked,
                     enabled = enabled,
-                    onClick = {
-                        if (enabled) onVote(listOf(option.optionId))
-                    },
+                    onClick = null,
                 )
             }
 
@@ -1395,7 +1376,7 @@ private fun PollContent(
         }
     }
 
-    if (poll.multipleChoice && !poll.closed) {
+    if (!poll.closed) {
         Spacer(Modifier.height(4.dp))
         Button(
             onClick = { onVote(selected.toList()) },
@@ -1408,7 +1389,7 @@ private fun PollContent(
                     strokeWidth = 2.dp,
                 )
             } else {
-                Text("Отправить голос")
+                Text(if (poll.quiz) "Отправить ответ" else "Голосовать")
             }
         }
     } else if (loading) {
@@ -1460,6 +1441,18 @@ private fun optionStatus(option: ConversationPollOptionUi): String? = when {
     option.chosen && option.correct == false -> "✕"
     option.chosen -> "Выбрано"
     else -> null
+}
+
+internal fun selectPollOption(
+    selected: Set<List<Int>>,
+    optionId: List<Int>,
+    multipleChoice: Boolean,
+): Set<List<Int>> = if (!multipleChoice) {
+    setOf(optionId)
+} else if (optionId in selected) {
+    selected.filterNot { it == optionId }.toSet()
+} else {
+    selected + setOf(optionId)
 }
 
 internal fun pollPercent(voterCount: Int?, totalVoters: Int?): Int? {

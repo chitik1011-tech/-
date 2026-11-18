@@ -1157,10 +1157,16 @@ impl GrammersBackend {
                     .ok_or(TelegramBackendError::UnknownChat(peer_id))?;
                 let peer = self
                     .client
-                    .resolve_peer(peer_ref)
+                    .resolve_peer(peer_ref.clone())
                     .await
                     .map_err(|error| crate::error::api_error("load profile", error))?;
                 let mut profile = crate::profiles::profile_from_peer(peer_id, &peer);
+                if let Some((members, truncated)) =
+                    crate::profiles::visible_members(&self.client, &peer, peer_ref).await
+                {
+                    profile.members = Some(members);
+                    profile.members_truncated = truncated;
+                }
                 crate::profiles::hydrate_profile(
                     &self.client,
                     &peer,

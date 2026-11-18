@@ -1,8 +1,15 @@
 use std::io::Write;
 
-use grammers_client::{peer::Peer, tl};
+use grammers_client::{
+    Client,
+    peer::{Participant, Peer, Role},
+    session::types::PeerRef,
+    tl,
+};
 use tg_media_cache::MediaCache;
-use tg_mobile_core::{AvatarReference, PeerKind, PeerPresence, PeerProfile};
+use tg_mobile_core::{AvatarReference, ChatMemberSummary, PeerKind, PeerPresence, PeerProfile};
+
+const PROFILE_MEMBER_PREVIEW_LIMIT: usize = 100;
 
 /// Convert the profile fields available in Grammers' resolved peer snapshot.
 /// Full details remain optional when Telegram did not include them in the peer.
@@ -81,6 +88,45 @@ pub(crate) fn profile_from_peer(peer_id: i64, peer: &Peer) -> PeerProfile {
         Peer::Community(_) => {}
     }
     profile
+}
+
+/// Return only participants Telegram allows this account to inspect. Telegram
+/// may reject this request for broadcast channels or restricted group members;
+/// callers preserve that as an unavailable list rather than inventing one.
+pub(crate) async fn visible_members(
+    client: &Client,
+    peer: &Peer,
+    peer_ref: PeerRef,
+) -> Option<(Vec<ChatMemberSummary>, bool)> {
+    if !matches!(peer, Peer::Group(_) | Peer::Channel(_)) {
+        return None;
+    }
+
+    let mut participants = client.iter_participants(peer_ref);
+    let mut members = Vec::with_capacity(PROFILE_MEMBER_PREVIEW_LIMIT);
+    while members.len() < PROFILE_MEMBER_PREVIEW_LIMIT {
+        match participants.next().await.ok()? {
+            Some(participant) => members.push(member_summary(participant)),
+            None => return Some((members, false)),
+        }
+    }
+
+    let truncated = participants.next().await.ok()?.is_some();
+    Some((members, truncated))
+}
+
+fn member_summary(participant: Participant) -> ChatMemberSummary {
+    let role = match &participant.role {
+        Role::Creator(_) => "owner",
+        Role::Admin(_) => "admin",
+        _ => "member",
+    };
+    ChatMemberSummary {
+        user_id: crate::ids::peer_id_to_core(participant.user.id()),
+        display_name: participant.user.full_name(),
+        username: participant.user.username().map(str::to_owned),
+        role: role.to_owned(),
+    }
 }
 
 pub(crate) async fn hydrate_profile(
