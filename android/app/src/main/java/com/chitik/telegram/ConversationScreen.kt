@@ -1459,7 +1459,7 @@ internal fun selectPollOption(
 ): Set<List<Int>> = if (!multipleChoice) {
     setOf(optionId)
 } else if (optionId in selected) {
-    selected - optionId
+    selected.filterNot { it == optionId }.toSet()
 } else {
     selected + setOf(optionId)
 }
