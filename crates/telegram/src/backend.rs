@@ -31,7 +31,9 @@ use tokio::{
 
 use crate::{
     auth::AuthFlow,
-    chats::{PeerRegistry, clear_peer_registry, find_peer, load_chats, new_peer_registry},
+    chats::{
+        PeerRegistry, clear_peer_registry, find_peer, forget_peer, load_chats, new_peer_registry,
+    },
     config::TelegramConfig,
     contacts::{load_contacts, search_contacts},
     downloads::{MediaTarget, event as media_event, spawn_download, state_from_snapshot},
@@ -1230,6 +1232,23 @@ impl GrammersBackend {
                 )
                 .await;
                 vec![CoreEvent::ProfileUpdated(profile)]
+            }
+            CoreCommand::LeaveChat { chat_id } => {
+                self.require_ready().await?;
+                let peer = find_peer(&self.peers, chat_id)
+                    .await
+                    .ok_or(TelegramBackendError::UnknownChat(chat_id))?;
+                if !matches!(peer.id.kind(), PeerKind::Chat | PeerKind::Channel) {
+                    return Err(CoreError::InvalidInput(
+                        "leaving is only supported for groups and channels".into(),
+                    ));
+                }
+                self.client
+                    .delete_dialog(peer)
+                    .await
+                    .map_err(|error| crate::error::api_error("leave group or channel", error))?;
+                forget_peer(&self.peers, chat_id).await;
+                vec![CoreEvent::ChatLeft { chat_id }]
             }
             CoreCommand::LoadContacts {
                 offset,

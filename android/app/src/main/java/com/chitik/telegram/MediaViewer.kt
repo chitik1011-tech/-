@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -52,6 +53,10 @@ fun MediaViewerDialog(
     attachment: MediaAttachmentUi,
     onDismiss: () -> Unit,
     onRetry: () -> Unit,
+    itemPosition: Int = 1,
+    itemCount: Int = 1,
+    onPrevious: (() -> Unit)? = null,
+    onNext: (() -> Unit)? = null,
 ) {
     Dialog(
         onDismissRequest = onDismiss,
@@ -94,6 +99,32 @@ fun MediaViewerDialog(
                         .padding(12.dp),
                 ) {
                     Text("Закрыть", color = Color.White)
+                }
+
+                if (itemCount > 1) {
+                    Row(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(bottom = 20.dp),
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        TextButton(
+                            onClick = { onPrevious?.invoke() },
+                            enabled = onPrevious != null,
+                            colors = ButtonDefaults.textButtonColors(contentColor = Color.White),
+                        ) {
+                            Text("Предыдущее")
+                        }
+                        Text("$itemPosition / $itemCount", color = Color.White)
+                        TextButton(
+                            onClick = { onNext?.invoke() },
+                            enabled = onNext != null,
+                            colors = ButtonDefaults.textButtonColors(contentColor = Color.White),
+                        ) {
+                            Text("Следующее")
+                        }
+                    }
                 }
             }
         }

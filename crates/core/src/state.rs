@@ -829,6 +829,26 @@ impl CoreState {
                     }
                 });
             }
+            CoreEvent::ChatLeft { chat_id } => {
+                self.account.chats.retain(|chat| chat.id != *chat_id);
+                self.chat_capabilities.remove(chat_id);
+                self.messages.remove(chat_id);
+                self.profiles.remove(chat_id);
+                self.profile_order.retain(|id| id != chat_id);
+                self.read_receipts.remove(chat_id);
+                self.message_history.remove(chat_id);
+                self.message_search.chats.remove(chat_id);
+                self.pinned_messages.remove(chat_id);
+                self.pinned_message_pts.remove(chat_id);
+                self.pinned_message_revision.remove(chat_id);
+                self.drafts.remove(chat_id);
+                self.polls.retain(|_, poll| poll.chat_id != *chat_id);
+                let live_poll_ids = self.polls.keys().copied().collect::<BTreeSet<_>>();
+                self.poll_order
+                    .retain(|poll_id| live_poll_ids.contains(poll_id));
+                self.outbox.retain(|_, send| send.chat_id != *chat_id);
+                self.last_error = None;
+            }
             CoreEvent::MessageMutationSucceeded { .. }
             | CoreEvent::MessageMutationFailed { .. } => {}
             CoreEvent::MessageEdited(message) => {

@@ -36,6 +36,10 @@ pub enum CoreCommand {
     LoadProfile {
         peer_id: i64,
     },
+    /// Leave a group or channel and remove its local dialog snapshot.
+    LeaveChat {
+        chat_id: i64,
+    },
     /// Load one page from the authenticated account's Telegram contacts.
     LoadContacts {
         offset: usize,
@@ -225,6 +229,7 @@ impl CoreCommand {
             Self::LoadChats { .. } => "load_chats",
             Self::LoadChatsPage { .. } => "load_chats_page",
             Self::LoadProfile { .. } => "load_profile",
+            Self::LeaveChat { .. } => "leave_chat",
             Self::LoadContacts { .. } => "load_contacts",
             Self::LoadMessages { .. } => "load_messages",
             Self::LoadMessagesPage { .. } => "load_messages_page",
@@ -565,6 +570,7 @@ impl CoreCommand {
             | Self::UnpinChat { chat_id }
             | Self::MarkChatUnread { chat_id }
             | Self::MarkChatRead { chat_id } => validate_chat_id(*chat_id),
+            Self::LeaveChat { chat_id } => validate_chat_id(*chat_id),
             Self::UpdateDraft(draft) => draft.validate(),
             Self::ClearDraft {
                 chat_id,

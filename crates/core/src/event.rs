@@ -150,6 +150,10 @@ pub enum CoreEvent {
     },
     MessageAdded(MessageSummary),
     ProfileUpdated(PeerProfile),
+    /// The current account left this group or channel.
+    ChatLeft {
+        chat_id: i64,
+    },
     ChatArchived {
         chat_id: i64,
         archived: bool,
@@ -290,6 +294,7 @@ impl CoreEvent {
             Self::MessageSearchFailed { .. } => "message_search_failed",
             Self::MessageAdded(_) => "message_added",
             Self::ProfileUpdated(_) => "profile_updated",
+            Self::ChatLeft { .. } => "chat_left",
             Self::ChatArchived { .. } => "chat_archived",
             Self::ChatMuted { .. } => "chat_muted",
             Self::ChatPinned { .. } => "chat_pinned",

@@ -200,7 +200,14 @@ fn newer_contact_search_rejects_late_successes_and_failures() {
         error: "search failed".into(),
     });
     assert_eq!(state.last_error.as_deref(), Some("search failed"));
-    assert!(state.contacts.is_empty());
+    assert_eq!(state.contacts.len(), 1);
+    assert_eq!(
+        state
+            .contacts
+            .get(42)
+            .map(|contact| contact.display_name.as_str()),
+        Some("Grace Hopper")
+    );
 }
 
 #[tokio::test]

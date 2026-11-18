@@ -24,6 +24,10 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -70,11 +74,13 @@ fun PeerProfileDialog(
     loading: Boolean,
     error: String?,
     onDismiss: () -> Unit,
+    onLeaveChat: (Long) -> Unit = {},
     /** Returns to the already-open conversation so the user can message this peer. */
     onMessage: () -> Unit = onDismiss,
 ) {
     val presentation = profile?.toPeerProfilePresentation()
     val context = LocalContext.current
+    var confirmLeave by remember(profile?.peerId) { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
@@ -183,11 +189,34 @@ fun PeerProfileDialog(
             }
         },
         dismissButton = {
-            if (presentation?.canMessage == true) {
-                TextButton(onClick = onDismiss) { Text("Close") }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (profile?.kind in setOf("basic_group", "supergroup", "channel")) {
+                    TextButton(onClick = { confirmLeave = true }) { Text("Leave chat") }
+                }
+                if (presentation?.canMessage == true) {
+                    TextButton(onClick = onDismiss) { Text("Close") }
+                }
             }
         },
     )
+    if (confirmLeave && profile != null) {
+        AlertDialog(
+            onDismissRequest = { confirmLeave = false },
+            title = { Text("Leave chat?") },
+            text = {
+                Text("Leaving removes this chat from your dialogs and clears its cached conversation history.")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmLeave = false
+                    onLeaveChat(profile.peerId)
+                }) { Text("Leave") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmLeave = false }) { Text("Cancel") }
+            },
+        )
+    }
 }
 
 private fun copyProfileUsername(context: Context, username: String) {
