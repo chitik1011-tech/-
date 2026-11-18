@@ -1000,13 +1000,37 @@ fun ConversationScreen(
         )
     }
 
-    viewerSelection?.let { (messageId, attachment) ->
+    viewerSelection?.let { selection ->
         MediaViewerDialog(
-            attachment = attachment,
+            attachment = selection.current.attachment,
             onDismiss = { viewerKey = null },
             onRetry = {
-                onDownloadMedia(messageId, attachment.index, true)
+                onDownloadMedia(
+                    selection.current.messageId,
+                    selection.current.attachment.index,
+                    true,
+                )
                 viewerKey = null
+            },
+            itemPosition = selection.index + 1,
+            itemCount = selection.items.size,
+            onPrevious = selection.previous?.let { previous ->
+                {
+                    viewerKey = mediaViewerKey(
+                        state.chatId,
+                        previous.messageId.toString(),
+                        previous.attachment.index,
+                    )
+                }
+            },
+            onNext = selection.next?.let { next ->
+                {
+                    viewerKey = mediaViewerKey(
+                        state.chatId,
+                        next.messageId.toString(),
+                        next.attachment.index,
+                    )
+                }
             },
         )
     }
