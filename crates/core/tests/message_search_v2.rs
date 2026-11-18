@@ -134,7 +134,15 @@ fn search_results_are_transient_and_do_not_pollute_chat_history() {
         5,
         "needle",
         None,
-        vec![message(30, 300, "needle"), message(20, 200, "needle")],
+        vec![
+            message(30, 300, "needle"),
+            message(20, 200, "needle"),
+            {
+                let mut other_chat = message(31, 310, "wrong chat");
+                other_chat.chat_id = 8;
+                other_chat
+            },
+        ],
         Some(20),
         true,
     )));
@@ -169,15 +177,24 @@ fn account_wide_search_keeps_global_scope_separate_from_result_chat_ids() {
         chat_id: 0,
         query: "needle".into(),
         requested_before_message_id: None,
-        messages: vec![message(45, 450, "needle in another chat")],
+        messages: vec![
+            message(45, 450, "needle in first chat"),
+            {
+                let mut other_chat = message(45, 440, "needle in second chat");
+                other_chat.chat_id = 8;
+                other_chat
+            },
+        ],
         next_before_message_id: None,
         has_more: false,
     }));
 
     let search = state.message_search.chat(0).expect("global search scope");
-    assert_eq!(search.results.len(), 1);
+    assert_eq!(search.results.len(), 2);
     assert_eq!(search.results[0].chat_id, 7);
+    assert_eq!(search.results[1].chat_id, 8);
     assert!(state.messages.get(&7).is_none_or(Vec::is_empty));
+    assert!(state.messages.get(&8).is_none_or(Vec::is_empty));
 }
 
 #[test]

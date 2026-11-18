@@ -30,7 +30,9 @@ impl SearchMessagesRequest {
             ));
         }
         if self.chat_id < 0 {
-            return Err(CoreError::InvalidInput("chat id must not be negative".into()));
+            return Err(CoreError::InvalidInput(
+                "chat id must not be negative".into(),
+            ));
         }
         if self.chat_id == 0 && self.before_message_id.is_some() {
             return Err(CoreError::InvalidInput(
@@ -150,13 +152,13 @@ impl MessageSearchState {
 
         state.active = None;
         for message in &page.messages {
-            if message.chat_id != page.chat_id {
+            if message.chat_id == 0 || (page.chat_id != 0 && message.chat_id != page.chat_id) {
                 continue;
             }
             if let Some(existing) = state
                 .results
                 .iter_mut()
-                .find(|existing| existing.id == message.id)
+                .find(|existing| existing.id == message.id && existing.chat_id == message.chat_id)
             {
                 *existing = message.clone();
             } else {
@@ -167,6 +169,7 @@ impl MessageSearchState {
         state.results.sort_by(|a, b| {
             b.timestamp_unix
                 .cmp(&a.timestamp_unix)
+                .then_with(|| b.chat_id.cmp(&a.chat_id))
                 .then_with(|| b.id.cmp(&a.id))
         });
 
