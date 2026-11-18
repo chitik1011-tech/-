@@ -395,4 +395,31 @@ mod tests {
         assert!(!sending.try_cancel());
         assert!(!sending.try_begin_send());
     }
+
+    #[test]
+    fn concurrent_cancel_and_send_submission_have_exactly_one_winner() {
+        use std::sync::Barrier;
+
+        for _ in 0..128 {
+            let stage = Arc::new(MediaSendStage::default());
+            let barrier = Arc::new(Barrier::new(3));
+            let cancel_stage = Arc::clone(&stage);
+            let cancel_barrier = Arc::clone(&barrier);
+            let cancel = std::thread::spawn(move || {
+                cancel_barrier.wait();
+                cancel_stage.try_cancel()
+            });
+            let send_stage = Arc::clone(&stage);
+            let send_barrier = Arc::clone(&barrier);
+            let send = std::thread::spawn(move || {
+                send_barrier.wait();
+                send_stage.try_begin_send()
+            });
+
+            barrier.wait();
+            let cancelled = cancel.join().expect("cancel thread should finish");
+            let sending = send.join().expect("send thread should finish");
+            assert_ne!(cancelled, sending, "exactly one transition must win");
+        }
+    }
 }
