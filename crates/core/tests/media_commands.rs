@@ -226,11 +226,7 @@ fn transfer_updates_from_a_replaced_account_cannot_mutate_same_id_messages() {
         let token = state.connection_machine.token();
         state.reduce(&CoreEvent::ConnectionLifecycle { token, event });
     }
-    let old_session_generation = state
-        .connection_machine
-        .token()
-        .generation()
-        .as_u64();
+    let old_session_generation = state.connection_machine.token().generation().as_u64();
     state.reduce(&CoreEvent::MessageAdded(message_with_photo()));
 
     state.reduce(&CoreEvent::ConnectionLifecycle {
@@ -238,11 +234,7 @@ fn transfer_updates_from_a_replaced_account_cannot_mutate_same_id_messages() {
         event: LinkEvent::Logout,
     });
     state.reduce(&CoreEvent::ConnectionSessionStarted);
-    let new_session_generation = state
-        .connection_machine
-        .token()
-        .generation()
-        .as_u64();
+    let new_session_generation = state.connection_machine.token().generation().as_u64();
     assert_ne!(old_session_generation, new_session_generation);
     state.reduce(&CoreEvent::MessageAdded(message_with_photo()));
 
