@@ -35,6 +35,7 @@ object TelegramUiTokens {
     val chatSearchHorizontalInset = 16.dp
     val messageCorner = 17.dp
     val messageTailCorner = 5.dp
+    val messageGroupCorner = 5.dp
     val composerMinHeight = 44.dp
     val composerTextSize = 18.sp
     val iconTouchTarget = 48.dp

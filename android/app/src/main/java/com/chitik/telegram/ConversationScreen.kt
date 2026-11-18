@@ -809,63 +809,78 @@ fun ConversationScreen(
                             state = listState,
                             modifier = Modifier.fillMaxSize(),
                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 16.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(0.dp),
                         ) {
                             itemsIndexed(
                                 items = state.messages,
                                 key = { _, message -> "${message.chatId}:${message.id}" },
                             ) { index, message ->
+                                val groupPosition = conversationMessageGroupPosition(state.messages, index)
                                 val previousDate = state.messages.getOrNull(index - 1)?.dateSeparator
-                                if (message.dateSeparator.isNotBlank() && message.dateSeparator != previousDate) {
-                                    ConversationDateSeparator(message.dateSeparator)
-                                }
-                                MessageBubble(
-                                    message = message,
-                                    voicePlaybackCoordinator = voicePlaybackCoordinator,
-                                    onPollVote = onPollVote,
-                                    pinned = message.id in state.pinnedMessageIds,
-                                    pending = message.id in state.pendingPinnedMessageIds,
-                                    canTogglePin = state.capabilities.canPinMessages == true,
-                                    onTogglePin = {
-                                        onTogglePin(state.chatId, message.id, message.id in state.pinnedMessageIds)
-                                    },
-                                    onOpenLocation = onOpenLocation,
-                                    onDownloadMedia = { attachmentIndex, retry ->
-                                        message.id.toLongOrNull()?.let { messageId ->
-                                            onDownloadMedia(messageId, attachmentIndex, retry)
-                                        }
-                                    },
-                                    onCancelMedia = { attachmentIndex ->
-                                        message.id.toLongOrNull()?.let { messageId ->
-                                            onCancelMedia(messageId, attachmentIndex)
-                                        }
-                                    },
-                                    onOpenViewer = { attachment ->
-                                        viewerKey = "${message.id}:${attachment.index}"
-                                    },
-                                    onOpenDocument = onOpenDocument,
-                                    onOpenReplyTarget = onOpenReplyTarget,
-                                    reactionPending = "${message.chatId}:${message.id}" in state.pendingReactionKeys,
-                                    reactionError = state.reactionErrors["${message.chatId}:${message.id}"],
-                                    onReaction = { reaction -> onReaction(message.chatId, message.id, reaction) },
-                                    selectionMode = selectionActive,
-                                    selected = message.id.toLongOrNull()?.let { it in selectedMessageIds } == true,
-                                    onClick = {
-                                        message.id.toLongOrNull()?.let { id ->
-                                            if (selectionActive) {
-                                                selectedMessageIds = toggleSelectedMessageId(selectedMessageIds, id)
+                                val showsDateSeparator = message.dateSeparator.isNotBlank() && message.dateSeparator != previousDate
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(
+                                            top = when {
+                                                !groupPosition.firstInGroup -> 2.dp
+                                                showsDateSeparator -> 0.dp
+                                                else -> 8.dp
+                                            },
+                                        ),
+                                ) {
+                                    if (showsDateSeparator) {
+                                        ConversationDateSeparator(message.dateSeparator)
+                                    }
+                                    MessageBubble(
+                                        message = message,
+                                        groupPosition = groupPosition,
+                                        voicePlaybackCoordinator = voicePlaybackCoordinator,
+                                        onPollVote = onPollVote,
+                                        pinned = message.id in state.pinnedMessageIds,
+                                        pending = message.id in state.pendingPinnedMessageIds,
+                                        canTogglePin = state.capabilities.canPinMessages == true,
+                                        onTogglePin = {
+                                            onTogglePin(state.chatId, message.id, message.id in state.pinnedMessageIds)
+                                        },
+                                        onOpenLocation = onOpenLocation,
+                                        onDownloadMedia = { attachmentIndex, retry ->
+                                            message.id.toLongOrNull()?.let { messageId ->
+                                                onDownloadMedia(messageId, attachmentIndex, retry)
                                             }
-                                        }
-                                    },
-                                    onLongPress = {
-                                        val messageId = message.id.toLongOrNull()
-                                        if (selectionActive && messageId != null) {
-                                            selectedMessageIds = toggleSelectedMessageId(selectedMessageIds, messageId)
-                                        } else {
-                                            actionTarget = message
-                                        }
-                                    },
-                                )
+                                        },
+                                        onCancelMedia = { attachmentIndex ->
+                                            message.id.toLongOrNull()?.let { messageId ->
+                                                onCancelMedia(messageId, attachmentIndex)
+                                            }
+                                        },
+                                        onOpenViewer = { attachment ->
+                                            viewerKey = "${message.id}:${attachment.index}"
+                                        },
+                                        onOpenDocument = onOpenDocument,
+                                        onOpenReplyTarget = onOpenReplyTarget,
+                                        reactionPending = "${message.chatId}:${message.id}" in state.pendingReactionKeys,
+                                        reactionError = state.reactionErrors["${message.chatId}:${message.id}"],
+                                        onReaction = { reaction -> onReaction(message.chatId, message.id, reaction) },
+                                        selectionMode = selectionActive,
+                                        selected = message.id.toLongOrNull()?.let { it in selectedMessageIds } == true,
+                                        onClick = {
+                                            message.id.toLongOrNull()?.let { id ->
+                                                if (selectionActive) {
+                                                    selectedMessageIds = toggleSelectedMessageId(selectedMessageIds, id)
+                                                }
+                                            }
+                                        },
+                                        onLongPress = {
+                                            val messageId = message.id.toLongOrNull()
+                                            if (selectionActive && messageId != null) {
+                                                selectedMessageIds = toggleSelectedMessageId(selectedMessageIds, messageId)
+                                            } else {
+                                                actionTarget = message
+                                            }
+                                        },
+                                    )
+                                }
                             }
 
                             if (state.loading) {
@@ -1055,6 +1070,7 @@ private fun ConversationDateSeparator(label: String) {
 @Composable
 private fun MessageBubble(
     message: ConversationMessageUi,
+    groupPosition: ConversationMessageGroupPosition,
     voicePlaybackCoordinator: VoicePlaybackCoordinator,
     onPollVote: (ConversationPollUi, List<List<Int>>) -> Unit,
     pinned: Boolean,
@@ -1110,10 +1126,10 @@ private fun MessageBubble(
                     if (selectionMode) this.selected = selectedForSemantics
                 },
             shape = RoundedCornerShape(
-                topStart = TelegramUiTokens.messageCorner,
-                topEnd = TelegramUiTokens.messageCorner,
-                bottomEnd = if (message.isOutgoing) TelegramUiTokens.messageTailCorner else TelegramUiTokens.messageCorner,
-                bottomStart = if (message.isOutgoing) TelegramUiTokens.messageCorner else TelegramUiTokens.messageTailCorner,
+                topStart = if (!message.isOutgoing && !groupPosition.firstInGroup) TelegramUiTokens.messageGroupCorner else TelegramUiTokens.messageCorner,
+                topEnd = if (message.isOutgoing && !groupPosition.firstInGroup) TelegramUiTokens.messageGroupCorner else TelegramUiTokens.messageCorner,
+                bottomEnd = if (message.isOutgoing && groupPosition.lastInGroup) TelegramUiTokens.messageTailCorner else TelegramUiTokens.messageCorner,
+                bottomStart = if (!message.isOutgoing && groupPosition.lastInGroup) TelegramUiTokens.messageTailCorner else TelegramUiTokens.messageCorner,
             ),
             color = if (selected) MaterialTheme.colorScheme.secondaryContainer else if (message.isOutgoing) {
                 MaterialTheme.colorScheme.primaryContainer
