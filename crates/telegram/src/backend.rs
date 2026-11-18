@@ -189,6 +189,14 @@ pub struct GrammersBackend {
 }
 
 impl GrammersBackend {
+    fn current_session_generation(&self) -> tg_mobile_core::Result<u64> {
+        let receiver = self.connection_token_tx.subscribe();
+        let token = *receiver.borrow();
+        token
+            .map(|token| token.generation().as_u64())
+            .ok_or_else(|| CoreError::Backend("connection session token is unavailable".into()))
+    }
+
     pub async fn connect(config: TelegramConfig) -> tg_mobile_core::Result<Self> {
         config.validate().map_err(CoreError::from)?;
 
@@ -735,6 +743,7 @@ impl GrammersBackend {
         let (target, media) = self
             .resolve_media_target(chat_id, message_id, attachment_index)
             .await?;
+        let session_generation = self.current_session_generation()?;
 
         if retry {
             let _ = self.media_cache.remove(&target.reference);
@@ -751,6 +760,7 @@ impl GrammersBackend {
             return Ok(vec![media_event(
                 &target,
                 generation,
+                session_generation,
                 AttachmentDownloadState::Downloaded {
                     local_path: lease.path().to_path_buf(),
                 },
@@ -767,6 +777,7 @@ impl GrammersBackend {
                     return Ok(vec![media_event(
                         &target,
                         snapshot.token.generation,
+                        session_generation,
                         state_from_snapshot(&snapshot, None),
                     )]);
                 }
@@ -785,6 +796,7 @@ impl GrammersBackend {
                 return Ok(vec![media_event(
                     &target,
                     snapshot.token.generation,
+                    session_generation,
                     state_from_snapshot(&snapshot, None),
                 )]);
             }
@@ -852,6 +864,7 @@ impl GrammersBackend {
                     return Ok(vec![media_event(
                         &target,
                         failed.generation,
+                        session_generation,
                         AttachmentDownloadState::Failed {
                             reason: Some("previous download was interrupted".into()),
                         },
@@ -871,6 +884,7 @@ impl GrammersBackend {
                 return Ok(vec![media_event(
                     &target,
                     snapshot.token.generation,
+                    session_generation,
                     AttachmentDownloadState::Failed { reason: None },
                 )]);
             }
@@ -878,6 +892,7 @@ impl GrammersBackend {
                 return Ok(vec![media_event(
                     &target,
                     snapshot.token.generation,
+                    session_generation,
                     AttachmentDownloadState::Cancelled,
                 )]);
             }
@@ -897,6 +912,7 @@ impl GrammersBackend {
             self.core_update_tx.clone(),
             Arc::clone(&targets),
             queued_token,
+            session_generation,
         );
         let active = ActiveMediaTask {
             reference: target.reference.clone(),
@@ -908,6 +924,7 @@ impl GrammersBackend {
         Ok(vec![media_event(
             &target,
             queued_token.generation,
+            session_generation,
             AttachmentDownloadState::Queued,
         )])
     }
@@ -919,6 +936,7 @@ impl GrammersBackend {
         attachment_index: usize,
     ) -> tg_mobile_core::Result<Vec<CoreEvent>> {
         self.cleanup_media_tasks();
+        let session_generation = self.current_session_generation()?;
         let key = (chat_id, message_id, attachment_index);
         let Some(active) = self.media_tasks.get(&key).cloned() else {
             return Ok(Vec::new());
@@ -946,6 +964,7 @@ impl GrammersBackend {
             return Ok(vec![media_event(
                 &target,
                 snapshot.token.generation,
+                session_generation,
                 AttachmentDownloadState::Cancelled,
             )]);
         }
@@ -970,6 +989,7 @@ impl GrammersBackend {
                 media_event(
                     target,
                     cancelled.generation,
+                    session_generation,
                     AttachmentDownloadState::Cancelled,
                 )
             })
