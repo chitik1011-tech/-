@@ -60,6 +60,7 @@ enum class AuthorizationUiStep {
 data class AuthorizationUiState(
     val authorization: AuthorizationUiStep = AuthorizationUiStep.Closed,
     val loginCodeDeliveryMethod: LoginCodeDeliveryMethod? = null,
+    val retryRemainingSeconds: Int = 0,
     /** Caller-owned configuration readiness, sourced from its runtime config store. */
     val isTelegramConfigured: Boolean = false,
     val isLoading: Boolean = false,
@@ -104,6 +105,10 @@ fun AuthorizationScreen(
     val authInputStep = state.authorization == AuthorizationUiStep.WaitingForPhoneNumber ||
         state.authorization == AuthorizationUiStep.WaitingForCode ||
         state.authorization == AuthorizationUiStep.WaitingForPassword
+    val canSubmitAuthInput = authorizationInputEnabled(
+        state.isLoading,
+        state.retryRemainingSeconds,
+    )
 
     LaunchedEffect(state.isTelegramConfigured, state.authorization) {
         val fieldsToClear = authorizationInputsToClear(state)
@@ -196,7 +201,7 @@ fun AuthorizationScreen(
                 AuthorizationUiStep.Closed -> {
                     Button(
                         onClick = onStart,
-                        enabled = !state.isLoading,
+                        enabled = !state.isLoading && state.retryRemainingSeconds <= 0,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         if (state.isLoading) {
@@ -229,7 +234,7 @@ fun AuthorizationScreen(
                         keyboardActions = KeyboardActions(
                             onDone = {
                                 val value = phoneNumber.trim()
-                                if (value.isNotEmpty() && !state.isLoading) onSubmitPhoneNumber(value)
+                                if (value.isNotEmpty() && canSubmitAuthInput) onSubmitPhoneNumber(value)
                             },
                         ),
                     )
@@ -238,7 +243,7 @@ fun AuthorizationScreen(
                             val value = phoneNumber.trim()
                             if (value.isNotEmpty()) onSubmitPhoneNumber(value)
                         },
-                        enabled = phoneNumber.isNotBlank() && !state.isLoading,
+                        enabled = phoneNumber.isNotBlank() && canSubmitAuthInput,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         if (state.isLoading) {
@@ -270,7 +275,7 @@ fun AuthorizationScreen(
                         keyboardActions = KeyboardActions(
                             onDone = {
                                 val value = code.trim()
-                                if (value.isNotEmpty() && !state.isLoading) {
+                                if (value.isNotEmpty() && canSubmitAuthInput) {
                                     onSubmitCode(value)
                                     code = ""
                                 }
@@ -285,7 +290,7 @@ fun AuthorizationScreen(
                                 code = ""
                             }
                         },
-                        enabled = code.isNotBlank() && !state.isLoading,
+                        enabled = code.isNotBlank() && canSubmitAuthInput,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         if (state.isLoading) {
@@ -317,7 +322,7 @@ fun AuthorizationScreen(
                         ),
                         keyboardActions = KeyboardActions(
                             onDone = {
-                                if (password.isNotEmpty() && !state.isLoading) {
+                                if (password.isNotEmpty() && canSubmitAuthInput) {
                                     onSubmitPassword(password)
                                     password = ""
                                 }
@@ -331,7 +336,7 @@ fun AuthorizationScreen(
                                 password = ""
                             }
                         },
-                        enabled = password.isNotEmpty() && !state.isLoading,
+                        enabled = password.isNotEmpty() && canSubmitAuthInput,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         if (state.isLoading) {

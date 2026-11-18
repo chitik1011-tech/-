@@ -6,6 +6,8 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.chitik.telegram.AuthorizationUiStep
 import com.chitik.telegram.LoginCodeDeliveryMethod
+import com.chitik.telegram.authorizationFloodWaitMessage
+import com.chitik.telegram.authorizationFloodWaitSeconds
 import com.chitik.telegram.canSubmitAuthorizationInput
 import com.chitik.telegram.authorizationFromRestoreSnapshot
 import com.chitik.telegram.deliveryAfterAuthorizationChange
@@ -76,6 +78,7 @@ data class NativeUiState(
     val telegramConfigured: Boolean = false,
     val authorization: AuthorizationUiStep = AuthorizationUiStep.Closed,
     val loginCodeDeliveryMethod: LoginCodeDeliveryMethod? = null,
+    val authorizationRetryRemainingSeconds: Int = 0,
     val sessionRestoreComplete: Boolean = false,
     /** Transient Telegram self ID confirmed for the current native session. */
     val accountUserId: Long? = null,
@@ -319,6 +322,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
     private val liveReadReceiptPolicy = LiveReadReceiptPolicy()
     @Volatile
     private var restartHandleAfterLogout = false
+    private var authorizationRetryJob: Job? = null
 
     init {
         initializeNativeSession()
@@ -559,6 +563,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
     }
 
     fun sendStartCommand() {
+        if (_state.value.authorizationRetryRemainingSeconds > 0) return
         if (!lifecycle.runIfOpen {
                 _state.update { it.copy(busy = true, error = null) }
             }
@@ -623,7 +628,13 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
     ): Boolean {
         while (true) {
             val current = _state.value
-            if (!canSubmitAuthorizationInput(current.authorization, expectedStep, current.busy)) {
+            if (!canSubmitAuthorizationInput(
+                    current.authorization,
+                    expectedStep,
+                    current.busy,
+                    current.authorizationRetryRemainingSeconds,
+                )
+            ) {
                 return false
             }
             val next = current.copy(
@@ -1892,6 +1903,21 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                     }
                 }.getOrDefault(payload)
 
+                val authStep = _state.value.authorization
+                val retrySeconds = if (authStep in setOf(
+                        AuthorizationUiStep.Closed,
+                        AuthorizationUiStep.Starting,
+                        AuthorizationUiStep.WaitingForPhoneNumber,
+                        AuthorizationUiStep.WaitingForCode,
+                        AuthorizationUiStep.WaitingForPassword,
+                    )
+                ) {
+                    authorizationFloodWaitSeconds(message)
+                } else {
+                    null
+                }
+                if (retrySeconds != null) startAuthorizationFloodWait(retrySeconds)
+
                 _state.update {
                     it.copy(
                         busy = false,
@@ -1907,7 +1933,9 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                         ),
                         lastEventType = type,
                         lastEventPayload = payload,
-                        error = message,
+                        error = retrySeconds?.let(::authorizationFloodWaitMessage) ?: message,
+                        authorizationRetryRemainingSeconds = retrySeconds
+                            ?: it.authorizationRetryRemainingSeconds,
                     )
                 }
             }
@@ -1917,6 +1945,29 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                         lastEventType = type,
                         lastEventPayload = payload,
                     )
+                }
+            }
+        }
+    }
+
+    private fun startAuthorizationFloodWait(seconds: Int) {
+        authorizationRetryJob?.cancel()
+        authorizationRetryJob = viewModelScope.launch {
+            for (remaining in seconds - 1 downTo 0) {
+                delay(1_000L)
+                _state.update { current ->
+                    if (current.authorizationRetryRemainingSeconds == remaining + 1) {
+                        current.copy(
+                            authorizationRetryRemainingSeconds = remaining,
+                            error = if (remaining > 0) {
+                                authorizationFloodWaitMessage(remaining)
+                            } else {
+                                null
+                            },
+                        )
+                    } else {
+                        current
+                    }
                 }
             }
         }
@@ -1943,6 +1994,10 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         }.getOrDefault(AuthorizationUiStep.Closed)
 
         val loggedOut = authorization == AuthorizationUiStep.Closed
+        if (authorization == AuthorizationUiStep.Ready) {
+            authorizationRetryJob?.cancel()
+            authorizationRetryJob = null
+        }
         if (authorization != AuthorizationUiStep.Ready) cancelVoiceRecording()
         val mediaPathsToDeleteOnLogout = if (loggedOut) {
             _state.value.outbox.values.mapNotNull { it.media?.path }.distinct()
@@ -2003,6 +2058,11 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                     current.accountIdentityResolved
                 } else {
                     false
+                },
+                authorizationRetryRemainingSeconds = if (authorization == AuthorizationUiStep.Ready) {
+                    0
+                } else {
+                    current.authorizationRetryRemainingSeconds
                 },
                 loginCodeDeliveryMethod = deliveryAfterAuthorizationChange(
                     current.loginCodeDeliveryMethod,
