@@ -103,13 +103,18 @@ internal fun sanitizeDisplayFilename(raw: String?): String {
 private val mimePattern = Regex("^[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+$")
 
 internal fun resolveSafeMimeType(declared: String?, filename: String?): String {
-    declared
+    val declaredMime = declared
         ?.trim()
         ?.takeIf(mimePattern::matches)
         ?.lowercase(Locale.ROOT)
-        ?.let { return it }
+    if (declaredMime != null && declaredMime !in GENERIC_BINARY_MIME_TYPES) {
+        return declaredMime
+    }
 
-    return when (sanitizeDisplayFilename(filename).substringAfterLast('.', "").lowercase(Locale.ROOT)) {
+    val extension = sanitizeDisplayFilename(filename)
+        .substringAfterLast('.', "")
+        .lowercase(Locale.ROOT)
+    val extensionMime = when (extension) {
         "jpg", "jpeg" -> "image/jpeg"
         "png" -> "image/png"
         "bmp" -> "image/bmp"
@@ -124,9 +129,16 @@ internal fun resolveSafeMimeType(declared: String?, filename: String?): String {
         "zip" -> "application/zip"
         "json" -> "application/json"
         "txt", "log", "md" -> "text/plain"
-        else -> "application/octet-stream"
+        else -> null
     }
+
+    return extensionMime ?: declaredMime ?: "application/octet-stream"
 }
+
+private val GENERIC_BINARY_MIME_TYPES = setOf(
+    "application/octet-stream",
+    "binary/octet-stream",
+)
 
 /** True when an attachment can use the existing inline image preview and viewer. */
 internal fun isInlineImageMedia(attachment: MediaAttachmentUi): Boolean =
