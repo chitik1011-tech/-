@@ -261,11 +261,9 @@ mod tests {
         assert!(validate_contact_search("@a", 25).is_err());
         assert!(validate_contact_search(" a ", 25).is_err());
         assert!(validate_contact_search(" ", 25).is_err());
-        assert!(validate_contact_search(
-            &"x".repeat(MAX_CONTACT_SEARCH_QUERY_BYTES + 1),
-            25
-        )
-        .is_err());
+        assert!(
+            validate_contact_search(&"x".repeat(MAX_CONTACT_SEARCH_QUERY_BYTES + 1), 25).is_err()
+        );
         assert!(validate_contact_search("ada", 0).is_err());
     }
 

@@ -1239,8 +1239,7 @@ impl GrammersBackend {
             } => {
                 self.require_ready().await?;
                 let (total, contacts) = if let Some(query) = query.as_deref() {
-                    let contacts =
-                        search_contacts(&self.client, &self.peers, query, limit).await?;
+                    let contacts = search_contacts(&self.client, &self.peers, query, limit).await?;
                     (contacts.len(), contacts)
                 } else {
                     load_contacts(&self.client, &self.peers, offset, limit).await?

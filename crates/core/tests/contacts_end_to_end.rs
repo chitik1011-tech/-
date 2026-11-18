@@ -26,10 +26,7 @@ fn load_contacts_command_round_trips_through_the_canonical_wire() {
     let json = serde_json::to_string(&command).unwrap();
     assert_eq!(decode_command(&json).unwrap(), command);
     assert_eq!(
-        decode_command(
-            r#"{"type":"load_contacts","payload":{"offset":0,"limit":100}}"#,
-        )
-        .unwrap(),
+        decode_command(r#"{"type":"load_contacts","payload":{"offset":0,"limit":100}}"#,).unwrap(),
         CoreCommand::LoadContacts {
             offset: 0,
             limit: 100,
@@ -170,7 +167,10 @@ fn newer_contact_search_rejects_late_successes_and_failures() {
     assert_eq!(state.contacts.len(), 1);
     assert!(state.contacts.get(41).is_none());
     assert_eq!(
-        state.contacts.get(42).map(|contact| contact.display_name.as_str()),
+        state
+            .contacts
+            .get(42)
+            .map(|contact| contact.display_name.as_str()),
         Some("Grace Hopper")
     );
     assert!(!state.contacts.get(42).unwrap().is_contact);

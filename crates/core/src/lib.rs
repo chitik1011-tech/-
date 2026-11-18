@@ -44,8 +44,8 @@ pub use connection_machine::{
     Outcome as ConnectionOutcome, SessionGeneration,
 };
 pub use contacts::{
-    Contact, ContactBook, MAX_CONTACT_PAGE_LIMIT, MAX_CONTACT_SEARCH_QUERY_BYTES,
-    normalize_contact_search_query, validate_contact_search,
+    normalize_contact_search_query, validate_contact_search, Contact, ContactBook,
+    MAX_CONTACT_PAGE_LIMIT, MAX_CONTACT_SEARCH_QUERY_BYTES,
 };
 pub use error::{CoreError, Result};
 pub use event::{CoreEvent, MessageMutationAction};

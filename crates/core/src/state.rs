@@ -546,8 +546,7 @@ impl CoreState {
                 if let Some(active) = &self.active_contacts_request {
                     if Some(active.request_id) != *request_id
                         || active.offset != *offset
-                        || active.query.as_deref().map(str::trim)
-                            != query.as_deref().map(str::trim)
+                        || active.query.as_deref().map(str::trim) != query.as_deref().map(str::trim)
                     {
                         return;
                     }
@@ -567,8 +566,7 @@ impl CoreState {
                 if let Some(active) = &self.active_contacts_request {
                     if Some(active.request_id) != *request_id
                         || active.offset != *offset
-                        || active.query.as_deref().map(str::trim)
-                            != query.as_deref().map(str::trim)
+                        || active.query.as_deref().map(str::trim) != query.as_deref().map(str::trim)
                     {
                         return;
                     }
