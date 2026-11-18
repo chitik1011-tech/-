@@ -97,8 +97,8 @@ pub(crate) async fn search_contacts(
         .invoke(&tl::functions::contacts::Search {
             q: normalize_contact_search_query(query),
             limit: limit as i32,
-            bots: None,
-            broadcasts: None,
+            bots: false,
+            broadcasts: false,
         })
         .await
         .map_err(|error| api_error("search contacts", error))?;
