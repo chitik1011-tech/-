@@ -10,15 +10,16 @@ import androidx.compose.ui.unit.dp
 
 /**
  * Telegram-style presentation tokens. The backend owns all chat/session data;
- * these tokens only control Compose appearance.
+ * these tokens only control Compose appearance. The default chat row follows
+ * Telegram Android's DialogCell 70 dp height and 52 dp avatar diameter.
  */
 object TelegramUiTokens {
-    val avatar = 56.dp
+    val avatar = 52.dp
     val contactAvatar = 50.dp
-    val chatRowHeight = 72.dp
+    val chatRowHeight = 70.dp
     val horizontalInset = 12.dp
     val rowGap = 12.dp
-    val dividerInset = 80.dp
+    val dividerInset = 76.dp
     val chatRowVerticalInset = 8.dp
     val chatSearchInset = 12.dp
     val chatSearchHeight = 48.dp

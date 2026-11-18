@@ -415,7 +415,7 @@ private fun ChatListRow(chat: ChatListEntry, selected: Boolean, onClick: () -> U
                         style = MaterialTheme.typography.labelSmall,
                         color = if (chat.unreadCount > 0) MaterialTheme.colorScheme.primary
                             else MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
+                        maxLines = 1,
                     )
                 }
             }
@@ -433,7 +433,7 @@ private fun ChatListRow(chat: ChatListEntry, selected: Boolean, onClick: () -> U
                     modifier = Modifier.weight(1f),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
+                    maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
                 if (presentation.unreadLabel != null) {
