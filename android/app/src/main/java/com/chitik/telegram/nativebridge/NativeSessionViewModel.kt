@@ -17,6 +17,7 @@ import com.chitik.telegram.ChatListPreview
 import com.chitik.telegram.ChatCapabilitiesUi
 import com.chitik.telegram.parseChatCapabilities
 import com.chitik.telegram.ConversationMessageUi
+import com.chitik.telegram.MessageTimestampFormatter
 import com.chitik.telegram.ConversationReactionUi
 import com.chitik.telegram.ReactionRevisionUi
 import com.chitik.telegram.ConversationLocationUi
@@ -2307,6 +2308,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                                 chatId = chatId.toString(),
                                 text = message.optString("text"),
                                 timestamp = formatTimestamp(timestamp),
+                                dateSeparator = MessageTimestampFormatter.formatDateSeparator(timestamp),
                                 isOutgoing = message.optBoolean("outgoing"),
                                 isRead = message.optBoolean("outgoing") &&
                                     message.optLong("id") <= (readOutboxMaxIds[chatId] ?: 0L),
