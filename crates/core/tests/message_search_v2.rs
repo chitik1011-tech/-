@@ -105,7 +105,7 @@ fn search_command_is_additive_and_validates_input() {
         },
         SearchMessagesRequest {
             limit: MAX_MESSAGE_SEARCH_LIMIT + 1,
-            ..valid
+            ..valid.clone()
         },
     ];
     for request in invalid {
