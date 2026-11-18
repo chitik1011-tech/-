@@ -51,7 +51,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -73,6 +75,8 @@ import coil3.compose.AsyncImage
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.chitik.telegram.nativebridge.OutgoingTextSendUi
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.launch
 import java.util.Locale
 import kotlin.math.roundToInt
 
@@ -207,6 +211,27 @@ internal fun selectedForwardMessageIds(messages: List<ConversationMessageUi>, se
 internal fun replyTargetIndex(messages: List<ConversationMessageUi>, messageId: String): Int =
     messages.indexOfFirst { it.id == messageId }
 
+internal data class ConversationScrollDecision(
+    val scrollToLatest: Boolean,
+    /** Null means the current new-message affordance state should be preserved. */
+    val showNewMessages: Boolean?,
+)
+
+internal fun decideConversationScroll(
+    hasOpenedConversation: Boolean,
+    isNearLatest: Boolean,
+    latestMessageChanged: Boolean,
+): ConversationScrollDecision = when {
+    !hasOpenedConversation || isNearLatest ->
+        ConversationScrollDecision(scrollToLatest = true, showNewMessages = false)
+    latestMessageChanged ->
+        ConversationScrollDecision(scrollToLatest = false, showNewMessages = true)
+    else -> ConversationScrollDecision(scrollToLatest = false, showNewMessages = null)
+}
+
+internal fun isLatestConversationMessageVisible(latestMessageIndex: Int, visibleItemIndices: Set<Int>): Boolean =
+    latestMessageIndex < 0 || latestMessageIndex in visibleItemIndices
+
 internal fun shouldShowPinnedTargetFallback(
     targetMessageId: String?,
     loadedMessageIds: List<String>,
@@ -306,6 +331,10 @@ fun ConversationScreen(
     }
 
     val listState = rememberLazyListState()
+    val listScope = rememberCoroutineScope()
+    var hasOpenedConversation by rememberSaveable(state.chatId) { mutableStateOf(false) }
+    var showNewMessages by rememberSaveable(state.chatId) { mutableStateOf(false) }
+    var lastObservedLatestMessageId by rememberSaveable(state.chatId) { mutableStateOf<String?>(null) }
     var viewerKey by rememberSaveable { mutableStateOf<String?>(null) }
     var missingPinnedTarget by remember(state.chatId, state.selectionGeneration) { mutableStateOf<String?>(null) }
     var actionTarget by remember(state.chatId, state.selectionGeneration) { mutableStateOf<ConversationMessageUi?>(null) }
@@ -383,8 +412,40 @@ fun ConversationScreen(
     }
 
     LaunchedEffect(state.messages.size, latestMessageId, state.loading) {
-        if (state.messages.isNotEmpty() && state.jumpToMessageId == null) {
+        if (state.messages.isEmpty()) return@LaunchedEffect
+        if (state.jumpToMessageId != null) {
+            hasOpenedConversation = true
+            lastObservedLatestMessageId = latestMessageId
+            return@LaunchedEffect
+        }
+
+        val totalItems = listState.layoutInfo.totalItemsCount
+        val lastVisibleIndex = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+        val isNearLatest = totalItems == 0 || lastVisibleIndex >= totalItems - 2
+        val latestChanged = latestMessageId != null && latestMessageId != lastObservedLatestMessageId
+        val decision = decideConversationScroll(
+            hasOpenedConversation = hasOpenedConversation,
+            isNearLatest = isNearLatest,
+            latestMessageChanged = latestChanged,
+        )
+
+        if (decision.scrollToLatest) {
             listState.animateScrollToItem(state.messages.lastIndex)
+        }
+        decision.showNewMessages?.let { showNewMessages = it }
+        hasOpenedConversation = true
+        lastObservedLatestMessageId = latestMessageId
+    }
+
+    LaunchedEffect(listState, showNewMessages, state.messages.size) {
+        snapshotFlow {
+            val latestMessageIndex = state.messages.lastIndex
+            isLatestConversationMessageVisible(
+                latestMessageIndex = latestMessageIndex,
+                visibleItemIndices = listState.layoutInfo.visibleItemsInfo.map { item -> item.index }.toSet(),
+            )
+        }.collect { isAtLatest ->
+            if (isAtLatest) showNewMessages = false
         }
     }
 
@@ -740,80 +801,95 @@ fun ConversationScreen(
                 AsyncContentMode.Error -> Unit
 
                 AsyncContentMode.Content -> {
-                    LazyColumn(
-                        state = listState,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .weight(1f),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 16.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        items(
-                            items = state.messages,
-                            key = { message -> "${message.chatId}:${message.id}" },
-                        ) { message ->
-                            MessageBubble(
-                                message = message,
-                                voicePlaybackCoordinator = voicePlaybackCoordinator,
-                                onPollVote = onPollVote,
-                                pinned = message.id in state.pinnedMessageIds,
-                                pending = message.id in state.pendingPinnedMessageIds,
-                                canTogglePin = state.capabilities.canPinMessages == true,
-                                onTogglePin = {
-                                    onTogglePin(state.chatId, message.id, message.id in state.pinnedMessageIds)
-                                },
-                                onOpenLocation = onOpenLocation,
-                                onDownloadMedia = { attachmentIndex, retry ->
-                                    message.id.toLongOrNull()?.let { messageId ->
-                                        onDownloadMedia(messageId, attachmentIndex, retry)
+                    Box(modifier = Modifier.fillMaxSize().weight(1f)) {
+                        LazyColumn(
+                            state = listState,
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 16.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            items(
+                                items = state.messages,
+                                key = { message -> "${message.chatId}:${message.id}" },
+                            ) { message ->
+                                MessageBubble(
+                                    message = message,
+                                    voicePlaybackCoordinator = voicePlaybackCoordinator,
+                                    onPollVote = onPollVote,
+                                    pinned = message.id in state.pinnedMessageIds,
+                                    pending = message.id in state.pendingPinnedMessageIds,
+                                    canTogglePin = state.capabilities.canPinMessages == true,
+                                    onTogglePin = {
+                                        onTogglePin(state.chatId, message.id, message.id in state.pinnedMessageIds)
+                                    },
+                                    onOpenLocation = onOpenLocation,
+                                    onDownloadMedia = { attachmentIndex, retry ->
+                                        message.id.toLongOrNull()?.let { messageId ->
+                                            onDownloadMedia(messageId, attachmentIndex, retry)
+                                        }
+                                    },
+                                    onCancelMedia = { attachmentIndex ->
+                                        message.id.toLongOrNull()?.let { messageId ->
+                                            onCancelMedia(messageId, attachmentIndex)
+                                        }
+                                    },
+                                    onOpenViewer = { attachment ->
+                                        viewerKey = "${message.id}:${attachment.index}"
+                                    },
+                                    onOpenDocument = onOpenDocument,
+                                    onOpenReplyTarget = onOpenReplyTarget,
+                                    reactionPending = "${message.chatId}:${message.id}" in state.pendingReactionKeys,
+                                    reactionError = state.reactionErrors["${message.chatId}:${message.id}"],
+                                    onReaction = { reaction -> onReaction(message.chatId, message.id, reaction) },
+                                    selectionMode = selectionActive,
+                                    selected = message.id.toLongOrNull()?.let { it in selectedMessageIds } == true,
+                                    onClick = {
+                                        message.id.toLongOrNull()?.let { id ->
+                                            if (selectionActive) {
+                                                selectedMessageIds = toggleSelectedMessageId(selectedMessageIds, id)
+                                            }
+                                        }
+                                    },
+                                    onLongPress = {
+                                        val messageId = message.id.toLongOrNull()
+                                        if (selectionActive && messageId != null) {
+                                            selectedMessageIds = toggleSelectedMessageId(selectedMessageIds, messageId)
+                                        } else {
+                                            actionTarget = message
+                                        }
+                                    },
+                                )
+                            }
+
+                            if (state.loading) {
+                                item(key = "history-loading") {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 8.dp),
+                                        horizontalArrangement = Arrangement.Center,
+                                    ) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.width(20.dp),
+                                            strokeWidth = 2.dp,
+                                        )
                                     }
-                                },
-                                onCancelMedia = { attachmentIndex ->
-                                    message.id.toLongOrNull()?.let { messageId ->
-                                        onCancelMedia(messageId, attachmentIndex)
-                                    }
-                                },
-                                onOpenViewer = { attachment ->
-                                    viewerKey = "${message.id}:${attachment.index}"
-                                },
-                                onOpenDocument = onOpenDocument,
-                                onOpenReplyTarget = onOpenReplyTarget,
-                                reactionPending = "${message.chatId}:${message.id}" in state.pendingReactionKeys,
-                                reactionError = state.reactionErrors["${message.chatId}:${message.id}"],
-                                onReaction = { reaction -> onReaction(message.chatId, message.id, reaction) },
-                                selectionMode = selectionActive,
-                                selected = message.id.toLongOrNull()?.let { it in selectedMessageIds } == true,
+                                }
+                            }
+                        }
+                        if (showNewMessages) {
+                            Button(
                                 onClick = {
-                                    message.id.toLongOrNull()?.let { id ->
-                                        if (selectionActive) {
-                                            selectedMessageIds = toggleSelectedMessageId(selectedMessageIds, id)
+                                    listScope.launch {
+                                        state.messages.lastIndex.takeIf { it >= 0 }?.let { index ->
+                                            listState.animateScrollToItem(index)
                                         }
                                     }
+                                    showNewMessages = false
                                 },
-                                onLongPress = {
-                                    val messageId = message.id.toLongOrNull()
-                                    if (selectionActive && messageId != null) {
-                                        selectedMessageIds = toggleSelectedMessageId(selectedMessageIds, messageId)
-                                    } else {
-                                        actionTarget = message
-                                    }
-                                },
-                            )
-                        }
-
-                        if (state.loading) {
-                            item(key = "history-loading") {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 8.dp),
-                                    horizontalArrangement = Arrangement.Center,
-                                ) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.width(20.dp),
-                                        strokeWidth = 2.dp,
-                                    )
-                                }
+                                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp),
+                            ) {
+                                Text("Новые сообщения ↓")
                             }
                         }
                     }
