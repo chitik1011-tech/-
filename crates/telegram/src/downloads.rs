@@ -19,6 +19,10 @@ pub(crate) struct MediaTarget {
     pub attachment_index: usize,
     pub reference: String,
     pub total_bytes: Option<u64>,
+    /// Per-attachment event generation. Shared transfers can outlive a
+    /// subscriber's cancellation, so reattaching that subscriber may need a
+    /// newer generation than the transfer itself.
+    pub event_generation: u64,
 }
 
 pub(crate) fn event(
@@ -94,7 +98,7 @@ pub(crate) fn spawn_download(
                     let _ = updates
                         .send(Ok(event(
                             &target,
-                            queued_token.generation,
+                            target.event_generation,
                             session_generation,
                             failed_state.clone(),
                         )))
@@ -240,7 +244,7 @@ async fn run_download(
         if updates
             .send(Ok(event(
                 &target,
-                snapshot.token.generation,
+                target.event_generation,
                 session_generation,
                 state_from_snapshot(&snapshot, Some(pending_publication.local_path())),
             )))
@@ -270,7 +274,7 @@ async fn emit_snapshots(
         let _ = updates
             .send(Ok(event(
                 &target,
-                snapshot.token.generation,
+                target.event_generation,
                 session_generation,
                 state_from_snapshot(&snapshot, None),
             )))
@@ -356,6 +360,7 @@ mod tests {
                 attachment_index: 0,
                 reference: "shared-reference".into(),
                 total_bytes: Some(10),
+                event_generation: active.generation,
             },
             MediaTarget {
                 chat_id: 1,
@@ -363,6 +368,7 @@ mod tests {
                 attachment_index: 0,
                 reference: "shared-reference".into(),
                 total_bytes: Some(10),
+                event_generation: active.generation,
             },
         ]));
         let (updates, mut receiver) = backend_update_channel();

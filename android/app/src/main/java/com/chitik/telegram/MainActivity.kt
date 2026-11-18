@@ -153,8 +153,8 @@ class MainActivity : ComponentActivity() {
 }
 
 private val chatDraftsStateSaver = mapSaver(
-    save = ::saveChatDrafts,
-    restore = ::restoreChatDrafts,
+    save = { drafts -> saveChatDrafts(drafts) },
+    restore = { saved -> restoreChatDrafts(saved) },
 )
 
 @Composable
@@ -175,14 +175,15 @@ private fun TelegramRustApp(
     var draftsByChatId by rememberSaveable(stateSaver = chatDraftsStateSaver) {
         mutableStateOf(emptyMap<ChatDraftKey, String>())
     }
+    val draftAccountUserId = state.accountUserId ?: 0L
     LaunchedEffect(state.accountIdentityResolved, state.accountUserId) {
-        if (state.accountIdentityResolved && state.accountUserId != 0L) {
-            draftsByChatId = draftsForAccount(draftsByChatId, state.accountUserId)
+        if (state.accountIdentityResolved && state.accountUserId != null && state.accountUserId != 0L) {
+            draftsByChatId = draftsForAccount(draftsByChatId, draftAccountUserId)
         }
     }
-    val draft = draftForChat(draftsByChatId, state.accountUserId, selectedChatId)
+    val draft = draftForChat(draftsByChatId, draftAccountUserId, selectedChatId)
     fun setCurrentDraft(text: String) {
-        draftsByChatId = updateDraftForChat(draftsByChatId, state.accountUserId, selectedChatId, text)
+        draftsByChatId = updateDraftForChat(draftsByChatId, draftAccountUserId, selectedChatId, text)
     }
     var lastRestoredFailureId by rememberSaveable { mutableLongStateOf(0L) }
     var replyToMessageId by rememberSaveable { mutableStateOf<Long?>(null) }
@@ -288,7 +289,7 @@ private fun TelegramRustApp(
     }
     val queuePickedMedia: (Uri?) -> Unit = { uri ->
         val chatId = selectedChatId
-        val accountUserId = state.accountUserId
+        val accountUserId = draftAccountUserId
         val caption = draft
         if (uri != null && chatId != 0L) {
             viewModel.sendMediaFromUri(chatId, uri, caption) { accepted ->
