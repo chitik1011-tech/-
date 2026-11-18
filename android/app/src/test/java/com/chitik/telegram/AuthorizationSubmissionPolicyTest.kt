@@ -1,0 +1,43 @@
+package com.chitik.telegram
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class AuthorizationSubmissionPolicyTest {
+    @Test
+    fun allowsOnlyOneSubmissionForTheCurrentAuthorizationStep() {
+        val steps = listOf(
+            AuthorizationUiStep.WaitingForPhoneNumber,
+            AuthorizationUiStep.WaitingForCode,
+            AuthorizationUiStep.WaitingForPassword,
+        )
+
+        for (current in steps) {
+            for (expected in steps) {
+                assertEquals(
+                    "expected $expected at $current",
+                    current == expected,
+                    canSubmitAuthorizationInput(current, expected, isLoading = false),
+                )
+            }
+            assertFalse(
+                "duplicate callback accepted at $current",
+                canSubmitAuthorizationInput(current, current, isLoading = true),
+            )
+        }
+    }
+
+    @Test
+    fun rejectsSubmissionsOutsideAnAuthorizationInputStep() {
+        for (step in AuthorizationUiStep.entries - setOf(
+                AuthorizationUiStep.WaitingForPhoneNumber,
+                AuthorizationUiStep.WaitingForCode,
+                AuthorizationUiStep.WaitingForPassword,
+            )
+        ) {
+            assertFalse(canSubmitAuthorizationInput(step, AuthorizationUiStep.WaitingForCode, false))
+        }
+    }
+}
