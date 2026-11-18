@@ -272,6 +272,44 @@ impl GrammersBackend {
         ]
     }
 
+    /// Resolves the active Telegram account's stable user ID for Android notification routing.
+    /// Failure is represented as an unavailable identity; it must never fall back to a local
+    /// handle generation or session file path, neither of which identifies the Telegram account.
+    async fn account_identity_event(&self) -> CoreEvent {
+        let user_id = tokio::time::timeout(INITIAL_AUTHORIZATION_CHECK_TIMEOUT, async {
+            let mut users = self
+                .client
+                .invoke(&tl::functions::users::GetUsers {
+                    id: vec![tl::enums::InputUser::UserSelf],
+                })
+                .await
+                .ok()?;
+            if users.len() != 1 {
+                return None;
+            }
+            match users.pop()? {
+                tl::enums::User::User(user) => Some(user.id),
+                tl::enums::User::Empty(_) => None,
+            }
+        })
+        .await
+        .ok()
+        .flatten()
+        .filter(|user_id| *user_id > 0);
+        CoreEvent::AccountIdentityUpdated(user_id)
+    }
+
+    async fn session_authorization_events(&self, state: AuthorizationState) -> Vec<CoreEvent> {
+        let mut events = Vec::new();
+        if state == AuthorizationState::Ready {
+            // Emit identity before Ready so a live message update cannot be routed until the
+            // Android shell has an account ID to attach to its notification intent.
+            events.push(self.account_identity_event().await);
+        }
+        events.extend(self.authorization_events(state));
+        events
+    }
+
     fn authorization_error_events(
         &self,
         previous_state: AuthorizationState,
@@ -1008,10 +1046,12 @@ impl GrammersBackend {
         let command_events = match command {
             CoreCommand::Start => {
                 let state = with_initial_connection_timeout(self.auth.start(&self.client)).await?;
-                if state == AuthorizationState::Ready {
+                let is_ready = state == AuthorizationState::Ready;
+                let events = self.session_authorization_events(state).await;
+                if is_ready {
                     self.ensure_update_worker().await?;
                 }
-                self.authorization_events(state)
+                events
             }
             CoreCommand::Logout => self.logout().await?,
             CoreCommand::SetPhoneNumber(phone) => {
@@ -1032,10 +1072,12 @@ impl GrammersBackend {
                 let previous_state = self.auth.state();
                 match self.auth.submit_code(&self.client, code).await {
                     Ok(state) => {
-                        if state == AuthorizationState::Ready {
+                        let is_ready = state == AuthorizationState::Ready;
+                        let events = self.session_authorization_events(state).await;
+                        if is_ready {
                             self.ensure_update_worker().await?;
                         }
-                        self.authorization_events(state)
+                        events
                     }
                     Err(error) => match self.authorization_error_events(previous_state, &error) {
                         Some(events) => events,
@@ -1047,10 +1089,12 @@ impl GrammersBackend {
                 let previous_state = self.auth.state();
                 match self.auth.submit_password(&self.client, password).await {
                     Ok(state) => {
-                        if state == AuthorizationState::Ready {
+                        let is_ready = state == AuthorizationState::Ready;
+                        let events = self.session_authorization_events(state).await;
+                        if is_ready {
                             self.ensure_update_worker().await?;
                         }
-                        self.authorization_events(state)
+                        events
                     }
                     Err(error) => match self.authorization_error_events(previous_state, &error) {
                         Some(events) => events,

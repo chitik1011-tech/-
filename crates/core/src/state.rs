@@ -315,6 +315,9 @@ impl CoreState {
                 self.account.authorization = authorization.clone();
                 self.last_error = None;
             }
+            CoreEvent::AccountIdentityUpdated(_) => {
+                // Identity is an ephemeral bridge event, not persisted account state.
+            }
             CoreEvent::AuthorizationCodeDeliveryChanged(_) => {
                 // Login delivery metadata is transient UI state, never persisted.
             }
