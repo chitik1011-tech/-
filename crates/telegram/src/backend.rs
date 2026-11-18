@@ -85,12 +85,27 @@ fn cancel_download_transfer(
 fn attach_download_target(
     tasks: &mut HashMap<(i64, i64, usize), ActiveMediaTask>,
     key: (i64, i64, usize),
-    target: &MediaTarget,
+    target: &mut MediaTarget,
+    retry: bool,
+    transfer_generation: u64,
 ) -> Option<ActiveMediaTask> {
     let active = tasks
         .values()
         .find(|active| active.reference == target.reference && !active.handle.is_finished())?
         .clone();
+    let reattached_generation = if retry {
+        active
+            .detached_generations
+            .lock()
+            .ok()
+            .and_then(|mut generations| generations.remove(&key))
+            .map(|previous| previous.saturating_add(1))
+    } else {
+        None
+    };
+    target.event_generation = reattached_generation
+        .unwrap_or(transfer_generation)
+        .max(transfer_generation);
     if let Ok(mut targets) = active.targets.lock() {
         if !targets.iter().any(|existing| {
             (
@@ -126,7 +141,10 @@ fn detach_shared_download_target(
     if targets.len() <= 1 {
         return Ok(false);
     }
-    targets.remove(target_index);
+    let detached = targets.remove(target_index);
+    if let Ok(mut generations) = active.detached_generations.lock() {
+        generations.insert(key, detached.event_generation);
+    }
     Ok(true)
 }
 
@@ -142,6 +160,7 @@ struct ReliableSendRecord {
 struct ActiveMediaTask {
     reference: String,
     targets: Arc<Mutex<Vec<MediaTarget>>>,
+    detached_generations: Arc<Mutex<HashMap<(i64, i64, usize), u64>>>,
     handle: AbortHandle,
 }
 
@@ -726,6 +745,7 @@ impl GrammersBackend {
                 attachment_index,
                 reference: attachment.file_reference.clone(),
                 total_bytes: attachment.size_bytes,
+                event_generation: 0,
             },
             media,
         ))
@@ -740,7 +760,7 @@ impl GrammersBackend {
     ) -> tg_mobile_core::Result<Vec<CoreEvent>> {
         self.cleanup_media_tasks();
         let key = (chat_id, message_id, attachment_index);
-        let (target, media) = self
+        let (mut target, media) = self
             .resolve_media_target(chat_id, message_id, attachment_index)
             .await?;
         let session_generation = self.current_session_generation()?;
@@ -774,9 +794,26 @@ impl GrammersBackend {
                     .get_by_key(TransferDirection::Download, &target.reference)
                     .map_err(|error| CoreError::Backend(error.to_string()))?
                 {
+                    target.event_generation = active
+                        .targets
+                        .lock()
+                        .ok()
+                        .and_then(|targets| {
+                            targets
+                                .iter()
+                                .find(|existing| {
+                                    (
+                                        existing.chat_id,
+                                        existing.message_id,
+                                        existing.attachment_index,
+                                    ) == key
+                                })
+                                .map(|existing| existing.event_generation)
+                        })
+                        .unwrap_or(snapshot.token.generation);
                     return Ok(vec![media_event(
                         &target,
-                        snapshot.token.generation,
+                        target.event_generation,
                         session_generation,
                         state_from_snapshot(&snapshot, None),
                     )]);
@@ -787,15 +824,23 @@ impl GrammersBackend {
         // Multiple Telegram messages can refer to the same media object. Keep
         // one cache write and one TransferManager generation, but publish its
         // state to every attachment that joined the in-flight transfer.
-        if attach_download_target(&mut self.media_tasks, key, &target).is_some() {
-            if let Some(snapshot) = self
-                .transfers
-                .get_by_key(TransferDirection::Download, &target.reference)
-                .map_err(|error| CoreError::Backend(error.to_string()))?
+        if let Some(snapshot) = self
+            .transfers
+            .get_by_key(TransferDirection::Download, &target.reference)
+            .map_err(|error| CoreError::Backend(error.to_string()))?
+        {
+            if attach_download_target(
+                &mut self.media_tasks,
+                key,
+                &mut target,
+                retry,
+                snapshot.token.generation,
+            )
+            .is_some()
             {
                 return Ok(vec![media_event(
                     &target,
-                    snapshot.token.generation,
+                    target.event_generation,
                     session_generation,
                     state_from_snapshot(&snapshot, None),
                 )]);
@@ -903,6 +948,8 @@ impl GrammersBackend {
             }
         };
 
+        target.event_generation = queued_token.generation;
+
         let targets = Arc::new(Mutex::new(vec![target.clone()]));
         let handle = spawn_download(
             self.client.clone(),
@@ -917,13 +964,14 @@ impl GrammersBackend {
         let active = ActiveMediaTask {
             reference: target.reference.clone(),
             targets,
+            detached_generations: Arc::new(Mutex::new(HashMap::new())),
             handle: handle.abort_handle(),
         };
         self.media_tasks.insert(key, active);
 
         Ok(vec![media_event(
             &target,
-            queued_token.generation,
+            target.event_generation,
             session_generation,
             AttachmentDownloadState::Queued,
         )])
@@ -954,16 +1002,23 @@ impl GrammersBackend {
                 .get_by_key(TransferDirection::Download, &reference)
                 .map_err(|error| CoreError::Backend(error.to_string()))?
                 .ok_or_else(|| CoreError::Backend("shared media transfer disappeared".into()))?;
+            let event_generation = active
+                .detached_generations
+                .lock()
+                .ok()
+                .and_then(|generations| generations.get(&key).copied())
+                .unwrap_or(snapshot.token.generation);
             let target = MediaTarget {
                 chat_id,
                 message_id,
                 attachment_index,
                 reference,
                 total_bytes: snapshot.total_bytes,
+                event_generation,
             };
             return Ok(vec![media_event(
                 &target,
-                snapshot.token.generation,
+                event_generation,
                 session_generation,
                 AttachmentDownloadState::Cancelled,
             )]);
@@ -1973,6 +2028,7 @@ mod shared_media_download_tests {
             attachment_index: 0,
             reference: "shared-media".into(),
             total_bytes: Some(5),
+            event_generation: 1,
         };
         let second = MediaTarget {
             chat_id: 4,
@@ -1980,6 +2036,7 @@ mod shared_media_download_tests {
             attachment_index: 0,
             reference: "shared-media".into(),
             total_bytes: Some(5),
+            event_generation: 0,
         };
         let targets = Arc::new(Mutex::new(vec![first]));
         let transfers = TransferManager::new();
@@ -1994,12 +2051,20 @@ mod shared_media_download_tests {
         let active = ActiveMediaTask {
             reference: "shared-media".into(),
             targets: Arc::clone(&targets),
+            detached_generations: Arc::new(Mutex::new(HashMap::new())),
             handle: worker.abort_handle(),
         };
         let mut tasks = HashMap::from([((4, 10, 0), active)]);
 
-        let joined = attach_download_target(&mut tasks, (4, 11, 0), &second)
-            .expect("second attachment should join the in-flight media transfer");
+        let mut second = second;
+        let joined = attach_download_target(
+            &mut tasks,
+            (4, 11, 0),
+            &mut second,
+            false,
+            transfer.generation,
+        )
+        .expect("second attachment should join the in-flight media transfer");
 
         assert_eq!(tasks.len(), 2);
         assert!(Arc::ptr_eq(&joined.targets, &targets));
@@ -2027,6 +2092,7 @@ mod shared_media_download_tests {
             attachment_index: 0,
             reference: "shared-media".into(),
             total_bytes: Some(5),
+            event_generation: 1,
         };
         let second = MediaTarget {
             chat_id: 4,
@@ -2034,12 +2100,14 @@ mod shared_media_download_tests {
             attachment_index: 0,
             reference: "shared-media".into(),
             total_bytes: Some(5),
+            event_generation: 1,
         };
         let targets = Arc::new(Mutex::new(vec![first, second]));
         let worker = tokio::spawn(std::future::pending::<()>());
         let active = ActiveMediaTask {
             reference: "shared-media".into(),
             targets: Arc::clone(&targets),
+            detached_generations: Arc::new(Mutex::new(HashMap::new())),
             handle: worker.abort_handle(),
         };
         let mut tasks = HashMap::from([((4, 10, 0), active.clone()), ((4, 11, 0), active.clone())]);
@@ -2055,6 +2123,62 @@ mod shared_media_download_tests {
 
         assert!(!detach_shared_download_target(&active, (4, 11, 0)).unwrap());
         assert_eq!(targets.lock().unwrap().len(), 1);
+        worker.abort();
+    }
+
+    #[tokio::test]
+    async fn retrying_a_detached_shared_attachment_advances_its_event_generation() {
+        let key = (4, 10, 0);
+        let first = MediaTarget {
+            chat_id: key.0,
+            message_id: key.1,
+            attachment_index: key.2,
+            reference: "shared-media".into(),
+            total_bytes: Some(5),
+            event_generation: 1,
+        };
+        let second = MediaTarget {
+            chat_id: 4,
+            message_id: 11,
+            attachment_index: 0,
+            reference: "shared-media".into(),
+            total_bytes: Some(5),
+            event_generation: 1,
+        };
+        let targets = Arc::new(Mutex::new(vec![first, second.clone()]));
+        let detached_generations = Arc::new(Mutex::new(HashMap::new()));
+        let worker = tokio::spawn(std::future::pending::<()>());
+        let active = ActiveMediaTask {
+            reference: "shared-media".into(),
+            targets: Arc::clone(&targets),
+            detached_generations: Arc::clone(&detached_generations),
+            handle: worker.abort_handle(),
+        };
+        let mut tasks = HashMap::from([(key, active.clone()), ((4, 11, 0), active.clone())]);
+
+        assert!(detach_shared_download_target(&active, key).unwrap());
+        assert_eq!(detached_generations.lock().unwrap().get(&key), Some(&1));
+
+        let mut reattached = MediaTarget {
+            chat_id: key.0,
+            message_id: key.1,
+            attachment_index: key.2,
+            reference: "shared-media".into(),
+            total_bytes: Some(5),
+            event_generation: 0,
+        };
+        attach_download_target(&mut tasks, key, &mut reattached, true, 1)
+            .expect("retry should rejoin the active shared transfer");
+        assert_eq!(reattached.event_generation, 2);
+        assert_eq!(
+            targets
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|target| (target.chat_id, target.message_id, target.attachment_index) == key)
+                .map(|target| target.event_generation),
+            Some(2)
+        );
         worker.abort();
     }
 }

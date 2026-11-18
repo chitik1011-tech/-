@@ -215,6 +215,47 @@ fn stale_progress_cannot_overwrite_cancellation_or_a_newer_retry() {
 }
 
 #[test]
+fn retried_shared_attachment_can_advance_after_its_cancelled_state() {
+    let mut state = CoreState::default();
+    state.reduce(&CoreEvent::MessageAdded(message_with_photo()));
+    state.reduce(&CoreEvent::MediaTransferUpdated {
+        chat_id: 42,
+        message_id: 7,
+        attachment_index: 0,
+        session_generation: 0,
+        generation: 1,
+        state: AttachmentDownloadState::Cancelled,
+    });
+
+    // A shared transfer can keep running for other messages after this target
+    // is detached. Reattaching it for retry must use a target generation newer
+    // than its terminal Cancelled event even while the transfer generation is
+    // unchanged.
+    state.reduce(&CoreEvent::MediaTransferUpdated {
+        chat_id: 42,
+        message_id: 7,
+        attachment_index: 0,
+        session_generation: 0,
+        generation: 2,
+        state: AttachmentDownloadState::Downloading {
+            bytes_transferred: 12,
+            total_bytes: Some(100),
+        },
+    });
+    assert_eq!(
+        state.messages_for_chat(42)[0].attachments[0].download_state,
+        AttachmentDownloadState::Downloading {
+            bytes_transferred: 12,
+            total_bytes: Some(100),
+        }
+    );
+    assert_eq!(
+        state.messages_for_chat(42)[0].attachments[0].download_generation,
+        2
+    );
+}
+
+#[test]
 fn transfer_updates_from_a_replaced_account_cannot_mutate_same_id_messages() {
     let mut state = CoreState::default();
     state.reduce(&CoreEvent::ConnectionSessionStarted);
