@@ -1,5 +1,6 @@
 package com.chitik.telegram
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -8,6 +9,11 @@ class TelegramDesignSystemTest {
         assertTrue(TelegramUiTokens.chatRowHeight.value >= TelegramUiTokens.avatar.value)
         assertTrue(TelegramUiTokens.dividerInset.value > TelegramUiTokens.avatar.value)
         assertTrue(TelegramUiTokens.iconTouchTarget.value >= 48f)
+    }
+
+    @Test fun chatListDividerMatchesTelegramDialogCellStart() {
+        assertEquals(72f, TelegramUiTokens.chatListDividerInset.value)
+        assertEquals(76f, TelegramUiTokens.dividerInset.value)
     }
 
     @Test fun messageBubbleHasDistinctTailCorner() {
