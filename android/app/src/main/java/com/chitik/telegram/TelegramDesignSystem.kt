@@ -18,6 +18,11 @@ object TelegramUiTokens {
     val avatar = 52.dp
     val contactAvatar = 50.dp
     val chatRowHeight = 70.dp
+    /** Current DialogCell's compact layout uses a 16 sp title and 15 sp preview. */
+    val chatTitleTextSize = 16.sp
+    val chatPreviewTextSize = 15.sp
+    val chatRowTextLineHeight = 20.sp
+    val chatTimestampTextSize = 12.sp
     val horizontalInset = 12.dp
     val rowGap = 12.dp
     /** General/contact divider inset; chat rows use DialogCell's 72 dp start. */

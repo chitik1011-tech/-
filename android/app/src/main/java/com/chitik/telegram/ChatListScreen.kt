@@ -403,8 +403,11 @@ private fun ChatListRow(chat: ChatListEntry, selected: Boolean, onClick: () -> U
                 Text(
                     text = presentation.title,
                     modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
+                    style = MaterialTheme.typography.bodyLarge.copy(
+                        fontSize = TelegramUiTokens.chatTitleTextSize,
+                        lineHeight = TelegramUiTokens.chatRowTextLineHeight,
+                    ),
+                    fontWeight = FontWeight.Medium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -412,7 +415,9 @@ private fun ChatListRow(chat: ChatListEntry, selected: Boolean, onClick: () -> U
                     Spacer(Modifier.width(8.dp))
                     Text(
                         text = timestamp,
-                        style = MaterialTheme.typography.labelSmall,
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontSize = TelegramUiTokens.chatTimestampTextSize,
+                        ),
                         color = if (chat.unreadCount > 0) MaterialTheme.colorScheme.primary
                             else MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
@@ -431,7 +436,10 @@ private fun ChatListRow(chat: ChatListEntry, selected: Boolean, onClick: () -> U
                 Text(
                     text = presentation.preview.orEmpty(),
                     modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodyLarge.copy(
+                        fontSize = TelegramUiTokens.chatPreviewTextSize,
+                        lineHeight = TelegramUiTokens.chatRowTextLineHeight,
+                    ),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
