@@ -325,7 +325,20 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
     private var authorizationRetryJob: Job? = null
 
     init {
+        restoreAuthorizationFloodWait()
         initializeNativeSession()
+    }
+
+    private fun restoreAuthorizationFloodWait() {
+        val remaining = AuthorizationFloodWaitStore.remainingSeconds(getApplication())
+        if (remaining <= 0) return
+        _state.update {
+            it.copy(
+                authorizationRetryRemainingSeconds = remaining,
+                error = authorizationFloodWaitMessage(remaining),
+            )
+        }
+        startAuthorizationFloodWait(remaining)
     }
 
     private fun initializeNativeSession() {
@@ -1472,12 +1485,14 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
             when (val cancellation = NotificationCancellationPolicy.fromEvent(type, payload)) {
                 is NotificationCancellation.ReadThrough -> {
                     notifications.cancelReadThrough(
+                        accountUserId = _state.value.accountUserId ?: return,
                         chatId = cancellation.chatId,
                         maxMessageId = cancellation.maxMessageId,
                     )
                 }
                 is NotificationCancellation.MessagesChanged -> {
                     notifications.cancelForMessages(
+                        accountUserId = _state.value.accountUserId ?: return,
                         chatId = cancellation.chatId,
                         messageIds = cancellation.messageIds,
                     )
@@ -1512,7 +1527,10 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
     fun setNotificationVisibility(foreground: Boolean, chatId: Long?) {
         notificationEventGate.updateVisibility(foreground, chatId)
         liveReadReceiptPolicy.updateVisibility(foreground, chatId)
-        notifications.setVisibleChat(if (foreground) chatId else null)
+        notifications.setVisibleChat(
+            chatId = if (foreground) chatId else null,
+            accountUserId = _state.value.accountUserId,
+        )
     }
 
     private fun handleNativeEvent(generation: Long, type: String, payload: String) {
@@ -1565,6 +1583,10 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                         lastEventPayload = "",
                     )
                 }
+                // Identity resolution happens after restore and after account changes. Keep
+                // same-account notices across handle recreation, but retire all foreign and
+                // pre-account-scoped notices once the active account is known.
+                notifications.reconcileAccount(accountUserId)
             }
             "message_send_state_changed" -> {
                 val send = parseOutgoingTextSendEvent(payload)
@@ -1916,7 +1938,10 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 } else {
                     null
                 }
-                if (retrySeconds != null) startAuthorizationFloodWait(retrySeconds)
+                if (retrySeconds != null) {
+                    AuthorizationFloodWaitStore.save(getApplication(), retrySeconds)
+                    startAuthorizationFloodWait(retrySeconds)
+                }
 
                 _state.update {
                     it.copy(
@@ -1970,6 +1995,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                     }
                 }
             }
+            AuthorizationFloodWaitStore.clear(getApplication())
         }
     }
 
@@ -1997,6 +2023,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         if (authorization == AuthorizationUiStep.Ready) {
             authorizationRetryJob?.cancel()
             authorizationRetryJob = null
+            AuthorizationFloodWaitStore.clear(getApplication())
         }
         if (authorization != AuthorizationUiStep.Ready) cancelVoiceRecording()
         val mediaPathsToDeleteOnLogout = if (loggedOut) {
@@ -2166,6 +2193,12 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 )
             ) {
                 notifications.cancelPublishedNotifications()
+            }
+            // On process restore, the notification shade survives the app process. Reconcile
+            // only when an authoritative self ID is present; the identity event handles the
+            // unresolved/invalid case without clearing valid same-account notices on restart.
+            _state.value.accountUserId?.takeIf { _state.value.accountIdentityResolved }?.let {
+                notifications.reconcileAccount(it)
             }
             cleanupTerminalOutgoingMedia(parsed.outbox.values)
             _state.update {

@@ -302,7 +302,7 @@ private fun TelegramRustApp(
             onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
         }
     }
-    DisposableEffect(lifecycleOwner, selectedChatId, viewModel) {
+    DisposableEffect(lifecycleOwner, selectedChatId, state.accountUserId, viewModel) {
         if (lifecycleOwner == null) {
             viewModel.setNotificationVisibility(false, null)
             onDispose { viewModel.setNotificationVisibility(false, null) }
