@@ -325,7 +325,20 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
     private var authorizationRetryJob: Job? = null
 
     init {
+        restoreAuthorizationFloodWait()
         initializeNativeSession()
+    }
+
+    private fun restoreAuthorizationFloodWait() {
+        val remaining = AuthorizationFloodWaitStore.remainingSeconds(getApplication())
+        if (remaining <= 0) return
+        _state.update {
+            it.copy(
+                authorizationRetryRemainingSeconds = remaining,
+                error = authorizationFloodWaitMessage(remaining),
+            )
+        }
+        startAuthorizationFloodWait(remaining)
     }
 
     private fun initializeNativeSession() {
@@ -1916,7 +1929,10 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 } else {
                     null
                 }
-                if (retrySeconds != null) startAuthorizationFloodWait(retrySeconds)
+                if (retrySeconds != null) {
+                    AuthorizationFloodWaitStore.save(getApplication(), retrySeconds)
+                    startAuthorizationFloodWait(retrySeconds)
+                }
 
                 _state.update {
                     it.copy(
@@ -1970,6 +1986,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                     }
                 }
             }
+            AuthorizationFloodWaitStore.clear(getApplication())
         }
     }
 
@@ -1997,6 +2014,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         if (authorization == AuthorizationUiStep.Ready) {
             authorizationRetryJob?.cancel()
             authorizationRetryJob = null
+            AuthorizationFloodWaitStore.clear(getApplication())
         }
         if (authorization != AuthorizationUiStep.Ready) cancelVoiceRecording()
         val mediaPathsToDeleteOnLogout = if (loggedOut) {
