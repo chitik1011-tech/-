@@ -39,6 +39,19 @@ class VoiceAttachmentTest {
     }
 
     @Test
+    fun voiceSeekTargetsAreFiniteAndClampedToTheRecording() {
+        assertEquals(0L, voiceSeekPosition(2_000L, 0f))
+        assertEquals(1_000L, voiceSeekPosition(2_000L, 0.5f))
+        assertEquals(2_000L, voiceSeekPosition(2_000L, 1f))
+        assertEquals(0L, voiceSeekPosition(2_000L, -1f))
+        assertEquals(2_000L, voiceSeekPosition(2_000L, 3f))
+        assertEquals(null, voiceSeekPosition(0L, 0.5f))
+        assertEquals(null, voiceSeekPosition(-1L, 0.5f))
+        assertEquals(null, voiceSeekPosition(2_000L, Float.NaN))
+        assertEquals(null, voiceSeekPosition(2_000L, Float.POSITIVE_INFINITY))
+    }
+
+    @Test
     fun downloadAccessibilityDescribesRetryAndExposesOnlyBoundedProgress() {
         val downloading = voiceDownloadAccessibility(
             MediaDownloadUiState.Downloading(bytesTransferred = 150, totalBytes = 100),
