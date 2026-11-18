@@ -65,4 +65,35 @@ class MessageTimestampFormatterTest {
             ),
         )
     }
+
+    @Test
+    fun dateSeparatorGroupsMessagesByLocalCalendarDay() {
+        val firstMessage = MessageTimestampFormatter.formatDateSeparator(
+            timestampUnixSeconds = Instant.parse("2026-11-14T21:45:00Z").epochSecond,
+            zoneId = ZoneId.of("Europe/Moscow"),
+            locale = locale,
+        )
+        val sameLocalDay = MessageTimestampFormatter.formatDateSeparator(
+            timestampUnixSeconds = Instant.parse("2026-11-14T22:45:00Z").epochSecond,
+            zoneId = ZoneId.of("Europe/Moscow"),
+            locale = locale,
+        )
+        val nextLocalDay = MessageTimestampFormatter.formatDateSeparator(
+            timestampUnixSeconds = Instant.parse("2026-11-15T22:45:00Z").epochSecond,
+            zoneId = ZoneId.of("Europe/Moscow"),
+            locale = locale,
+        )
+
+        assertEquals("15 Nov 2026", firstMessage)
+        assertEquals(firstMessage, sameLocalDay)
+        assertTrue(firstMessage != nextLocalDay)
+        assertEquals(
+            "",
+            MessageTimestampFormatter.formatDateSeparator(
+                timestampUnixSeconds = 0,
+                zoneId = ZoneId.of("UTC"),
+                locale = locale,
+            ),
+        )
+    }
 }
