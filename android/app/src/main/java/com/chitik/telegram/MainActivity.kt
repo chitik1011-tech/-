@@ -426,9 +426,9 @@ private fun TelegramRustApp(
                     ?.optLong("chat_id")
             }.getOrNull()
             if (chatId != null && chatId == selectedChatId) {
+                setCurrentDraft("")
                 selectedChatId = 0L
                 profilePeerId = 0L
-                draft = ""
                 replyToMessageId = null
                 replyToPreview = null
                 jumpToMessageId = null
