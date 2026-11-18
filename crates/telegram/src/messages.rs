@@ -20,10 +20,7 @@ use tg_mobile_core::{
 use tokio::sync::Mutex;
 
 use crate::{
-    chats::PeerRegistry,
-    error::api_error,
-    ids::peer_id_to_core,
-    polls::poll_from_message,
+    chats::PeerRegistry, error::api_error, ids::peer_id_to_core, polls::poll_from_message,
 };
 
 pub(crate) fn message_to_summary(message: &Message) -> MessageSummary {
@@ -598,8 +595,12 @@ pub(crate) async fn search_all_messages_page(
         let peer = message
             .peer_ref()
             .await
-            .map_err(|_| CoreError::Backend("could not resolve Telegram search result chat".into()))?
-            .ok_or_else(|| CoreError::Backend("could not resolve Telegram search result chat".into()))?;
+            .map_err(|_| {
+                CoreError::Backend("could not resolve Telegram search result chat".into())
+            })?
+            .ok_or_else(|| {
+                CoreError::Backend("could not resolve Telegram search result chat".into())
+            })?;
         peers
             .write()
             .await

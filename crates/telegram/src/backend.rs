@@ -39,8 +39,7 @@ use crate::{
     messages::{
         MessageDeduplicator, load_messages, load_messages_page, load_pinned_message_ids, mark_read,
         message_to_summary, search_all_messages_page, search_messages_page, send_location,
-        send_reply, send_text,
-        send_text_idempotent,
+        send_reply, send_text, send_text_idempotent,
     },
     polls::{
         PollRegistry, clear_poll_registry, new_poll_registry, poll_by_id, polls_from_updates,
