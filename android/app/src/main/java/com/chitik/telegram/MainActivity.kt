@@ -343,6 +343,7 @@ private fun TelegramRustApp(
     var forwardingSourceChatId by remember { mutableLongStateOf(0L) }
     var forwardingMessageIds by remember { mutableStateOf<List<Long>>(emptyList()) }
     var profilePeerId by rememberSaveable { mutableLongStateOf(0L) }
+    var previousAuthorizationReady by remember { mutableStateOf(state.authorization == AuthorizationUiStep.Ready) }
     LaunchedEffect(state.selectionGeneration, state.authorization) {
         showForwardTargets = false
         forwardingMessageIds = emptyList()
@@ -352,6 +353,23 @@ private fun TelegramRustApp(
             jumpToMessageId = null
             replySelectionGeneration = state.selectionGeneration
         }
+    }
+    LaunchedEffect(state.authorization) {
+        val authorizationReady = state.authorization == AuthorizationUiStep.Ready
+        if (shouldResetNavigationAfterAuthorizationChange(
+                wasAuthorizationReady = previousAuthorizationReady,
+                isAuthorizationReady = authorizationReady,
+            )) {
+            selectedChatId = 0L
+            showContacts = false
+            profilePeerId = 0L
+            draft = ""
+            replyToMessageId = null
+            replyToPreview = null
+            jumpToMessageId = null
+            pendingLocationChatId = 0L
+        }
+        previousAuthorizationReady = authorizationReady
     }
     var confirmedJoinIntent by remember(incomingLink) { mutableStateOf<TelegramJoinInviteIntent?>(null) }
 
