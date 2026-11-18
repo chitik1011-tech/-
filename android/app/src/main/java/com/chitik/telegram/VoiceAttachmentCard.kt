@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -30,10 +31,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.setProgress
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
@@ -63,6 +66,8 @@ fun VoiceAttachmentCard(
     val file = attachment.downloadedFile
     val active = file != null && playback.filePath == file.absolutePath
     val playing = active && playback.isPlaying
+    val seekDurationMs = (attachment.durationMs ?: if (active) playback.durationMs else 0L)
+        .coerceAtLeast(0L)
     val bars = remember(attachment.voiceWaveform) {
         formatVoiceWaveform(attachment.voiceWaveform.orEmpty())
     }
@@ -96,6 +101,15 @@ fun VoiceAttachmentCard(
                     modifier = Modifier
                         .weight(1f)
                         .height(34.dp)
+                        .pointerInput(active, seekDurationMs) {
+                            detectTapGestures { tap ->
+                                if (!active || size.width <= 0) return@detectTapGestures
+                                voiceSeekPosition(
+                                    seekDurationMs,
+                                    tap.x / size.width.toFloat(),
+                                )?.let(coordinator::seekTo)
+                            }
+                        }
                         .semantics {
                             contentDescription = "Голосовое сообщение"
                             stateDescription = playbackAccessibility.stateDescription
@@ -103,6 +117,13 @@ fun VoiceAttachmentCard(
                                 playbackAccessibility.progress,
                                 0f..1f,
                             )
+                            setProgress { fraction ->
+                                if (!active) return@setProgress false
+                                val target = voiceSeekPosition(seekDurationMs, fraction)
+                                    ?: return@setProgress false
+                                coordinator.seekTo(target)
+                                true
+                            }
                         },
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(1.dp),

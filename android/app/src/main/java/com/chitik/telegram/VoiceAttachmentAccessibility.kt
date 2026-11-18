@@ -38,6 +38,14 @@ internal fun voicePlaybackAccessibility(
     )
 }
 
+/** Converts a normalized seek target into a bounded playback position. */
+internal fun voiceSeekPosition(durationMs: Long, fraction: Float): Long? {
+    if (durationMs <= 0L || !fraction.isFinite()) return null
+    return (durationMs.toDouble() * fraction.coerceIn(0f, 1f).toDouble())
+        .toLong()
+        .coerceIn(0L, durationMs)
+}
+
 internal fun voiceDownloadAccessibility(
     state: MediaDownloadUiState,
 ): VoiceDownloadAccessibility = when (state) {
