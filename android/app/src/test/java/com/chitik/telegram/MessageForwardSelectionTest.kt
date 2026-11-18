@@ -59,6 +59,45 @@ class MessageForwardSelectionTest {
         assertEquals(true, allDeleted.shouldExitSelectionMode)
     }
 
+    @Test
+    fun selectionToolbarEnablesOnlyActionsBackedBySelectionAndCapabilities() {
+        val outgoing = message("17").copy(text = "hello", isOutgoing = true)
+        val incoming = message("18").copy(text = "reply", isOutgoing = false)
+
+        val actions = messageSelectionToolbarActions(
+            selectedMessageCount = 2,
+            selectedMessages = listOf(outgoing, incoming),
+            canForwardMessages = true,
+            canDeleteMessages = false,
+            deletingMessages = false,
+        )
+
+        assertEquals(MessageSelectionToolbarActions(canForward = true, canDelete = false, canCopy = true), actions)
+    }
+
+    @Test
+    fun selectionToolbarDoesNotExposeActionsForIncompleteOrBusySelection() {
+        val message = message("17").copy(text = "hello", isOutgoing = true)
+
+        val incomplete = messageSelectionToolbarActions(
+            selectedMessageCount = 2,
+            selectedMessages = listOf(message),
+            canForwardMessages = true,
+            canDeleteMessages = true,
+            deletingMessages = false,
+        )
+        assertEquals(MessageSelectionToolbarActions(false, false, false), incomplete)
+
+        val deleting = messageSelectionToolbarActions(
+            selectedMessageCount = 1,
+            selectedMessages = listOf(message),
+            canForwardMessages = false,
+            canDeleteMessages = null,
+            deletingMessages = true,
+        )
+        assertEquals(MessageSelectionToolbarActions(false, false, true), deleting)
+    }
+
     private fun message(id: String) = ConversationMessageUi(
         id = id,
         chatId = "1",
