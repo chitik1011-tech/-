@@ -1,4 +1,8 @@
-use std::{io::Write, path::PathBuf, sync::Arc};
+use std::{
+    io::Write,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
 
 use grammers_client::{Client, media::Media};
 use tg_media_cache::{CacheLease, MediaCache};
@@ -63,7 +67,7 @@ pub(crate) fn spawn_download(
     cache: MediaCache,
     transfers: Arc<TransferManager>,
     updates: BackendUpdateSender,
-    target: MediaTarget,
+    targets: Arc<Mutex<Vec<MediaTarget>>>,
     queued_token: TransferToken,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
@@ -73,7 +77,7 @@ pub(crate) fn spawn_download(
             &cache,
             &transfers,
             &updates,
-            &target,
+            &targets,
             queued_token,
         )
         .await
@@ -82,9 +86,15 @@ pub(crate) fn spawn_download(
             // Cancellation advances the generation and makes this token stale,
             // so late I/O errors cannot overwrite the user's Cancelled state.
             if let Some(failed_state) = failure_state(&transfers, queued_token, reason) {
-                let _ = updates
-                    .send(Ok(event(&target, queued_token.generation, failed_state)))
-                    .await;
+                for target in targets_snapshot(&targets) {
+                    let _ = updates
+                        .send(Ok(event(
+                            &target,
+                            queued_token.generation,
+                            failed_state.clone(),
+                        )))
+                        .await;
+                }
             }
         }
     })
@@ -161,16 +171,20 @@ async fn run_download(
     cache: &MediaCache,
     transfers: &TransferManager,
     updates: &BackendUpdateSender,
-    target: &MediaTarget,
+    targets: &Arc<Mutex<Vec<MediaTarget>>>,
     queued_token: TransferToken,
 ) -> Result<(), String> {
     let active = transfers
         .start_download(queued_token)
         .map_err(|_| "download state changed before it could start".to_owned())?;
 
+    let initial_targets = targets_snapshot(targets);
+    let target = initial_targets
+        .first()
+        .ok_or_else(|| "download has no active attachment targets".to_owned())?;
     validate_cache_size(target.total_bytes, cache.max_bytes())?;
 
-    emit_snapshot(updates, target, transfers, active).await;
+    emit_snapshots(updates, targets, transfers, active).await;
 
     // CacheWriter keeps partial bytes in a hidden temporary entry until atomic commit.
     let mut writer = cache
@@ -198,7 +212,7 @@ async fn run_download(
         transfers
             .report_progress(active, transferred)
             .map_err(|_| "download progress state became invalid".to_owned())?;
-        emit_snapshot(updates, target, transfers, active).await;
+        emit_snapshots(updates, targets, transfers, active).await;
     }
 
     let lease = match target.total_bytes {
@@ -215,36 +229,51 @@ async fn run_download(
     let snapshot = transfers
         .get(completed)
         .map_err(|_| "completed download state is unavailable".to_owned())?;
-    if updates
-        .send(Ok(event(
-            target,
-            snapshot.token.generation,
-            state_from_snapshot(&snapshot, Some(pending_publication.local_path())),
-        )))
-        .await
-        .is_ok()
-    {
+    let mut published = false;
+    for target in targets_snapshot(targets) {
+        if updates
+            .send(Ok(event(
+                &target,
+                snapshot.token.generation,
+                state_from_snapshot(&snapshot, Some(pending_publication.local_path())),
+            )))
+            .await
+            .is_ok()
+        {
+            published = true;
+        }
+    }
+    if published {
         pending_publication.mark_published();
     }
     Ok(())
 }
 
-async fn emit_snapshot(
+async fn emit_snapshots(
     updates: &BackendUpdateSender,
-    target: &MediaTarget,
+    targets: &Arc<Mutex<Vec<MediaTarget>>>,
     transfers: &TransferManager,
     token: TransferToken,
 ) {
     let Ok(snapshot) = transfers.get(token) else {
         return;
     };
-    let _ = updates
-        .send(Ok(event(
-            target,
-            snapshot.token.generation,
-            state_from_snapshot(&snapshot, None),
-        )))
-        .await;
+    for target in targets_snapshot(targets) {
+        let _ = updates
+            .send(Ok(event(
+                &target,
+                snapshot.token.generation,
+                state_from_snapshot(&snapshot, None),
+            )))
+            .await;
+    }
+}
+
+fn targets_snapshot(targets: &Arc<Mutex<Vec<MediaTarget>>>) -> Vec<MediaTarget> {
+    targets
+        .lock()
+        .map(|targets| targets.clone())
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -255,7 +284,7 @@ mod tests {
         sync::atomic::{AtomicU64, Ordering},
     };
     use tg_media_cache::CacheConfig;
-    use tg_mobile_core::{TransferDirection, TransferManager};
+    use tg_mobile_core::{TransferDirection, TransferManager, backend_update_channel};
 
     static TEST_CACHE_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -300,6 +329,51 @@ mod tests {
                 total_bytes: Some(100),
             }
         );
+    }
+
+    #[tokio::test]
+    async fn publishes_shared_transfer_progress_to_each_attachment_target() {
+        let manager = TransferManager::new();
+        let remote = manager
+            .request(TransferDirection::Download, "shared-reference", Some(10))
+            .unwrap();
+        let queued = manager.queue_download(remote.token).unwrap();
+        let active = manager.start_download(queued).unwrap();
+        manager.report_progress(active, 4).unwrap();
+        let targets = Arc::new(Mutex::new(vec![
+            MediaTarget {
+                chat_id: 1,
+                message_id: 10,
+                attachment_index: 0,
+                reference: "shared-reference".into(),
+                total_bytes: Some(10),
+            },
+            MediaTarget {
+                chat_id: 1,
+                message_id: 11,
+                attachment_index: 0,
+                reference: "shared-reference".into(),
+                total_bytes: Some(10),
+            },
+        ]));
+        let (updates, mut receiver) = backend_update_channel();
+
+        emit_snapshots(&updates, &targets, &manager, active).await;
+
+        for expected_message_id in [10, 11] {
+            let event = receiver.recv().await.unwrap().unwrap();
+            assert!(matches!(
+                event,
+                CoreEvent::MediaTransferUpdated {
+                    message_id,
+                    state: AttachmentDownloadState::Downloading {
+                        bytes_transferred: 4,
+                        total_bytes: Some(10),
+                    },
+                    ..
+                } if message_id == expected_message_id
+            ));
+        }
     }
 
     #[test]
