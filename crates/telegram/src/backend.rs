@@ -117,9 +117,9 @@ fn detach_shared_download_target(
         .targets
         .lock()
         .map_err(|_| "media download target registry lock was poisoned")?;
-    let target_index = targets.iter().position(|target| {
-        (target.chat_id, target.message_id, target.attachment_index) == key
-    });
+    let target_index = targets
+        .iter()
+        .position(|target| (target.chat_id, target.message_id, target.attachment_index) == key);
     let Some(target_index) = target_index else {
         return Ok(false);
     };
@@ -1962,10 +1962,7 @@ mod shared_media_download_tests {
             targets: Arc::clone(&targets),
             handle: worker.abort_handle(),
         };
-        let mut tasks = HashMap::from([
-            ((4, 10, 0), active.clone()),
-            ((4, 11, 0), active.clone()),
-        ]);
+        let mut tasks = HashMap::from([((4, 10, 0), active.clone()), ((4, 11, 0), active.clone())]);
 
         assert!(detach_shared_download_target(&active, (4, 10, 0)).unwrap());
         tasks.remove(&(4, 10, 0));
