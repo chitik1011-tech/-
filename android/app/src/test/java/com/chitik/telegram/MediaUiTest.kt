@@ -27,6 +27,19 @@ class MediaUiTest {
     }
 
     @Test
+    fun genericBinaryMimeFallsBackToKnownDocumentExtension() {
+        assertEquals(
+            "application/pdf",
+            resolveSafeMimeType("application/octet-stream", "report.pdf"),
+        )
+        assertEquals("image/png", resolveSafeMimeType("binary/octet-stream", "scan.png"))
+        assertEquals(
+            "application/octet-stream",
+            resolveSafeMimeType("application/octet-stream", "payload.unknown"),
+        )
+    }
+
+    @Test
     fun imageDocumentsUseTheInlineImageViewerButOtherDocumentsDoNot() {
         fun attachment(kind: MediaKindUi, mimeType: String?, filename: String?) =
             MediaAttachmentUi(
@@ -45,6 +58,11 @@ class MediaUiTest {
         assertTrue(isInlineImageMedia(attachment(MediaKindUi.Document, "image/png", "scan.png")))
         assertTrue(isInlineImageMedia(attachment(MediaKindUi.Document, null, "scan.webp")))
         assertTrue(isInlineImageMedia(attachment(MediaKindUi.Document, null, "scan.bmp")))
+        assertTrue(
+            isInlineImageMedia(
+                attachment(MediaKindUi.Document, "application/octet-stream", "scan.png"),
+            ),
+        )
         assertFalse(isInlineImageMedia(attachment(MediaKindUi.Document, "application/pdf", "scan.png")))
         assertFalse(isInlineImageMedia(attachment(MediaKindUi.Document, "image/svg+xml", "scan.svg")))
         assertFalse(isInlineImageMedia(attachment(MediaKindUi.Video, "image/png", "scan.png")))
@@ -54,7 +72,7 @@ class MediaUiTest {
     fun openIntentSpecUsesNarrowAppAuthorityAndReadGrant() {
         val spec = buildOpenIntentSpec(
             packageName = "com.chitik.telegram",
-            declaredMime = "application/pdf",
+            declaredMime = "application/octet-stream",
             filename = "paper.pdf",
         )
 
