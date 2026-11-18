@@ -1162,14 +1162,20 @@ fn command_capability_error(command: &CoreCommand, state: &CoreState) -> Option<
             {
                 return Some("Finish or cancel pending sends before leaving this chat".into());
             }
-            match state.chat_capabilities.get(chat_id).map(|cap| cap.chat_kind) {
+            match state
+                .chat_capabilities
+                .get(chat_id)
+                .map(|cap| cap.chat_kind)
+            {
                 Some(
                     crate::capabilities::ChatKind::Group
                     | crate::capabilities::ChatKind::Supergroup
                     | crate::capabilities::ChatKind::Channel,
                 ) => None,
                 Some(_) => Some("Leaving is only supported for groups and channels".into()),
-                None => Some("Telegram has not confirmed this chat type; refresh chats first".into()),
+                None => {
+                    Some("Telegram has not confirmed this chat type; refresh chats first".into())
+                }
             }
         }
         _ => None,
@@ -1286,7 +1292,9 @@ mod capability_tests {
         );
         assert_eq!(command_capability_error(&command, &state), None);
 
-        state.outbox.insert(99, OutgoingSend::sending(99, 12, "queued"));
+        state
+            .outbox
+            .insert(99, OutgoingSend::sending(99, 12, "queued"));
         assert!(command_capability_error(&command, &state).is_some());
     }
 

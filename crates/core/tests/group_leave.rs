@@ -1,5 +1,5 @@
 use tg_mobile_core::{
-    ChatCapabilities, ChatKind, ChatSummary, CoreCommand, CoreEvent, CoreState, decode_command,
+    decode_command, ChatCapabilities, ChatKind, ChatSummary, CoreCommand, CoreEvent, CoreState,
 };
 
 #[test]
