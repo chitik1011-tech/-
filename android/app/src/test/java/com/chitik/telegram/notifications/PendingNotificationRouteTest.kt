@@ -42,6 +42,16 @@ class PendingNotificationRouteTest {
             restorePendingNotificationRoute(0L, null, TelegramNotificationRoute(-5L, 200L)),
         )
     }
+
+    @Test
+    fun consumingNotificationClearsOnlyItsMatchingActivityIntentRoute() {
+        val consumed = TelegramNotificationRoute(11L, 100L)
+
+        assertEquals(true, shouldClearNotificationIntentAfterDismiss(consumed, consumed))
+        assertEquals(false, shouldClearNotificationIntentAfterDismiss(consumed, TelegramNotificationRoute(12L, 100L)))
+        assertEquals(false, shouldClearNotificationIntentAfterDismiss(consumed, null))
+        assertEquals(false, shouldClearNotificationIntentAfterDismiss(null, consumed))
+    }
     @Test
     fun incompleteSessionRestoreKeepsPendingRouteUntilOutcomeIsKnown() {
         assertEquals(
