@@ -30,6 +30,8 @@ pub enum MessageMutationAction {
 pub enum CoreEvent {
     State(AccountState),
     AuthorizationChanged(AuthorizationState),
+    /// Telegram's stable self user ID for the currently authorized session, or `None` when unavailable.
+    AccountIdentityUpdated(Option<i64>),
     /// Actual Telegram code delivery metadata; transient and display-only.
     AuthorizationCodeDeliveryChanged(Option<LoginCodeDeliveryMethod>),
     /// Starts a new connection session and creates its generation token.
@@ -238,6 +240,7 @@ impl CoreEvent {
         match self {
             Self::State(_) => "state",
             Self::AuthorizationChanged(_) => "authorization_changed",
+            Self::AccountIdentityUpdated(_) => "account_identity_updated",
             Self::AuthorizationCodeDeliveryChanged(_) => "authorization_code_delivery_changed",
             Self::ConnectionSessionStarted => "connection_session_started",
             Self::ConnectionLifecycle { .. } => "connection_lifecycle",
@@ -295,7 +298,8 @@ impl CoreEvent {
     pub const fn is_transient(&self) -> bool {
         matches!(
             self,
-            Self::AuthorizationCodeDeliveryChanged(_)
+            Self::AccountIdentityUpdated(_)
+                | Self::AuthorizationCodeDeliveryChanged(_)
                 | Self::ChatCapabilitiesUpdated(_)
                 | Self::PollVoteSubmitted { .. }
                 | Self::PollVoteFailed { .. }
@@ -311,5 +315,22 @@ impl CoreEvent {
 
     pub const fn is_terminal(&self) -> bool {
         matches!(self, Self::Stopped)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CoreEvent;
+
+    #[test]
+    fn account_identity_is_a_transient_stable_kinded_event() {
+        let event = CoreEvent::AccountIdentityUpdated(Some(123));
+
+        assert_eq!(event.kind(), "account_identity_updated");
+        assert!(event.is_transient());
+        assert_eq!(
+            serde_json::to_value(event).unwrap(),
+            serde_json::json!({"type":"account_identity_updated","payload":123}),
+        );
     }
 }

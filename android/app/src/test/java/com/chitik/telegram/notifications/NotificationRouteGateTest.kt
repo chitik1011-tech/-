@@ -9,8 +9,10 @@ class NotificationRouteGateTest {
         assertEquals(
             NotificationRouteResolution.Wait,
             resolveNotificationRoute(
-                5L,
+                route = TelegramNotificationRoute(5L, 99L),
                 authorized = false,
+                accountIdentityResolved = false,
+                activeAccountUserId = null,
                 chatsLoaded = false,
                 availableChatIds = emptyList(),
             ),
@@ -18,8 +20,10 @@ class NotificationRouteGateTest {
         assertEquals(
             NotificationRouteResolution.Wait,
             resolveNotificationRoute(
-                5L,
+                route = TelegramNotificationRoute(5L, 99L),
                 authorized = true,
+                accountIdentityResolved = false,
+                activeAccountUserId = null,
                 chatsLoaded = false,
                 availableChatIds = emptyList(),
             ),
@@ -27,8 +31,10 @@ class NotificationRouteGateTest {
         assertEquals(
             NotificationRouteResolution.OpenChat(5L),
             resolveNotificationRoute(
-                5L,
+                route = TelegramNotificationRoute(5L, 99L),
                 authorized = true,
+                accountIdentityResolved = true,
+                activeAccountUserId = 99L,
                 chatsLoaded = true,
                 availableChatIds = listOf(5L, -7L),
                 chatListExhausted = false,
@@ -41,8 +47,10 @@ class NotificationRouteGateTest {
         assertEquals(
             NotificationRouteResolution.Wait,
             resolveNotificationRoute(
-                5L,
+                route = TelegramNotificationRoute(5L, 99L),
                 authorized = true,
+                accountIdentityResolved = true,
+                activeAccountUserId = 99L,
                 chatsLoaded = true,
                 availableChatIds = listOf(-7L),
                 chatListExhausted = false,
@@ -51,8 +59,10 @@ class NotificationRouteGateTest {
         assertEquals(
             NotificationRouteResolution.Discard,
             resolveNotificationRoute(
-                5L,
+                route = TelegramNotificationRoute(5L, 99L),
                 authorized = true,
+                accountIdentityResolved = true,
+                activeAccountUserId = 99L,
                 chatsLoaded = true,
                 availableChatIds = listOf(-7L),
                 chatListExhausted = true,
@@ -61,8 +71,40 @@ class NotificationRouteGateTest {
         assertEquals(
             NotificationRouteResolution.Discard,
             resolveNotificationRoute(
-                0L,
+                route = null,
                 authorized = true,
+                accountIdentityResolved = true,
+                activeAccountUserId = 99L,
+                chatsLoaded = true,
+                availableChatIds = listOf(5L),
+            ),
+        )
+    }
+
+    @Test
+    fun rejectsNotificationTapFromAReplacementAccountEvenWhenChatIdMatches() {
+        assertEquals(
+            NotificationRouteResolution.Discard,
+            resolveNotificationRoute(
+                route = TelegramNotificationRoute(5L, 99L),
+                authorized = true,
+                accountIdentityResolved = true,
+                activeAccountUserId = 100L,
+                chatsLoaded = true,
+                availableChatIds = listOf(5L),
+            ),
+        )
+    }
+
+    @Test
+    fun rejectsRouteWhenActiveAccountIdentityIsUnavailable() {
+        assertEquals(
+            NotificationRouteResolution.Discard,
+            resolveNotificationRoute(
+                route = TelegramNotificationRoute(5L, 99L),
+                authorized = true,
+                accountIdentityResolved = true,
+                activeAccountUserId = null,
                 chatsLoaded = true,
                 availableChatIds = listOf(5L),
             ),
