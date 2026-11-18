@@ -2,16 +2,17 @@ package com.chitik.telegram.notifications
 
 /**
  * Chooses the pending notification route to restore after Activity recreation.
- *
- * A fresh valid notification tap takes precedence. A malformed or absent fresh
- * route leaves a previously saved valid route intact. Routes are currently
- * chat-ID-only and are not scoped to a Telegram account.
+ * A fresh valid tap takes precedence. Saved routes are reconstructed only when both
+ * their chat and Telegram account identifiers are valid.
  */
-internal fun restorePendingNotificationChatId(
+internal fun restorePendingNotificationRoute(
     savedChatId: Long?,
-    freshIntentChatId: Long?,
-): Long? = freshIntentChatId?.takeIf { it != 0L }
-    ?: savedChatId?.takeIf { it != 0L }
+    savedAccountUserId: Long?,
+    freshIntentRoute: TelegramNotificationRoute?,
+): TelegramNotificationRoute? = freshIntentRoute ?: runCatching {
+    if (savedChatId == null || savedAccountUserId == null) return@runCatching null
+    TelegramNotificationRoute(savedChatId, savedAccountUserId)
+}.getOrNull()
 
 /** Whether a pending route may remain after the native session restore finishes. */
 internal enum class PendingNotificationSessionDecision {
@@ -22,9 +23,7 @@ internal enum class PendingNotificationSessionDecision {
 
 /**
  * Retains a route through incomplete restoration and only keeps it after Ready.
- *
- * Routes contain no account ID, so Ready cannot prove that an already-authorized
- * replacement is the same account as the one that created the notification.
+ * The route gate separately requires the resolved Telegram account ID to match.
  */
 internal fun decidePendingNotificationSessionRestore(
     restoreComplete: Boolean,

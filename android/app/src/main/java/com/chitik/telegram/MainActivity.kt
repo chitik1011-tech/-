@@ -57,7 +57,7 @@ import com.chitik.telegram.notifications.NotificationRouteResolution
 import com.chitik.telegram.notifications.TelegramNotificationRoute
 import com.chitik.telegram.notifications.PendingNotificationSessionDecision
 import com.chitik.telegram.notifications.decidePendingNotificationSessionRestore
-import com.chitik.telegram.notifications.restorePendingNotificationChatId
+import com.chitik.telegram.notifications.restorePendingNotificationRoute
 import com.chitik.telegram.deeplink.TelegramDeepLinkRouter
 import com.chitik.telegram.deeplink.TelegramJoinInviteIntent
 import com.chitik.telegram.deeplink.TelegramLinkAppRouter
@@ -67,10 +67,11 @@ import com.chitik.telegram.deeplink.TelegramLinkTarget
 class MainActivity : ComponentActivity() {
     private companion object {
         const val STATE_PENDING_NOTIFICATION_CHAT_ID = "pending_notification_chat_id"
+        const val STATE_PENDING_NOTIFICATION_ACCOUNT_USER_ID = "pending_notification_account_user_id"
     }
 
     private var pendingTelegramLink by mutableStateOf<TelegramLinkIntent?>(null)
-    private var pendingNotificationChatId by mutableStateOf<Long?>(null)
+    private var pendingNotificationRoute by mutableStateOf<TelegramNotificationRoute?>(null)
     private var notificationPermissionGranted by mutableStateOf(true)
     private lateinit var notificationPermissionRequester: NotificationPermissionRequester
 
@@ -82,19 +83,22 @@ class MainActivity : ComponentActivity() {
         notificationPermissionGranted = notificationPermissionRequester.isGranted()
         enableEdgeToEdge()
         pendingTelegramLink = TelegramDeepLinkRouter.parseIntent(intent?.action, intent?.dataString)
-        pendingNotificationChatId = restorePendingNotificationChatId(
+        pendingNotificationRoute = restorePendingNotificationRoute(
             savedChatId = savedInstanceState
                 ?.takeIf { it.containsKey(STATE_PENDING_NOTIFICATION_CHAT_ID) }
                 ?.getLong(STATE_PENDING_NOTIFICATION_CHAT_ID),
-            freshIntentChatId = TelegramNotificationRoute.parse(intent)?.chatId,
+            savedAccountUserId = savedInstanceState
+                ?.takeIf { it.containsKey(STATE_PENDING_NOTIFICATION_ACCOUNT_USER_ID) }
+                ?.getLong(STATE_PENDING_NOTIFICATION_ACCOUNT_USER_ID),
+            freshIntentRoute = TelegramNotificationRoute.parse(intent),
         )
         setContent {
             TelegramAppTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     TelegramRustApp(
                         incomingLink = pendingTelegramLink,
-                        incomingNotificationChatId = pendingNotificationChatId,
-                        onDismissNotification = { pendingNotificationChatId = null },
+                        incomingNotificationRoute = pendingNotificationRoute,
+                        onDismissNotification = { pendingNotificationRoute = null },
                         showEnableNotifications = !notificationPermissionGranted,
                         onEnableNotifications = { notificationPermissionRequester.request() },
                         onDismissLink = { pendingTelegramLink = null },
@@ -108,15 +112,17 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         pendingTelegramLink = TelegramDeepLinkRouter.parseIntent(intent.action, intent.dataString)
-        pendingNotificationChatId = restorePendingNotificationChatId(
-            savedChatId = pendingNotificationChatId,
-            freshIntentChatId = TelegramNotificationRoute.parse(intent)?.chatId,
+        pendingNotificationRoute = restorePendingNotificationRoute(
+            savedChatId = pendingNotificationRoute?.chatId,
+            savedAccountUserId = pendingNotificationRoute?.accountUserId,
+            freshIntentRoute = TelegramNotificationRoute.parse(intent),
         )
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
-        pendingNotificationChatId?.let { chatId ->
-            outState.putLong(STATE_PENDING_NOTIFICATION_CHAT_ID, chatId)
+        pendingNotificationRoute?.let { route ->
+            outState.putLong(STATE_PENDING_NOTIFICATION_CHAT_ID, route.chatId)
+            outState.putLong(STATE_PENDING_NOTIFICATION_ACCOUNT_USER_ID, route.accountUserId)
         }
         super.onSaveInstanceState(outState)
     }
@@ -133,7 +139,7 @@ class MainActivity : ComponentActivity() {
 private fun TelegramRustApp(
     incomingLink: TelegramLinkIntent?,
     onDismissLink: () -> Unit,
-    incomingNotificationChatId: Long?,
+    incomingNotificationRoute: TelegramNotificationRoute?,
     onDismissNotification: () -> Unit,
     showEnableNotifications: Boolean,
     onEnableNotifications: () -> Unit,
@@ -198,27 +204,31 @@ private fun TelegramRustApp(
             viewModel.cancelVoiceRecording(recordingChatId)
         }
     }
-    LaunchedEffect(incomingNotificationChatId, state.sessionRestoreComplete, state.authorization) {
+    LaunchedEffect(incomingNotificationRoute, state.sessionRestoreComplete, state.authorization) {
         val sessionDecision = decidePendingNotificationSessionRestore(
             restoreComplete = state.sessionRestoreComplete,
             authorizationReady = state.authorization == AuthorizationUiStep.Ready,
         )
-        if (incomingNotificationChatId != null &&
+        if (incomingNotificationRoute != null &&
             sessionDecision == PendingNotificationSessionDecision.Discard
         ) {
             onDismissNotification()
         }
     }
     LaunchedEffect(
-        incomingNotificationChatId,
+        incomingNotificationRoute,
         state.authorization,
+        state.accountIdentityResolved,
+        state.accountUserId,
         state.chatsLoaded,
         state.chats,
         state.chatPagination,
     ) {
         val resolution = com.chitik.telegram.notifications.resolveNotificationRoute(
-            chatId = incomingNotificationChatId,
+            route = incomingNotificationRoute,
             authorized = state.authorization == AuthorizationUiStep.Ready,
+            accountIdentityResolved = state.accountIdentityResolved,
+            activeAccountUserId = state.accountUserId,
             chatsLoaded = state.chatsLoaded,
             availableChatIds = state.chats.map(ChatListEntry::id),
             chatListExhausted = state.chatPagination.exhausted && !state.chatPagination.loading,

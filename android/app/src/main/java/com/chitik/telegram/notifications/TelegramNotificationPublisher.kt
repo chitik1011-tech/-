@@ -39,6 +39,7 @@ class TelegramNotificationPublisher(context: Context) {
      */
     data class IncomingMessage(
         val chatId: Long,
+        val accountUserId: Long,
         val messageId: Long? = null,
         val chatTitle: String,
         val body: String,
@@ -103,7 +104,7 @@ class TelegramNotificationPublisher(context: Context) {
      * Returns true only when a notification was delivered to Android's NotificationManager.
      */
     fun publish(message: IncomingMessage): Boolean {
-        if (message.chatId == 0L) return false
+        if (message.chatId == 0L || message.accountUserId <= 0L) return false
         if (!hasNotificationPermission()) return false
         val manager = notificationManager ?: return false
         val channelId = if (message.isGroup) GROUP_CHANNEL_ID else PRIVATE_CHANNEL_ID
@@ -143,7 +144,11 @@ class TelegramNotificationPublisher(context: Context) {
                     .build(),
             )
             .setContentIntent(
-                TelegramNotificationRoute.createPendingIntent(appContext, message.chatId),
+                TelegramNotificationRoute.createPendingIntent(
+                    appContext,
+                    message.chatId,
+                    message.accountUserId,
+                ),
             )
             .setAutoCancel(true)
             .build()

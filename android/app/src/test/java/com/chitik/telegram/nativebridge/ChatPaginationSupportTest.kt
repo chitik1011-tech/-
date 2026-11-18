@@ -205,8 +205,10 @@ class ChatPaginationSupportTest {
         assertEquals(
             NotificationRouteResolution.Wait,
             resolveNotificationRoute(
-                chatId = 9L,
+                route = com.chitik.telegram.notifications.TelegramNotificationRoute(9L, 99L),
                 authorized = true,
+                accountIdentityResolved = true,
+                activeAccountUserId = 99L,
                 chatsLoaded = updated.chatsLoaded,
                 availableChatIds = updated.chats.map(ChatListEntry::id),
                 chatListExhausted = updated.chatPagination.exhausted,

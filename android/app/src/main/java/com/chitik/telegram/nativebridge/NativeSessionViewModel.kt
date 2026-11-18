@@ -76,6 +76,10 @@ data class NativeUiState(
     val authorization: AuthorizationUiStep = AuthorizationUiStep.Closed,
     val loginCodeDeliveryMethod: LoginCodeDeliveryMethod? = null,
     val sessionRestoreComplete: Boolean = false,
+    /** Transient Telegram self ID confirmed for the current native session. */
+    val accountUserId: Long? = null,
+    /** True after the current session's identity lookup returned, including unavailable results. */
+    val accountIdentityResolved: Boolean = false,
     val chats: List<ChatListEntry> = emptyList(),
     val chatsLoaded: Boolean = false,
     val chatPagination: ChatPaginationUiState = ChatPaginationUiState(),
@@ -480,6 +484,8 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 chats = emptyList(),
                 chatsLoaded = false,
                 chatPagination = ChatPaginationUiState(),
+                accountUserId = null,
+                accountIdentityResolved = false,
                 loginCodeDeliveryMethod = null,
                 sessionRestoreComplete = false,
             )
@@ -1473,10 +1479,14 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
             payload = payload,
             authorized = _state.value.authorization == AuthorizationUiStep.Ready,
         ) ?: return
+        val accountUserId = _state.value.accountUserId
+            ?.takeIf { _state.value.accountIdentityResolved && it > 0L }
+            ?: return
         val chat = _state.value.chats.firstOrNull { it.id == message.chatId }
         notifications.publish(
             TelegramNotificationPublisher.IncomingMessage(
                 chatId = message.chatId,
+                accountUserId = accountUserId,
                 messageId = message.messageId,
                 chatTitle = chat?.title ?: "Telegram",
                 body = message.preview,
@@ -1530,6 +1540,20 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 }
             }
             "state" -> applyStatePayload(payload)
+            "account_identity_updated" -> {
+                val accountUserId = runCatching {
+                    val value = JSONObject(payload).opt("payload")
+                    if (value == null || value == JSONObject.NULL) null else (value as? Number)?.toLong()
+                }.getOrNull()?.takeIf { it > 0L }
+                _state.update {
+                    it.copy(
+                        accountUserId = accountUserId,
+                        accountIdentityResolved = true,
+                        lastEventType = type,
+                        lastEventPayload = "",
+                    )
+                }
+            }
             "message_send_state_changed" -> {
                 val send = parseOutgoingTextSendEvent(payload)
                 send?.let { cleanupTerminalOutgoingMedia(listOf(it)) }
@@ -1969,6 +1993,16 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 activeTextSendText = if (authorization == AuthorizationUiStep.Ready) current.activeTextSendText else null,
                 textSendError = if (authorization == AuthorizationUiStep.Ready) current.textSendError else null,
                 authorization = authorization,
+                accountUserId = if (authorization == AuthorizationUiStep.Ready) {
+                    current.accountUserId
+                } else {
+                    null
+                },
+                accountIdentityResolved = if (authorization == AuthorizationUiStep.Ready) {
+                    current.accountIdentityResolved
+                } else {
+                    false
+                },
                 loginCodeDeliveryMethod = deliveryAfterAuthorizationChange(
                     current.loginCodeDeliveryMethod,
                     authorization,

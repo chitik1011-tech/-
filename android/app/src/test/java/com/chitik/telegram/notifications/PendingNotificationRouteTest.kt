@@ -6,24 +6,41 @@ import org.junit.Test
 class PendingNotificationRouteTest {
     @Test
     fun freshValidTapTakesPriorityOverSavedRoute() {
-        assertEquals(22L, restorePendingNotificationChatId(11L, 22L))
+        assertEquals(
+            TelegramNotificationRoute(22L, 200L),
+            restorePendingNotificationRoute(
+                savedChatId = 11L,
+                savedAccountUserId = 100L,
+                freshIntentRoute = TelegramNotificationRoute(22L, 200L),
+            ),
+        )
     }
 
     @Test
-    fun savedRouteSurvivesAbsentOrMalformedFreshRoute() {
-        assertEquals(11L, restorePendingNotificationChatId(11L, null))
-        assertEquals(11L, restorePendingNotificationChatId(11L, 0L))
+    fun savedAccountScopedRouteSurvivesAnAbsentFreshRoute() {
+        assertEquals(
+            TelegramNotificationRoute(11L, 100L),
+            restorePendingNotificationRoute(11L, 100L, null),
+        )
     }
 
     @Test
-    fun freshRouteIsUsedWhenSavedRouteIsInvalid() {
-        assertEquals(22L, restorePendingNotificationChatId(0L, 22L))
+    fun invalidSavedRouteDoesNotCreatePendingState() {
+        assertEquals(null, restorePendingNotificationRoute(0L, 100L, null))
+        assertEquals(null, restorePendingNotificationRoute(11L, 0L, null))
     }
 
     @Test
-    fun invalidRoutesDoNotCreatePendingState() {
-        assertEquals(null, restorePendingNotificationChatId(null, null))
-        assertEquals(null, restorePendingNotificationChatId(0L, 0L))
+    fun legacyChatOnlyRouteCannotBeRestoredWithoutAnAccountId() {
+        assertEquals(null, restorePendingNotificationRoute(11L, null, null))
+    }
+
+    @Test
+    fun invalidSavedRouteDoesNotOverrideFreshTap() {
+        assertEquals(
+            TelegramNotificationRoute(-5L, 200L),
+            restorePendingNotificationRoute(0L, null, TelegramNotificationRoute(-5L, 200L)),
+        )
     }
     @Test
     fun incompleteSessionRestoreKeepsPendingRouteUntilOutcomeIsKnown() {
