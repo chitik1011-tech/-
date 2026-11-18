@@ -19,7 +19,9 @@ object TelegramUiTokens {
     val chatRowHeight = 70.dp
     val horizontalInset = 12.dp
     val rowGap = 12.dp
+    /** General/contact divider inset; chat rows use DialogCell's 72 dp start. */
     val dividerInset = 76.dp
+    val chatListDividerInset = 72.dp
     val chatRowVerticalInset = 8.dp
     val chatSearchInset = 12.dp
     val chatSearchHeight = 48.dp

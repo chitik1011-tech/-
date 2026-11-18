@@ -346,7 +346,7 @@ fun ChatListScreen(
                             onClick = { onChatSelected(chat.id) },
                         )
                         HorizontalDivider(
-                            modifier = Modifier.padding(start = TelegramUiTokens.dividerInset),
+                            modifier = Modifier.padding(start = TelegramUiTokens.chatListDividerInset),
                             thickness = 0.5.dp,
                             color = MaterialTheme.colorScheme.outlineVariant,
                         )
