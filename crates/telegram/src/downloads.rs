@@ -24,12 +24,14 @@ pub(crate) struct MediaTarget {
 pub(crate) fn event(
     target: &MediaTarget,
     generation: u64,
+    session_generation: u64,
     state: AttachmentDownloadState,
 ) -> CoreEvent {
     CoreEvent::MediaTransferUpdated {
         chat_id: target.chat_id,
         message_id: target.message_id,
         attachment_index: target.attachment_index,
+        session_generation,
         generation,
         state,
     }
@@ -69,6 +71,7 @@ pub(crate) fn spawn_download(
     updates: BackendUpdateSender,
     targets: Arc<Mutex<Vec<MediaTarget>>>,
     queued_token: TransferToken,
+    session_generation: u64,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         if let Err(reason) = run_download(
@@ -79,6 +82,7 @@ pub(crate) fn spawn_download(
             &updates,
             &targets,
             queued_token,
+            session_generation,
         )
         .await
         {
@@ -91,6 +95,7 @@ pub(crate) fn spawn_download(
                         .send(Ok(event(
                             &target,
                             queued_token.generation,
+                            session_generation,
                             failed_state.clone(),
                         )))
                         .await;
@@ -173,6 +178,7 @@ async fn run_download(
     updates: &BackendUpdateSender,
     targets: &Arc<Mutex<Vec<MediaTarget>>>,
     queued_token: TransferToken,
+    session_generation: u64,
 ) -> Result<(), String> {
     let active = transfers
         .start_download(queued_token)
@@ -184,7 +190,7 @@ async fn run_download(
         .ok_or_else(|| "download has no active attachment targets".to_owned())?;
     validate_cache_size(target.total_bytes, cache.max_bytes())?;
 
-    emit_snapshots(updates, targets, transfers, active).await;
+    emit_snapshots(updates, targets, transfers, active, session_generation).await;
 
     // CacheWriter keeps partial bytes in a hidden temporary entry until atomic commit.
     let mut writer = cache
@@ -212,7 +218,7 @@ async fn run_download(
         transfers
             .report_progress(active, transferred)
             .map_err(|_| "download progress state became invalid".to_owned())?;
-        emit_snapshots(updates, targets, transfers, active).await;
+        emit_snapshots(updates, targets, transfers, active, session_generation).await;
     }
 
     let lease = match target.total_bytes {
@@ -235,6 +241,7 @@ async fn run_download(
             .send(Ok(event(
                 &target,
                 snapshot.token.generation,
+                session_generation,
                 state_from_snapshot(&snapshot, Some(pending_publication.local_path())),
             )))
             .await
@@ -254,6 +261,7 @@ async fn emit_snapshots(
     targets: &Arc<Mutex<Vec<MediaTarget>>>,
     transfers: &TransferManager,
     token: TransferToken,
+    session_generation: u64,
 ) {
     let Ok(snapshot) = transfers.get(token) else {
         return;
@@ -263,6 +271,7 @@ async fn emit_snapshots(
             .send(Ok(event(
                 &target,
                 snapshot.token.generation,
+                session_generation,
                 state_from_snapshot(&snapshot, None),
             )))
             .await;
@@ -358,7 +367,7 @@ mod tests {
         ]));
         let (updates, mut receiver) = backend_update_channel();
 
-        emit_snapshots(&updates, &targets, &manager, active).await;
+        emit_snapshots(&updates, &targets, &manager, active, 0).await;
 
         for expected_message_id in [10, 11] {
             let event = receiver.recv().await.unwrap().unwrap();
