@@ -389,6 +389,17 @@ fun ConversationScreen(
             }
         }
     }
+    val selectedMessages = state.messages.filter { message ->
+        message.id.toLongOrNull()?.let { it in selectedMessageIds } == true
+    }
+    val orderedSelectedMessageIds = selectedForwardMessageIds(state.messages, selectedMessageIds)
+    val selectionToolbarActions = messageSelectionToolbarActions(
+        selectedMessageCount = selectedMessageIds.size,
+        selectedMessages = selectedMessages,
+        canForwardMessages = state.capabilities.canForwardMessages,
+        canDeleteMessages = state.capabilities.canDeleteMessages,
+        deletingMessages = state.deletingMessages,
+    )
 
     LaunchedEffect(
         state.jumpToMessageId,
@@ -509,45 +520,31 @@ fun ConversationScreen(
                 },
                 actions = {
                     if (selectionActive) {
+                        TextButton(
+                            onClick = {
+                                if (state.capabilities.canForwardMessages == true) {
+                                    state.chatId.toLongOrNull()?.let { onForward(it, orderedSelectedMessageIds) }
+                                }
+                            },
+                            enabled = selectionToolbarActions.canForward && orderedSelectedMessageIds.isNotEmpty(),
+                        ) { Text("Переслать") }
+                        TextButton(
+                            onClick = { showDeleteConfirmation = true },
+                            enabled = selectionToolbarActions.canDelete,
+                        ) { Text("Удалить") }
                         Box {
                             TextButton(onClick = { selectionMenuOpen = true }) { Text("⋮") }
                             DropdownMenu(
                                 expanded = selectionMenuOpen,
                                 onDismissRequest = { selectionMenuOpen = false },
                             ) {
-                                val ordered = selectedForwardMessageIds(state.messages, selectedMessageIds)
-                                val selectedMessages = state.messages.filter { message -> message.id.toLongOrNull()?.let { it in selectedMessageIds } == true }
-                                val canCopy = selectedMessages.isNotEmpty() && selectedMessages.all { it.text.isNotBlank() }
-                                val canDelete = canBulkDeleteMessages(
-                                    selectedMessageCount = selectedMessageIds.size,
-                                    selectedMessages = selectedMessages,
-                                    canDeleteMessages = state.capabilities.canDeleteMessages,
-                                )
                                 DropdownMenuItem(
                                     text = { Text("Копировать") },
-                                    enabled = canCopy,
+                                    enabled = selectionToolbarActions.canCopy,
                                     onClick = {
                                         onCopy(selectedMessageText(state.messages, selectedMessageIds))
                                         selectedMessageIds = emptySet()
                                         isSelectingMessages = false
-                                        selectionMenuOpen = false
-                                    },
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Переслать") },
-                                    enabled = ordered.isNotEmpty() && state.capabilities.canForwardMessages == true,
-                                    onClick = {
-                                        if (state.capabilities.canForwardMessages == true) {
-                                            state.chatId.toLongOrNull()?.let { onForward(it, ordered) }
-                                        }
-                                        selectionMenuOpen = false
-                                    },
-                                )
-                                DropdownMenuItem(
-                                    text = { Text(if (state.deletingMessages) "Удаление…" else "Удалить") },
-                                    enabled = canDelete && !state.deletingMessages,
-                                    onClick = {
-                                        showDeleteConfirmation = true
                                         selectionMenuOpen = false
                                     },
                                 )
