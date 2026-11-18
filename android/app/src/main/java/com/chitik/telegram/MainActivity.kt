@@ -322,6 +322,7 @@ private fun TelegramRustApp(
         state.sessionRestoreComplete,
         state.authorization,
         selectedChatId,
+        incomingLink,
         incomingNotificationRoute,
         showContacts,
         showGlobalMessageSearch,
@@ -334,6 +335,7 @@ private fun TelegramRustApp(
                 selectedChatId = restoredChatId,
                 hasCachedMessages = state.messages.containsKey(restoredChatId),
                 explicitlyLoadedForChat = lastExplicitChatLoadId == restoredChatId,
+                hasPendingLink = incomingLink != null,
             ) && incomingNotificationRoute == null && !showContacts && !showGlobalMessageSearch
         ) {
             markExplicitChatLoad(restoredChatId)

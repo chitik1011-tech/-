@@ -8,9 +8,11 @@ internal fun shouldLoadRestoredSelectedChat(
     selectedChatId: Long,
     hasCachedMessages: Boolean,
     explicitlyLoadedForChat: Boolean,
+    hasPendingLink: Boolean,
 ): Boolean = activityStateRestored &&
     sessionRestoreComplete &&
     authorizationReady &&
     selectedChatId != 0L &&
     !hasCachedMessages &&
-    !explicitlyLoadedForChat
+    !explicitlyLoadedForChat &&
+    !hasPendingLink

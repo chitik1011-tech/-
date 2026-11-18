@@ -15,6 +15,7 @@ class SelectedChatRestorePolicyTest {
                 selectedChatId = -42L,
                 hasCachedMessages = false,
                 explicitlyLoadedForChat = false,
+                hasPendingLink = false,
             ),
         )
     }
@@ -29,6 +30,7 @@ class SelectedChatRestorePolicyTest {
                 selectedChatId = -42L,
                 hasCachedMessages = true,
                 explicitlyLoadedForChat = false,
+                hasPendingLink = false,
             ),
         )
     }
@@ -43,6 +45,7 @@ class SelectedChatRestorePolicyTest {
                 selectedChatId = 42L,
                 hasCachedMessages = false,
                 explicitlyLoadedForChat = false,
+                hasPendingLink = false,
             ),
         )
         assertFalse(
@@ -53,6 +56,7 @@ class SelectedChatRestorePolicyTest {
                 selectedChatId = 42L,
                 hasCachedMessages = false,
                 explicitlyLoadedForChat = false,
+                hasPendingLink = false,
             ),
         )
         assertFalse(
@@ -63,6 +67,7 @@ class SelectedChatRestorePolicyTest {
                 selectedChatId = 42L,
                 hasCachedMessages = false,
                 explicitlyLoadedForChat = false,
+                hasPendingLink = false,
             ),
         )
     }
@@ -77,6 +82,7 @@ class SelectedChatRestorePolicyTest {
                 selectedChatId = 42L,
                 hasCachedMessages = false,
                 explicitlyLoadedForChat = true,
+                hasPendingLink = false,
             ),
         )
         assertFalse(
@@ -87,6 +93,22 @@ class SelectedChatRestorePolicyTest {
                 selectedChatId = 0L,
                 hasCachedMessages = false,
                 explicitlyLoadedForChat = false,
+                hasPendingLink = false,
+            ),
+        )
+    }
+
+    @Test
+    fun pendingDeepLinkSuppressesOldSelectedChatReload() {
+        assertFalse(
+            shouldLoadRestoredSelectedChat(
+                activityStateRestored = true,
+                sessionRestoreComplete = true,
+                authorizationReady = true,
+                selectedChatId = 42L,
+                hasCachedMessages = false,
+                explicitlyLoadedForChat = false,
+                hasPendingLink = true,
             ),
         )
     }
