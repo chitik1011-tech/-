@@ -13,6 +13,7 @@ pub const MAX_MESSAGE_SEARCH_QUERY_BYTES: usize = 4096;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SearchMessagesRequest {
     pub request_id: u64,
+    /// Chat ID to scope the search to. `0` requests an account-wide Telegram search.
     pub chat_id: i64,
     pub query: String,
     /// Exclusive Telegram message-id cursor. None starts from newest matches.
@@ -28,8 +29,13 @@ impl SearchMessagesRequest {
                 "message search request id must be non-zero".into(),
             ));
         }
-        if self.chat_id == 0 {
-            return Err(CoreError::InvalidInput("chat id must be non-zero".into()));
+        if self.chat_id < 0 {
+            return Err(CoreError::InvalidInput("chat id must not be negative".into()));
+        }
+        if self.chat_id == 0 && self.before_message_id.is_some() {
+            return Err(CoreError::InvalidInput(
+                "account-wide message search does not support pagination yet".into(),
+            ));
         }
         let query = self.query.trim();
         if query.is_empty() {

@@ -19,7 +19,12 @@ use tg_mobile_core::{
 };
 use tokio::sync::Mutex;
 
-use crate::{error::api_error, ids::peer_id_to_core, polls::poll_from_message};
+use crate::{
+    chats::PeerRegistry,
+    error::api_error,
+    ids::peer_id_to_core,
+    polls::poll_from_message,
+};
 
 pub(crate) fn message_to_summary(message: &Message) -> MessageSummary {
     let chat_id = peer_id_to_core(message.peer_id());
@@ -564,6 +569,49 @@ pub(crate) async fn search_messages_page(
     }
 
     Ok(finalize_search_page(messages, limit))
+}
+
+/// Search all Telegram dialogs using the real `messages.searchGlobal` MTProto path.
+/// The current Grammers cursor model only exposes `offset_id`, while account-wide
+/// pagination also requires Telegram's offset peer and rate; keep this first page
+/// explicit until a complete cursor contract is available.
+pub(crate) async fn search_all_messages_page(
+    client: &Client,
+    peers: &PeerRegistry,
+    query: &str,
+    limit: usize,
+) -> tg_mobile_core::Result<SearchMessagePage> {
+    let query = query.trim();
+    if query.is_empty() {
+        return Err(CoreError::InvalidInput(
+            "message search query must not be empty".into(),
+        ));
+    }
+
+    let mut iterator = client.search_all_messages().query(query).limit(limit);
+    let mut messages = Vec::with_capacity(limit.min(100));
+    while let Some(message) = iterator
+        .next()
+        .await
+        .map_err(|error| api_error("search all messages", error))?
+    {
+        let peer = message
+            .peer_ref()
+            .await
+            .map_err(|_| CoreError::Backend("could not resolve Telegram search result chat".into()))?
+            .ok_or_else(|| CoreError::Backend("could not resolve Telegram search result chat".into()))?;
+        peers
+            .write()
+            .await
+            .insert(peer_id_to_core(message.peer_id()), peer);
+        messages.push(message_to_summary(&message));
+    }
+
+    Ok(SearchMessagePage {
+        messages,
+        next_before_message_id: None,
+        has_more: false,
+    })
 }
 
 fn finalize_search_page(mut messages: Vec<MessageSummary>, limit: usize) -> SearchMessagePage {
