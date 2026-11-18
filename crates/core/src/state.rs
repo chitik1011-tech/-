@@ -772,16 +772,19 @@ impl CoreState {
                 chat_id,
                 message_id,
                 attachment_index,
+                session_generation,
                 generation,
                 state,
             } => {
-                if self.update_attachment_download_state(
-                    *chat_id,
-                    *message_id,
-                    *attachment_index,
-                    *generation,
-                    state,
-                ) {
+                if *session_generation == self.connection_machine.token().generation().as_u64()
+                    && self.update_attachment_download_state(
+                        *chat_id,
+                        *message_id,
+                        *attachment_index,
+                        *generation,
+                        state,
+                    )
+                {
                     self.last_error = None;
                 }
             }
