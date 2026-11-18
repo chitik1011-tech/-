@@ -24,6 +24,10 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -76,9 +80,7 @@ fun PeerProfileDialog(
 ) {
     val presentation = profile?.toPeerProfilePresentation()
     val context = LocalContext.current
-    var confirmLeave by androidx.compose.runtime.remember(profile?.peerId) {
-        androidx.compose.runtime.mutableStateOf(false)
-    }
+    var confirmLeave by remember(profile?.peerId) { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {

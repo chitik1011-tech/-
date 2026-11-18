@@ -51,6 +51,7 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.chitik.telegram.nativebridge.NativeSessionViewModel
 import com.chitik.telegram.nativebridge.NativeUiState
+import com.chitik.telegram.nativebridge.GlobalMessageSearchResultUi
 import com.chitik.telegram.nativebridge.mediaSendForChat
 import com.chitik.telegram.nativebridge.textSendStatusForChat
 import com.chitik.telegram.notifications.NotificationPermissionRequester
@@ -172,6 +173,7 @@ private fun TelegramRustApp(
     val lifecycleOwner = remember(context) { context.findLifecycleOwner() }
     var selectedChatId by rememberSaveable { mutableLongStateOf(0L) }
     var showContacts by rememberSaveable { mutableStateOf(false) }
+    var showGlobalMessageSearch by rememberSaveable { mutableStateOf(false) }
     var draftsByChatId by rememberSaveable(stateSaver = chatDraftsStateSaver) {
         mutableStateOf(emptyMap<ChatDraftKey, String>())
     }
@@ -409,6 +411,7 @@ private fun TelegramRustApp(
             )) {
             selectedChatId = 0L
             showContacts = false
+            showGlobalMessageSearch = false
             profilePeerId = 0L
             draftsByChatId = emptyMap()
             replyToMessageId = null
@@ -461,6 +464,27 @@ private fun TelegramRustApp(
             },
         )
 
+        showGlobalMessageSearch -> GlobalMessageSearchScreen(
+            state = state.globalMessageSearch,
+            chatTitle = { chatId ->
+                state.chats.firstOrNull { it.id == chatId }?.title ?: "Chat $chatId"
+            },
+            onBack = {
+                showGlobalMessageSearch = false
+                viewModel.clearGlobalMessageSearch()
+            },
+            onSearch = viewModel::searchAllMessages,
+            onOpenResult = { result: GlobalMessageSearchResultUi ->
+                showGlobalMessageSearch = false
+                selectedChatId = result.chatId
+                jumpToMessageId = result.messageId.toString()
+                replyToMessageId = null
+                replyToPreview = null
+                viewModel.loadMessagesBefore(result.chatId, result.messageId + 1L)
+                viewModel.loadPinnedMessages(result.chatId)
+            },
+        )
+
         selectedChatId == 0L && showContacts -> ContactsScreen(
             contacts = state.contacts,
             total = state.contactTotal,
@@ -499,10 +523,14 @@ private fun TelegramRustApp(
                 showContacts = true
                 viewModel.loadContacts(offset = 0)
             },
+            onOpenMessageSearch = {
+                showGlobalMessageSearch = true
+            },
             onLogout = {
                 onDismissNotification()
                 selectedChatId = 0L
                 showContacts = false
+                showGlobalMessageSearch = false
                 draftsByChatId = emptyMap()
                 replyToMessageId = null
                 replyToPreview = null
