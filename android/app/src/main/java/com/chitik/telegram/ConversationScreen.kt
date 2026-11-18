@@ -1944,6 +1944,9 @@ private fun ComposerBar(
                     if (showLocationAction) {
                         TextButton(
                             onClick = onSendLocation,
+                            modifier = Modifier.semantics {
+                                contentDescription = composerLocationActionAccessibilityLabel()
+                            },
                             enabled = !sending && canSend && canSendMedia,
                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 12.dp),
                         ) {
@@ -1954,6 +1957,12 @@ private fun ComposerBar(
                         Box {
                             TextButton(
                                 onClick = { attachmentMenuExpanded = true },
+                                modifier = Modifier.semantics {
+                                    contentDescription = composerAttachmentActionAccessibilityLabel(
+                                        hasPhotoVideoPicker = onPickPhotoOrVideo != null,
+                                        hasDocumentPicker = onPickDocument != null,
+                                    )
+                                },
                                 enabled = !sending && canSend,
                                 contentPadding = PaddingValues(horizontal = 8.dp, vertical = 12.dp),
                             ) {
@@ -2041,7 +2050,15 @@ private fun ComposerBar(
                         Button(
                             onClick = onSend,
                             enabled = canSubmit,
-                            modifier = if (sendLabel == "Отправить") Modifier.size(48.dp) else Modifier,
+                            modifier = if (sendLabel == "Отправить") {
+                                Modifier
+                                    .size(48.dp)
+                                    .semantics {
+                                        contentDescription = composerSendActionAccessibilityLabel(sending)
+                                    }
+                            } else {
+                                Modifier
+                            },
                             shape = CircleShape,
                             contentPadding = PaddingValues(0.dp),
                         ) {
