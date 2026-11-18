@@ -1319,36 +1319,26 @@ private fun PollContent(
     Spacer(Modifier.height(6.dp))
 
     poll.options.forEach { option ->
-        val checked = if (poll.multipleChoice) {
-            option.optionId in selected
-        } else {
-            option.chosen
-        }
+        val checked = option.optionId in selected
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(enabled = enabled) {
+                    selected = selectPollOption(selected, option.optionId, poll.multipleChoice)
+                },
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (poll.multipleChoice) {
                 Checkbox(
                     checked = checked,
                     enabled = enabled,
-                    onCheckedChange = { value ->
-                        selected = selected.toMutableSet().apply {
-                            if (value) {
-                                add(option.optionId)
-                            } else {
-                                remove(option.optionId)
-                            }
-                        }
-                    },
+                    onCheckedChange = null,
                 )
             } else {
                 RadioButton(
                     selected = checked,
                     enabled = enabled,
-                    onClick = {
-                        if (enabled) onVote(listOf(option.optionId))
-                    },
+                    onClick = null,
                 )
             }
 
@@ -1386,7 +1376,7 @@ private fun PollContent(
         }
     }
 
-    if (poll.multipleChoice && !poll.closed) {
+    if (!poll.closed) {
         Spacer(Modifier.height(4.dp))
         Button(
             onClick = { onVote(selected.toList()) },
@@ -1399,7 +1389,7 @@ private fun PollContent(
                     strokeWidth = 2.dp,
                 )
             } else {
-                Text("Отправить голос")
+                Text(if (poll.quiz) "Отправить ответ" else "Голосовать")
             }
         }
     } else if (loading) {
@@ -1451,6 +1441,18 @@ private fun optionStatus(option: ConversationPollOptionUi): String? = when {
     option.chosen && option.correct == false -> "✕"
     option.chosen -> "Выбрано"
     else -> null
+}
+
+internal fun selectPollOption(
+    selected: Set<List<Int>>,
+    optionId: List<Int>,
+    multipleChoice: Boolean,
+): Set<List<Int>> = if (!multipleChoice) {
+    setOf(optionId)
+} else if (optionId in selected) {
+    selected.filterNot { it == optionId }.toSet()
+} else {
+    selected + setOf(optionId)
 }
 
 internal fun pollPercent(voterCount: Int?, totalVoters: Int?): Int? {
