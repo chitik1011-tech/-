@@ -13,12 +13,17 @@ import androidx.compose.ui.unit.dp
  * these tokens only control Compose appearance.
  */
 object TelegramUiTokens {
-    val avatar = 54.dp
+    val avatar = 56.dp
     val contactAvatar = 50.dp
-    val chatRowHeight = 76.dp
+    val chatRowHeight = 72.dp
     val horizontalInset = 12.dp
     val rowGap = 12.dp
-    val dividerInset = 78.dp
+    val dividerInset = 80.dp
+    val chatRowVerticalInset = 8.dp
+    val chatSearchInset = 12.dp
+    val chatSearchHeight = 48.dp
+    val chatSearchCorner = 24.dp
+    val chatSearchHorizontalInset = 16.dp
     val messageCorner = 16.dp
     val messageTailCorner = 5.dp
     val composerCorner = 24.dp
@@ -46,10 +51,10 @@ private val telegramLight = lightColorScheme(
 private val telegramDark = darkColorScheme(
     primary = Color(0xFF70B5F5),
     onPrimary = Color(0xFF102A40),
-    primaryContainer = Color(0xFF315A40),
-    onPrimaryContainer = Color(0xFFE8F4E5),
+    primaryContainer = Color(0xFF2B5278),
+    onPrimaryContainer = Color.White,
     secondary = Color(0xFF70B5F5),
-    secondaryContainer = Color(0xFF283D4C),
+    secondaryContainer = Color(0xFF2B5278),
     onSecondaryContainer = Color(0xFFE4EDF2),
     background = Color(0xFF17212B),
     onBackground = Color(0xFFF1F3F5),
