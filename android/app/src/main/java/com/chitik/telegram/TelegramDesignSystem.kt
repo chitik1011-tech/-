@@ -7,6 +7,7 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 
 /**
  * Telegram-style presentation tokens. The backend owns all chat/session data;
@@ -27,9 +28,10 @@ object TelegramUiTokens {
     val chatSearchHeight = 48.dp
     val chatSearchCorner = 24.dp
     val chatSearchHorizontalInset = 16.dp
-    val messageCorner = 16.dp
+    val messageCorner = 17.dp
     val messageTailCorner = 5.dp
-    val composerCorner = 24.dp
+    val composerMinHeight = 44.dp
+    val composerTextSize = 18.sp
     val iconTouchTarget = 48.dp
     val animationShortMs = 160
     val animationMediumMs = 240

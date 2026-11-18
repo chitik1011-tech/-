@@ -17,7 +17,9 @@ class TelegramDesignSystemTest {
     }
 
     @Test fun messageBubbleHasDistinctTailCorner() {
+        assertTrue(TelegramUiTokens.messageCorner.value == 17f)
         assertTrue(TelegramUiTokens.messageCorner.value > TelegramUiTokens.messageTailCorner.value)
-        assertTrue(TelegramUiTokens.composerCorner.value > TelegramUiTokens.messageCorner.value)
+        assertTrue(TelegramUiTokens.composerMinHeight.value == 44f)
+        assertTrue(TelegramUiTokens.composerTextSize.value == 18f)
     }
 }

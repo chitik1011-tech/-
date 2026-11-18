@@ -32,4 +32,18 @@ object MessageTimestampFormatter {
             }
         }.getOrDefault("")
     }
+
+    /** Returns a localized date label for grouping adjacent conversation messages. */
+    fun formatDateSeparator(
+        timestampUnixSeconds: Long,
+        zoneId: ZoneId = ZoneId.systemDefault(),
+        locale: Locale = Locale.getDefault(),
+    ): String {
+        if (timestampUnixSeconds <= 0L) return ""
+
+        return runCatching {
+            val date = Instant.ofEpochSecond(timestampUnixSeconds).atZone(zoneId).toLocalDate()
+            DateTimeFormatter.ofPattern("d MMM yyyy", locale).format(date)
+        }.getOrDefault("")
+    }
 }

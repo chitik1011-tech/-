@@ -21,8 +21,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -38,7 +39,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -70,6 +70,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import androidx.lifecycle.Lifecycle
@@ -135,6 +137,7 @@ data class ConversationMessageUi(
     val chatId: String,
     val text: String,
     val timestamp: String,
+    val dateSeparator: String = "",
     val isOutgoing: Boolean,
     val attachments: List<MediaAttachmentUi> = emptyList(),
     val isRead: Boolean = false,
@@ -808,10 +811,14 @@ fun ConversationScreen(
                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 16.dp),
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            items(
+                            itemsIndexed(
                                 items = state.messages,
-                                key = { message -> "${message.chatId}:${message.id}" },
-                            ) { message ->
+                                key = { _, message -> "${message.chatId}:${message.id}" },
+                            ) { index, message ->
+                                val previousDate = state.messages.getOrNull(index - 1)?.dateSeparator
+                                if (message.dateSeparator.isNotBlank() && message.dateSeparator != previousDate) {
+                                    ConversationDateSeparator(message.dateSeparator)
+                                }
                                 MessageBubble(
                                     message = message,
                                     voicePlaybackCoordinator = voicePlaybackCoordinator,
@@ -1020,6 +1027,27 @@ fun ConversationScreen(
                 TextButton(onClick = { showDeleteConfirmation = false }) { Text("Отмена") }
             },
         )
+    }
+}
+
+@Composable
+private fun ConversationDateSeparator(label: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+        horizontalArrangement = Arrangement.Center,
+    ) {
+        Surface(
+            shape = RoundedCornerShape(14.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.92f),
+            contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+        ) {
+            Text(
+                text = label,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
+                style = MaterialTheme.typography.labelMedium,
+                textAlign = TextAlign.Center,
+            )
+        }
     }
 }
 
@@ -1947,22 +1975,47 @@ private fun ComposerBar(
                             }
                         }
                     }
-                    OutlinedTextField(
-                        value = draft,
-                        onValueChange = onDraftChange,
-                        modifier = Modifier.weight(1f),
-                        placeholder = { Text(placeholder) },
-                        enabled = !sending,
-                        maxLines = 6,
-                        shape = RoundedCornerShape(TelegramUiTokens.composerCorner),
-                        keyboardOptions = KeyboardOptions(
-                            keyboardType = KeyboardType.Text,
-                            imeAction = ImeAction.Send,
-                        ),
-                        keyboardActions = KeyboardActions(
-                            onSend = { if (canSubmit) onSend() },
-                        ),
-                    )
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .heightIn(min = TelegramUiTokens.composerMinHeight),
+                        contentAlignment = Alignment.CenterStart,
+                    ) {
+                        if (draft.isEmpty()) {
+                            Text(
+                                text = placeholder,
+                                modifier = Modifier.padding(horizontal = 2.dp, vertical = 9.dp),
+                                style = MaterialTheme.typography.bodyLarge.copy(
+                                    fontSize = TelegramUiTokens.composerTextSize,
+                                ),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        BasicTextField(
+                            value = draft,
+                            onValueChange = onDraftChange,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 9.dp)
+                                .heightIn(min = 26.dp),
+                            enabled = !sending,
+                            textStyle = MaterialTheme.typography.bodyLarge.copy(
+                                fontSize = TelegramUiTokens.composerTextSize,
+                                color = MaterialTheme.colorScheme.onSurface,
+                            ),
+                            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                            maxLines = 6,
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = KeyboardType.Text,
+                                imeAction = ImeAction.Send,
+                            ),
+                            keyboardActions = KeyboardActions(
+                                onSend = { if (canSubmit) onSend() },
+                            ),
+                        )
+                    }
                     onCancel?.let { cancel -> TextButton(onClick = cancel, enabled = !sending) { Text("Отмена") } }
                     if (draft.isBlank() && canSendMedia && onStartVoiceRecording != null && sendLabel == "Отправить") {
                         androidx.compose.material3.IconButton(
