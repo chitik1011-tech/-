@@ -29,11 +29,6 @@ impl SearchMessagesRequest {
                 "message search request id must be non-zero".into(),
             ));
         }
-        if self.chat_id < 0 {
-            return Err(CoreError::InvalidInput(
-                "chat id must not be negative".into(),
-            ));
-        }
         if self.chat_id == 0 && self.before_message_id.is_some() {
             return Err(CoreError::InvalidInput(
                 "account-wide message search does not support pagination yet".into(),

@@ -78,13 +78,18 @@ fn search_command_is_additive_and_validates_input() {
     .validate()
     .is_ok());
 
+    for chat_id in [-42, -1_000_000_042] {
+        assert!(SearchMessagesRequest {
+            chat_id,
+            ..valid.clone()
+        }
+        .validate()
+        .is_ok());
+    }
+
     let invalid = [
         SearchMessagesRequest {
             request_id: 0,
-            ..valid.clone()
-        },
-        SearchMessagesRequest {
-            chat_id: -7,
             ..valid.clone()
         },
         SearchMessagesRequest {
