@@ -39,6 +39,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.mapSaver
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -152,6 +153,11 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+private val chatDraftsStateSaver = mapSaver(
+    save = { drafts -> saveChatDrafts(drafts) },
+    restore = { saved -> restoreChatDrafts(saved) },
+)
+
 @Composable
 private fun TelegramRustApp(
     incomingLink: TelegramLinkIntent?,
@@ -168,7 +174,19 @@ private fun TelegramRustApp(
     var selectedChatId by rememberSaveable { mutableLongStateOf(0L) }
     var showContacts by rememberSaveable { mutableStateOf(false) }
     var showGlobalMessageSearch by rememberSaveable { mutableStateOf(false) }
-    var draft by rememberSaveable { mutableStateOf("") }
+    var draftsByChatId by rememberSaveable(stateSaver = chatDraftsStateSaver) {
+        mutableStateOf(emptyMap<ChatDraftKey, String>())
+    }
+    val draftAccountUserId = state.accountUserId ?: 0L
+    LaunchedEffect(state.accountIdentityResolved, state.accountUserId) {
+        if (state.accountIdentityResolved && state.accountUserId != null && state.accountUserId != 0L) {
+            draftsByChatId = draftsForAccount(draftsByChatId, draftAccountUserId)
+        }
+    }
+    val draft = draftForChat(draftsByChatId, draftAccountUserId, selectedChatId)
+    fun setCurrentDraft(text: String) {
+        draftsByChatId = updateDraftForChat(draftsByChatId, draftAccountUserId, selectedChatId, text)
+    }
     var lastRestoredFailureId by rememberSaveable { mutableLongStateOf(0L) }
     var replyToMessageId by rememberSaveable { mutableStateOf<Long?>(null) }
     var replyToPreview by rememberSaveable { mutableStateOf<String?>(null) }
@@ -273,10 +291,13 @@ private fun TelegramRustApp(
     }
     val queuePickedMedia: (Uri?) -> Unit = { uri ->
         val chatId = selectedChatId
+        val accountUserId = draftAccountUserId
         val caption = draft
         if (uri != null && chatId != 0L) {
             viewModel.sendMediaFromUri(chatId, uri, caption) { accepted ->
-                if (accepted && selectedChatId == chatId && draft == caption) draft = ""
+                if (accepted && draftForChat(draftsByChatId, accountUserId, chatId) == caption) {
+                    draftsByChatId = updateDraftForChat(draftsByChatId, accountUserId, chatId, "")
+                }
             }
         }
     }
@@ -341,7 +362,7 @@ private fun TelegramRustApp(
         val failedId = state.failedTextSendId
         if (failedId != null && failedId != lastRestoredFailureId &&
             selectedChatId == state.outbox[failedId]?.chatId) {
-            if (draft.isBlank()) draft = state.failedTextSendText.orEmpty()
+            if (draft.isBlank()) setCurrentDraft(state.failedTextSendText.orEmpty())
             lastRestoredFailureId = failedId
         }
     }
@@ -392,7 +413,7 @@ private fun TelegramRustApp(
             showContacts = false
             showGlobalMessageSearch = false
             profilePeerId = 0L
-            draft = ""
+            draftsByChatId = emptyMap()
             replyToMessageId = null
             replyToPreview = null
             jumpToMessageId = null
@@ -493,7 +514,7 @@ private fun TelegramRustApp(
                 selectedChatId = 0L
                 showContacts = false
                 showGlobalMessageSearch = false
-                draft = ""
+                draftsByChatId = emptyMap()
                 replyToMessageId = null
                 replyToPreview = null
                 jumpToMessageId = null
@@ -591,12 +612,11 @@ private fun TelegramRustApp(
                 ),
                 onBack = {
                     selectedChatId = 0L
-                    draft = ""
                     replyToMessageId = null
                     replyToPreview = null
                     jumpToMessageId = null
                 },
-                onDraftChange = { draft = it },
+                onDraftChange = ::setCurrentDraft,
                 onReplyMessage = { message ->
                     replyToMessageId = message.id.toLongOrNull()
                     replyToPreview = message.text.takeIf(String::isNotBlank)
@@ -639,12 +659,12 @@ private fun TelegramRustApp(
                         val target = replyToMessageId
                         if (target != null) {
                             if (viewModel.replyMessage(numericChatId, target, text)) {
-                                draft = ""
+                                setCurrentDraft("")
                                 replyToMessageId = null
                                 replyToPreview = null
                             }
                         } else if (viewModel.sendText(numericChatId, text)) {
-                            draft = ""
+                            setCurrentDraft("")
                         }
                     }
                 },
