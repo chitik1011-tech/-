@@ -106,6 +106,30 @@ fn attach_download_target(
     Some(active)
 }
 
+/// Detach one attachment from a shared download without stopping the transfer
+/// while another attachment still depends on it. Returns true when the target
+/// was detached and the shared transfer should continue.
+fn detach_shared_download_target(
+    active: &ActiveMediaTask,
+    key: (i64, i64, usize),
+) -> Result<bool, &'static str> {
+    let mut targets = active
+        .targets
+        .lock()
+        .map_err(|_| "media download target registry lock was poisoned")?;
+    let target_index = targets
+        .iter()
+        .position(|target| (target.chat_id, target.message_id, target.attachment_index) == key);
+    let Some(target_index) = target_index else {
+        return Ok(false);
+    };
+    if targets.len() <= 1 {
+        return Ok(false);
+    }
+    targets.remove(target_index);
+    Ok(true)
+}
+
 #[derive(Debug, Clone)]
 struct ReliableSendRecord {
     chat_id: i64,
@@ -862,6 +886,31 @@ impl GrammersBackend {
             return Ok(Vec::new());
         };
         let reference = active.reference.clone();
+        // A single Telegram media object can be attached to several messages.
+        // Cancelling one attachment should detach that subscriber while the
+        // shared cache download continues for the remaining attachments.
+        if detach_shared_download_target(&active, key)
+            .map_err(|error| CoreError::Backend(error.into()))?
+        {
+            self.media_tasks.remove(&key);
+            let snapshot = self
+                .transfers
+                .get_by_key(TransferDirection::Download, &reference)
+                .map_err(|error| CoreError::Backend(error.to_string()))?
+                .ok_or_else(|| CoreError::Backend("shared media transfer disappeared".into()))?;
+            let target = MediaTarget {
+                chat_id,
+                message_id,
+                attachment_index,
+                reference,
+                total_bytes: snapshot.total_bytes,
+            };
+            return Ok(vec![media_event(
+                &target,
+                snapshot.token.generation,
+                AttachmentDownloadState::Cancelled,
+            )]);
+        }
         let Some(cancelled) = cancel_download_transfer(&self.transfers, &reference)
             .map_err(|error| CoreError::Backend(error.to_string()))?
         else {
@@ -1831,7 +1880,9 @@ mod shared_media_download_tests {
         sync::{Arc, Mutex},
     };
 
-    use super::{ActiveMediaTask, MediaTarget, attach_download_target};
+    use super::{
+        ActiveMediaTask, MediaTarget, attach_download_target, detach_shared_download_target,
+    };
     use tg_mobile_core::{DownloadState, TransferDirection, TransferManager, TransferState};
 
     #[tokio::test]
@@ -1885,6 +1936,45 @@ mod shared_media_download_tests {
             snapshot.state,
             TransferState::Download(DownloadState::Downloading)
         );
+        worker.abort();
+    }
+
+    #[tokio::test]
+    async fn cancelling_one_shared_attachment_detaches_only_that_target() {
+        let first = MediaTarget {
+            chat_id: 4,
+            message_id: 10,
+            attachment_index: 0,
+            reference: "shared-media".into(),
+            total_bytes: Some(5),
+        };
+        let second = MediaTarget {
+            chat_id: 4,
+            message_id: 11,
+            attachment_index: 0,
+            reference: "shared-media".into(),
+            total_bytes: Some(5),
+        };
+        let targets = Arc::new(Mutex::new(vec![first, second]));
+        let worker = tokio::spawn(std::future::pending::<()>());
+        let active = ActiveMediaTask {
+            reference: "shared-media".into(),
+            targets: Arc::clone(&targets),
+            handle: worker.abort_handle(),
+        };
+        let mut tasks = HashMap::from([((4, 10, 0), active.clone()), ((4, 11, 0), active.clone())]);
+
+        assert!(detach_shared_download_target(&active, (4, 10, 0)).unwrap());
+        tasks.remove(&(4, 10, 0));
+        assert_eq!(tasks.len(), 1);
+        assert!(!active.handle.is_finished());
+        let remaining = targets.lock().unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].message_id, 11);
+        drop(remaining);
+
+        assert!(!detach_shared_download_target(&active, (4, 11, 0)).unwrap());
+        assert_eq!(targets.lock().unwrap().len(), 1);
         worker.abort();
     }
 }
