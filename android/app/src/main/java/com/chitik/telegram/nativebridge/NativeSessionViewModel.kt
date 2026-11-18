@@ -96,6 +96,7 @@ data class NativeUiState(
     val contactsLoading: Boolean = false,
     val chatCapabilities: Map<Long, ChatCapabilitiesUi> = emptyMap(),
     val messages: Map<Long, List<ConversationMessageUi>> = emptyMap(),
+    val globalMessageSearch: GlobalMessageSearchUiState = GlobalMessageSearchUiState(),
     val chatActivities: Map<Long, Map<Long, ChatActivityUi>> = emptyMap(),
     val latestChatActivityGeneration: Long = 0L,
     val pendingReactionKeys: Set<String> = emptySet(),
@@ -324,6 +325,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
     @Volatile
     private var restartHandleAfterLogout = false
     private var authorizationRetryJob: Job? = null
+    private var nextGlobalMessageSearchRequestId = 0L
 
     init {
         restoreAuthorizationFloodWait()
@@ -506,6 +508,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 accountUserId = null,
                 accountIdentityResolved = false,
                 loginCodeDeliveryMethod = null,
+                globalMessageSearch = GlobalMessageSearchUiState(),
                 sessionRestoreComplete = false,
             )
         }
@@ -780,6 +783,38 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 )
             }
         }
+    }
+
+    fun searchAllMessages(query: String) {
+        val normalizedQuery = query.trim()
+        if (normalizedQuery.isEmpty()) return
+        val requestId = ++nextGlobalMessageSearchRequestId
+        _state.update {
+            it.copy(
+                globalMessageSearch = GlobalMessageSearchUiState(
+                    requestId = requestId,
+                    query = normalizedQuery,
+                    loading = true,
+                ),
+            )
+        }
+        if (!sendCommand(globalMessageSearchCommand(requestId, normalizedQuery))) {
+            _state.update { current ->
+                if (current.globalMessageSearch.requestId == requestId) {
+                    current.copy(
+                        globalMessageSearch = current.globalMessageSearch.copy(
+                            loading = false,
+                            error = current.error ?: "Could not search Telegram messages",
+                        ),
+                    )
+                } else current
+            }
+        }
+    }
+
+    fun clearGlobalMessageSearch() {
+        nextGlobalMessageSearchRequestId += 1
+        _state.update { it.copy(globalMessageSearch = GlobalMessageSearchUiState()) }
     }
 
     fun toggleMessagePin(chatId: Long, messageId: Long, isPinned: Boolean) {
@@ -1678,6 +1713,41 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                     markRead(chatId, maxMessageId)
                 }
             }
+            "message_search_completed" -> {
+                val result = parseGlobalMessageSearchResults(payload)
+                if (result != null) {
+                    val (requestId, messages) = result
+                    _state.update { current ->
+                        if (current.globalMessageSearch.requestId != requestId) current
+                        else current.copy(
+                            globalMessageSearch = current.globalMessageSearch.copy(
+                                loading = false,
+                                results = messages,
+                                error = null,
+                            ),
+                            lastEventType = type,
+                            lastEventPayload = "",
+                        )
+                    }
+                }
+            }
+            "message_search_failed" -> {
+                val failure = parseGlobalMessageSearchFailure(payload)
+                if (failure != null) {
+                    val (requestId, error) = failure
+                    _state.update { current ->
+                        if (current.globalMessageSearch.requestId != requestId) current
+                        else current.copy(
+                            globalMessageSearch = current.globalMessageSearch.copy(
+                                loading = false,
+                                error = error,
+                            ),
+                            lastEventType = type,
+                            lastEventPayload = "",
+                        )
+                    }
+                }
+            }
             "poll_updated" -> {
                 val pollId = parsePollEventId(payload)
                 _state.update {
@@ -2077,6 +2147,11 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 activeTextSendText = if (authorization == AuthorizationUiStep.Ready) current.activeTextSendText else null,
                 textSendError = if (authorization == AuthorizationUiStep.Ready) current.textSendError else null,
                 authorization = authorization,
+                globalMessageSearch = if (authorization == AuthorizationUiStep.Ready) {
+                    current.globalMessageSearch
+                } else {
+                    GlobalMessageSearchUiState()
+                },
                 accountUserId = if (authorization == AuthorizationUiStep.Ready) {
                     current.accountUserId
                 } else {

@@ -38,8 +38,8 @@ use crate::{
     error::{TelegramBackendError, api_error, session_error},
     messages::{
         MessageDeduplicator, load_messages, load_messages_page, load_pinned_message_ids, mark_read,
-        message_to_summary, search_messages_page, send_location, send_reply, send_text,
-        send_text_idempotent,
+        message_to_summary, search_all_messages_page, search_messages_page, send_location,
+        send_reply, send_text, send_text_idempotent,
     },
     polls::{
         PollRegistry, clear_poll_registry, new_poll_registry, poll_by_id, polls_from_updates,
@@ -1430,17 +1430,27 @@ impl GrammersBackend {
             }
             CoreCommand::SearchMessages(request) => {
                 self.require_ready().await?;
-                let peer = find_peer(&self.peers, request.chat_id)
-                    .await
-                    .ok_or(TelegramBackendError::UnknownChat(request.chat_id))?;
-                let mut page = search_messages_page(
-                    &self.client,
-                    peer,
-                    &request.query,
-                    request.before_message_id,
-                    request.limit,
-                )
-                .await?;
+                let mut page = if request.chat_id == 0 {
+                    search_all_messages_page(
+                        &self.client,
+                        &self.peers,
+                        &request.query,
+                        request.limit,
+                    )
+                    .await?
+                } else {
+                    let peer = find_peer(&self.peers, request.chat_id)
+                        .await
+                        .ok_or(TelegramBackendError::UnknownChat(request.chat_id))?;
+                    search_messages_page(
+                        &self.client,
+                        peer,
+                        &request.query,
+                        request.before_message_id,
+                        request.limit,
+                    )
+                    .await?
+                };
                 self.hydrate_cached_media(&mut page.messages);
 
                 vec![CoreEvent::MessageSearchCompleted(
