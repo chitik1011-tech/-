@@ -997,8 +997,9 @@ impl GrammersBackend {
         let command_events = match command {
             CoreCommand::Start => {
                 let state = with_initial_connection_timeout(self.auth.start(&self.client)).await?;
+                let is_ready = state == AuthorizationState::Ready;
                 let events = self.session_authorization_events(state).await;
-                if state == AuthorizationState::Ready {
+                if is_ready {
                     self.ensure_update_worker().await?;
                 }
                 events
@@ -1022,8 +1023,9 @@ impl GrammersBackend {
                 let previous_state = self.auth.state();
                 match self.auth.submit_code(&self.client, code).await {
                     Ok(state) => {
+                        let is_ready = state == AuthorizationState::Ready;
                         let events = self.session_authorization_events(state).await;
-                        if state == AuthorizationState::Ready {
+                        if is_ready {
                             self.ensure_update_worker().await?;
                         }
                         events
@@ -1038,8 +1040,9 @@ impl GrammersBackend {
                 let previous_state = self.auth.state();
                 match self.auth.submit_password(&self.client, password).await {
                     Ok(state) => {
+                        let is_ready = state == AuthorizationState::Ready;
                         let events = self.session_authorization_events(state).await;
-                        if state == AuthorizationState::Ready {
+                        if is_ready {
                             self.ensure_update_worker().await?;
                         }
                         events
