@@ -390,6 +390,7 @@ private fun TelegramRustApp(
             state = AuthorizationUiState(
                 authorization = state.authorization,
                 loginCodeDeliveryMethod = state.loginCodeDeliveryMethod,
+                retryRemainingSeconds = state.authorizationRetryRemainingSeconds,
                 isTelegramConfigured = state.telegramConfigured,
                 isLoading = state.busy,
                 error = state.error,

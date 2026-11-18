@@ -5,4 +5,10 @@ internal fun canSubmitAuthorizationInput(
     currentStep: AuthorizationUiStep,
     expectedStep: AuthorizationUiStep,
     isLoading: Boolean,
-): Boolean = !isLoading && currentStep == expectedStep
+    retryAfterSeconds: Int = 0,
+): Boolean = authorizationInputEnabled(isLoading, retryAfterSeconds) && currentStep == expectedStep
+
+internal fun authorizationInputEnabled(
+    isLoading: Boolean,
+    retryAfterSeconds: Int,
+): Boolean = !isLoading && retryAfterSeconds <= 0
