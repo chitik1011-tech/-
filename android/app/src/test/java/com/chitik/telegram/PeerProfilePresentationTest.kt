@@ -125,6 +125,8 @@ class PeerProfilePresentationTest {
         username = username,
         bio = bio,
         memberCount = memberCount,
+        members = null,
+        membersTruncated = false,
         presence = presence,
         isBot = isBot,
         isVerified = isVerified,

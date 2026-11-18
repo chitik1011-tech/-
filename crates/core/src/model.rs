@@ -820,6 +820,13 @@ pub struct PeerProfile {
     pub is_fake: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub member_count: Option<u32>,
+    /// A bounded snapshot of participants returned by Telegram, when visible.
+    /// `None` means the backend did not expose a list for this peer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub members: Option<Vec<ChatMemberSummary>>,
+    /// True when Telegram returned more participants than the profile preview cap.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub members_truncated: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bio: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -848,11 +855,24 @@ impl PeerProfile {
             can_post_messages: None,
             is_fake: None,
             member_count: None,
+            members: None,
+            members_truncated: false,
             bio: None,
             avatar: None,
             presence: PeerPresence::Unknown,
         }
     }
+}
+
+/// Participant data Telegram made visible in a group or channel profile.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChatMemberSummary {
+    pub user_id: i64,
+    pub display_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+    /// `member`, `admin`, or `owner`, derived from Telegram's participant role.
+    pub role: String,
 }
 
 impl Default for AccountState {

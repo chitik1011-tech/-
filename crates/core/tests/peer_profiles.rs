@@ -1,6 +1,6 @@
 use tg_mobile_core::{
-    decode_command, encode_event, CoreCommand, CoreEvent, CoreState, PeerKind, PeerPresence,
-    PeerProfile, MAX_CACHED_PROFILES,
+    decode_command, encode_event, ChatMemberSummary, CoreCommand, CoreEvent, CoreState, PeerKind,
+    PeerPresence, PeerProfile, MAX_CACHED_PROFILES,
 };
 
 fn profile() -> PeerProfile {
@@ -17,6 +17,13 @@ fn profile() -> PeerProfile {
         is_fake: None,
         is_premium: Some(false),
         member_count: None,
+        members: Some(vec![ChatMemberSummary {
+            user_id: 42,
+            display_name: "Ada Example".into(),
+            username: Some("ada".into()),
+            role: "admin".into(),
+        }]),
+        members_truncated: false,
         bio: Some("Telegram supplied bio".into()),
         avatar: None,
         presence: PeerPresence::Online,
@@ -77,4 +84,33 @@ fn old_snapshots_load_with_empty_profile_map() {
     let old = r#"{"running":true,"account":{"authorization":"Closed","chats":[]},"messages":{},"last_error":null}"#;
     let state: CoreState = serde_json::from_str(old).unwrap();
     assert!(state.profiles.is_empty());
+}
+
+#[test]
+fn legacy_profile_json_defaults_member_snapshot_to_unavailable() {
+    let json = r#"{
+        "peer_id": -10,
+        "kind": "supergroup",
+        "display_name": "Example",
+        "presence": {"status": "unknown"}
+    }"#;
+    let profile: PeerProfile = serde_json::from_str(json).unwrap();
+    assert_eq!(profile.members, None);
+    assert!(!profile.members_truncated);
+}
+
+#[test]
+fn profile_event_round_trips_member_role_and_username() {
+    let event = CoreEvent::ProfileUpdated(profile());
+    let json = encode_event(&event).unwrap();
+    let decoded: CoreEvent = serde_json::from_str(&json).unwrap();
+    assert_eq!(decoded, event);
+    let profile = match decoded {
+        CoreEvent::ProfileUpdated(profile) => profile,
+        other => panic!("unexpected event: {other:?}"),
+    };
+    let member = &profile.members.as_ref().unwrap()[0];
+    assert_eq!(member.user_id, 42);
+    assert_eq!(member.username.as_deref(), Some("ada"));
+    assert_eq!(member.role, "admin");
 }
