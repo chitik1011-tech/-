@@ -104,17 +104,27 @@ fn auth_rpc_error(context: &'static str, error: grammers_client::sender::RpcErro
 }
 
 fn safe_rpc_name(name: &str) -> String {
-    let name: String = name
-        .chars()
-        .filter(|character| {
-            character.is_ascii_uppercase() || character.is_ascii_digit() || *character == '_'
-        })
-        .take(80)
-        .collect();
-    if name.is_empty() {
+    let mut safe = String::new();
+    let mut previous_was_separator = true;
+    for character in name.chars() {
+        if character.is_ascii_uppercase() || character.is_ascii_digit() {
+            safe.push(character);
+            previous_was_separator = false;
+        } else if !previous_was_separator {
+            safe.push('_');
+            previous_was_separator = true;
+        }
+        if safe.len() == 80 {
+            break;
+        }
+    }
+    while safe.ends_with('_') {
+        safe.pop();
+    }
+    if safe.is_empty() {
         "UNKNOWN".into()
     } else {
-        name
+        safe
     }
 }
 
