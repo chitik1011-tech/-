@@ -1555,7 +1555,7 @@ private fun PhotoAttachmentCard(
         if (file != null && !decodeFailed) {
             AsyncImage(
                 model = file,
-                contentDescription = "Фото",
+                contentDescription = mediaAttachmentOpenAccessibilityLabel(attachment),
                 contentScale = ContentScale.Crop,
                 onSuccess = { decodeFailed = false },
                 onError = { decodeFailed = true },
