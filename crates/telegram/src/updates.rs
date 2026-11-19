@@ -55,7 +55,7 @@ pub enum TelegramUpdate {
         pts: i32,
     },
     ContactsRefreshRequested,
-    ChatUnreadChanged {
+    ChatUnreadMarkChanged {
         chat_id: i64,
         unread: bool,
     },
@@ -129,8 +129,8 @@ impl TelegramUpdate {
                 revision: *revision,
             }),
             Self::ContactsRefreshRequested => Some(CoreEvent::ContactsRefreshRequested),
-            Self::ChatUnreadChanged { chat_id, unread } => {
-                Some(CoreEvent::ChatUnreadChanged {
+            Self::ChatUnreadMarkChanged { chat_id, unread } => {
+                Some(CoreEvent::ChatUnreadMarkChanged {
                     chat_id: *chat_id,
                     unread: *unread,
                 })
@@ -1021,7 +1021,7 @@ fn map_raw_dialog_unread_mark(
     }
 
     let chat_id = raw_peer_to_core(&dialog_peer.peer);
-    (chat_id != 0).then_some(TelegramUpdate::ChatUnreadChanged {
+    (chat_id != 0).then_some(TelegramUpdate::ChatUnreadMarkChanged {
         chat_id,
         unread: update.unread,
     })
@@ -1337,14 +1337,14 @@ mod tests {
         let mapped = map_raw_dialog_unread_mark(&update);
         assert_eq!(
             mapped,
-            Some(TelegramUpdate::ChatUnreadChanged {
+            Some(TelegramUpdate::ChatUnreadMarkChanged {
                 chat_id: 77,
                 unread: true,
             })
         );
         assert_eq!(
             mapped.and_then(|event| event.to_core_event()),
-            Some(CoreEvent::ChatUnreadChanged {
+            Some(CoreEvent::ChatUnreadMarkChanged {
                 chat_id: 77,
                 unread: true,
             })
