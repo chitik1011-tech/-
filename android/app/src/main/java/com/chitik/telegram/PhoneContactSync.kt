@@ -51,7 +51,11 @@ internal fun readPhoneContacts(context: Context): List<PhoneContactInput> {
 
 internal fun normalizeE164Candidate(rawNumber: String, formattedE164: String?): String? {
     val raw = rawNumber.trim()
-    val fallback = raw.takeIf { it.startsWith("+") }?.let { value ->
+    val fallback = raw.takeIf {
+        it.startsWith("+") && it.drop(1).all { char ->
+            char in '0'..'9' || char.isWhitespace() || char in "-()."
+        }
+    }?.let { value ->
         "+" + value.drop(1).filter { it in '0'..'9' }
     }
     val candidate = formattedE164 ?: fallback ?: return null
@@ -76,7 +80,7 @@ private fun phoneNumberRegion(context: Context): String {
     val network = runCatching { telephony?.networkCountryIso }.getOrNull().orEmpty()
     val sim = runCatching { telephony?.simCountryIso }.getOrNull().orEmpty()
     return sequenceOf(network, sim, Locale.getDefault().country)
-        .map(String::trim)
+        .map { it.trim() }
         .firstOrNull { it.length == 2 }
         ?.uppercase(Locale.ROOT)
         .orEmpty()
