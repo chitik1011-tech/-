@@ -577,6 +577,12 @@ impl CoreState {
                 self.last_error = Some(error.clone());
             }
             CoreEvent::ContactsRefreshRequested => {}
+            CoreEvent::ContactsImported { .. } => {
+                self.last_error = None;
+            }
+            CoreEvent::ContactsImportFailed { error } => {
+                self.last_error = Some(error.clone());
+            }
             CoreEvent::MessagesLoaded { chat_id, messages } => {
                 self.merge_messages(*chat_id, messages);
                 self.last_error = None;
