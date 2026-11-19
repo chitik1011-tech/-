@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -7,9 +7,50 @@ use crate::error::{CoreError, Result};
 /// Maximum number of contacts returned by one paginated list request.
 pub const MAX_CONTACT_PAGE_LIMIT: usize = 100;
 pub const MAX_CONTACT_SEARCH_QUERY_BYTES: usize = 256;
+pub const MAX_PHONE_CONTACT_IMPORT: usize = 5_000;
+const MAX_PHONE_CONTACT_NAME_CHARS: usize = 64;
 const MAX_DISPLAY_NAME_CHARS: usize = 256;
 const MIN_USERNAME_CHARS: usize = 5;
 const MAX_USERNAME_CHARS: usize = 32;
+
+/// A phone contact explicitly selected by the user for Telegram import.
+/// This is command-only data and is never stored in the persistent Contact model.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PhoneContactInput {
+    pub client_id: i64,
+    pub phone: String,
+    pub first_name: String,
+    pub last_name: String,
+}
+
+pub fn validate_phone_contact_import(contacts: &[PhoneContactInput]) -> Result<()> {
+    if contacts.is_empty() || contacts.len() > MAX_PHONE_CONTACT_IMPORT {
+        return Err(CoreError::InvalidInput(format!(
+            "phone contact import must contain between 1 and {MAX_PHONE_CONTACT_IMPORT} contacts"
+        )));
+    }
+
+    let mut client_ids = BTreeSet::new();
+    let mut phone_numbers = BTreeSet::new();
+    for contact in contacts {
+        let digits = contact.phone.strip_prefix('+').unwrap_or_default();
+        if contact.client_id <= 0
+            || !(7..=15).contains(&digits.len())
+            || !digits.bytes().all(|byte| byte.is_ascii_digit())
+            || digits.starts_with('0')
+            || !client_ids.insert(contact.client_id)
+            || !phone_numbers.insert(contact.phone.clone())
+            || contact.first_name.trim().is_empty()
+            || contact.first_name.chars().count() > MAX_PHONE_CONTACT_NAME_CHARS
+            || contact.last_name.chars().count() > MAX_PHONE_CONTACT_NAME_CHARS
+        {
+            return Err(CoreError::InvalidInput(
+                "phone contact import contains an invalid or duplicate entry".into(),
+            ));
+        }
+    }
+    Ok(())
+}
 
 /// A Telegram user known to the account. Phone numbers are deliberately not part
 /// of this model; callers should use the stable user ID to refer to a contact.
@@ -186,6 +227,30 @@ mod tests {
             is_bot: false,
             avatar_photo_id: None,
         }
+    }
+
+    #[test]
+    fn phone_contact_import_requires_unique_e164_contacts() {
+        let contacts = vec![PhoneContactInput {
+            client_id: 1,
+            phone: "+12025550123".into(),
+            first_name: "Ada".into(),
+            last_name: "Lovelace".into(),
+        }];
+        assert!(validate_phone_contact_import(&contacts).is_ok());
+
+        let mut invalid = contacts.clone();
+        invalid[0].phone = "2025550123".into();
+        assert!(validate_phone_contact_import(&invalid).is_err());
+
+        let duplicate = vec![contacts[0].clone(), PhoneContactInput {
+            client_id: 2,
+            phone: "+12025550123".into(),
+            first_name: "Augusta".into(),
+            last_name: "".into(),
+        }];
+        assert!(validate_phone_contact_import(&duplicate).is_err());
+        assert!(validate_phone_contact_import(&[]).is_err());
     }
 
     #[test]
