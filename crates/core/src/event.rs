@@ -85,6 +85,14 @@ pub enum CoreEvent {
     },
     /// Telegram invalidated its local contact snapshot; the client should reload it.
     ContactsRefreshRequested,
+    /// The user explicitly imported phone contacts into Telegram.
+    ContactsImported {
+        imported_count: usize,
+        retry_count: usize,
+    },
+    ContactsImportFailed {
+        error: String,
+    },
     MessagesLoaded {
         chat_id: i64,
         messages: Vec<MessageSummary>,
@@ -288,6 +296,8 @@ impl CoreEvent {
             Self::ContactsLoadStarted { .. } => "contacts_load_started",
             Self::ContactsLoadFailed { .. } => "contacts_load_failed",
             Self::ContactsRefreshRequested => "contacts_refresh_requested",
+            Self::ContactsImported { .. } => "contacts_imported",
+            Self::ContactsImportFailed { .. } => "contacts_import_failed",
             Self::MessagesLoaded { .. } => "messages_loaded",
             Self::MessagesPageLoading { .. } => "messages_page_loading",
             Self::MessagesPageLoaded { .. } => "messages_page_loaded",
