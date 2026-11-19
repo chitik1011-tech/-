@@ -1,6 +1,6 @@
 use tg_mobile_core::{
     decode_command, encode_event, encode_state, Contact, CoreCommand, CoreEvent, CoreState,
-    JsonFileStateStore, StateStore, MAX_CONTACT_PAGE_LIMIT,
+    JsonFileStateStore, PhoneContactInput, StateStore, MAX_CONTACT_PAGE_LIMIT,
 };
 
 fn contact(user_id: i64, display_name: &str) -> Contact {
@@ -81,6 +81,24 @@ fn load_contacts_command_round_trips_through_the_canonical_wire() {
     }
     .validate()
     .is_err());
+}
+
+#[test]
+fn phone_contact_import_command_is_validated_and_not_persisted() {
+    let command = CoreCommand::ImportContacts {
+        contacts: vec![PhoneContactInput {
+            client_id: 1,
+            phone: "+12025550123".into(),
+            first_name: "Ada".into(),
+            last_name: "Lovelace".into(),
+        }],
+    };
+    let json = serde_json::to_string(&command).unwrap();
+    assert_eq!(decode_command(&json).unwrap(), command);
+    assert!(CoreCommand::ImportContacts { contacts: vec![] }.validate().is_err());
+
+    let state_json = encode_state(&CoreState::default()).unwrap();
+    assert!(!state_json.contains("+12025550123"));
 }
 
 #[test]
