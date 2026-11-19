@@ -57,6 +57,18 @@ class ChatListRowPresentationTest {
     }
 
     @Test
+    fun manualUnreadMarkHasSeparateAccessibleIndicator() {
+        val marked = chat(isUnread = true, lastMessage = null)
+            .toChatListRowPresentation(now, ZoneOffset.UTC, Locale.US)
+        assertEquals("Marked unread", marked.markedUnreadLabel)
+        assertTrue(marked.accessibilityLabel.contains("Marked unread"))
+
+        val unmarked = chat(lastMessage = null)
+            .toChatListRowPresentation(now, ZoneOffset.UTC, Locale.US)
+        assertNull(unmarked.markedUnreadLabel)
+    }
+
+    @Test
     fun outgoingPreviewAddsOnlyTheAvailableSentCheck() {
         val row = chat(
             lastMessage = ChatListPreview("Got it", now.epochSecond, true),
@@ -87,6 +99,7 @@ class ChatListRowPresentationTest {
         unreadCount: Long = 0,
         unreadMentionsCount: Long? = null,
         unreadReactionsCount: Long? = null,
+        isUnread: Boolean? = null,
         lastMessage: ChatListPreview?,
     ) = ChatListEntry(
         id = 45,
@@ -95,5 +108,6 @@ class ChatListRowPresentationTest {
         lastMessage = lastMessage,
         unreadMentionsCount = unreadMentionsCount,
         unreadReactionsCount = unreadReactionsCount,
+        isUnread = isUnread,
     )
 }
