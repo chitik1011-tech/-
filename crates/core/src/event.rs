@@ -155,6 +155,11 @@ pub enum CoreEvent {
         chat_id: i64,
         unread: bool,
     },
+    /// Telegram changed the manual unread mark without necessarily reading messages.
+    ChatUnreadMarkChanged {
+        chat_id: i64,
+        unread: bool,
+    },
     MessageEdited(MessageSummary),
     /// A user requested message mutation failed at the backend; this is an ephemeral UI error.
     MessageMutationSucceeded {
@@ -282,6 +287,7 @@ impl CoreEvent {
             Self::ChatMuted { .. } => "chat_muted",
             Self::ChatPinned { .. } => "chat_pinned",
             Self::ChatUnreadChanged { .. } => "chat_unread_changed",
+            Self::ChatUnreadMarkChanged { .. } => "chat_unread_mark_changed",
             Self::MessageEdited(_) => "message_edited",
             Self::MessageMutationSucceeded { .. } => "message_mutation_succeeded",
             Self::MessageMutationFailed { .. } => "message_mutation_failed",
