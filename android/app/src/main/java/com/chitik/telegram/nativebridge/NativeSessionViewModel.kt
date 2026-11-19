@@ -6,6 +6,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.chitik.telegram.AuthorizationUiStep
 import com.chitik.telegram.LoginCodeDeliveryMethod
+import com.chitik.telegram.MAX_PHONE_CONTACT_IMPORT
 import com.chitik.telegram.authorizationFloodWaitMessage
 import com.chitik.telegram.authorizationFloodWaitSeconds
 import com.chitik.telegram.canSubmitAuthorizationInput
@@ -928,7 +929,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
     }
 
     fun importPhoneContacts(contacts: List<PhoneContactInput>): Boolean {
-        if (contacts.isEmpty() || contacts.size > 5_000 || _state.value.contactsImporting) return false
+        if (contacts.isEmpty() || contacts.size > MAX_PHONE_CONTACT_IMPORT || _state.value.contactsImporting) return false
         _state.update {
             it.copy(
                 contactsImporting = true,
