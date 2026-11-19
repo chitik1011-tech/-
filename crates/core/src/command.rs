@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     chat_pagination::{MAX_CHAT_CURSOR_BYTES, MAX_CHAT_PAGE_LIMIT},
-    contacts::validate_contact_page,
+    contacts::{validate_contact_page, validate_contact_search},
     error::{CoreError, Result},
     peer::parse_peer_reference,
     search::SearchMessagesRequest,
@@ -44,6 +44,12 @@ pub enum CoreCommand {
     LoadContacts {
         offset: usize,
         limit: usize,
+        /// Optional server-side username discovery query; missing preserves the list contract.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        query: Option<String>,
+        /// Correlates asynchronous loads so a late page cannot replace newer results.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        request_id: Option<u64>,
     },
     LoadMessages {
         chat_id: i64,
@@ -313,7 +319,34 @@ impl CoreCommand {
                     Ok(())
                 }
             }
-            Self::LoadContacts { limit, .. } => validate_contact_page(*limit),
+            Self::LoadContacts {
+                offset,
+                limit,
+                query,
+                request_id,
+            } => {
+                validate_contact_page(*limit)?;
+                if request_id.is_some_and(|id| id == 0) {
+                    return Err(CoreError::InvalidInput(
+                        "contact request id must be non-zero".into(),
+                    ));
+                }
+                if let Some(query) = query {
+                    if *offset != 0 {
+                        return Err(CoreError::InvalidInput(
+                            "contact search does not support pagination".into(),
+                        ));
+                    }
+                    if request_id.is_none() {
+                        return Err(CoreError::InvalidInput(
+                            "contact search requires a request id".into(),
+                        ));
+                    }
+                    validate_contact_search(query, *limit)
+                } else {
+                    Ok(())
+                }
+            }
             Self::LoadMessages { chat_id, limit } => {
                 validate_chat_id(*chat_id)?;
                 validate_limit("message load", *limit, MAX_MESSAGE_LOAD_LIMIT)
