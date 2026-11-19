@@ -129,10 +129,12 @@ impl TelegramUpdate {
                 revision: *revision,
             }),
             Self::ContactsRefreshRequested => Some(CoreEvent::ContactsRefreshRequested),
-            Self::ChatUnreadMarkChanged { chat_id, unread } => Some(CoreEvent::ChatUnreadMarkChanged {
-                chat_id: *chat_id,
-                unread: *unread,
-            }),
+            Self::ChatUnreadMarkChanged { chat_id, unread } => {
+                Some(CoreEvent::ChatUnreadMarkChanged {
+                    chat_id: *chat_id,
+                    unread: *unread,
+                })
+            }
             Self::ReadReceiptUpdated {
                 chat_id,
                 direction,
