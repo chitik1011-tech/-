@@ -38,6 +38,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.mapSaver
 import androidx.compose.runtime.setValue
@@ -49,6 +50,10 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.core.content.ContextCompat
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import com.chitik.telegram.nativebridge.NativeSessionViewModel
 import com.chitik.telegram.nativebridge.NativeUiState
 import com.chitik.telegram.nativebridge.GlobalMessageSearchResultUi
@@ -191,6 +196,44 @@ private fun TelegramRustApp(
     val state by viewModel.state.collectAsState()
     val context = LocalContext.current
     val lifecycleOwner = remember(context) { context.findLifecycleOwner() }
+    val contactSyncScope = rememberCoroutineScope()
+    val importPhoneContacts: () -> Unit = {
+        contactSyncScope.launch {
+            val contacts = runCatching {
+                withContext(Dispatchers.IO) { readPhoneContacts(context) }
+            }.getOrElse {
+                Toast.makeText(context, "Could not read phone contacts.", Toast.LENGTH_LONG).show()
+                return@launch
+            }
+            if (contacts.isEmpty()) {
+                Toast.makeText(
+                    context,
+                    "No contacts with valid international phone numbers were found.",
+                    Toast.LENGTH_LONG,
+                ).show()
+            } else if (!viewModel.importPhoneContacts(contacts)) {
+                Toast.makeText(context, "Phone contact import could not be started.", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+    val phoneContactsPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) {
+            importPhoneContacts()
+        } else {
+            Toast.makeText(context, "Contacts permission was not granted.", Toast.LENGTH_LONG).show()
+        }
+    }
+    val requestPhoneContactSync: () -> Unit = {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) ==
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            importPhoneContacts()
+        } else {
+            phoneContactsPermissionLauncher.launch(Manifest.permission.READ_CONTACTS)
+        }
+    }
     var selectedChatId by rememberSaveable { mutableLongStateOf(0L) }
     var lastExplicitChatLoadId by remember(state.accountUserId) { mutableStateOf<Long?>(null) }
     var showContacts by rememberSaveable { mutableStateOf(false) }
@@ -555,6 +598,9 @@ private fun TelegramRustApp(
             onSearchTelegram = { query -> viewModel.loadContacts(offset = 0, query = query) },
             onClearTelegramSearch = { viewModel.loadContacts(offset = 0) },
             searchingQuery = state.contactsSearchQuery,
+            isImportingContacts = state.contactsImporting,
+            contactsImportSummary = state.contactsImportSummary,
+            onSyncPhoneContacts = requestPhoneContactSync,
             onContactSelected = { contact ->
                 selectedChatId = contact.userId
                 replyToMessageId = null
