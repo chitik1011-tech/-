@@ -1651,16 +1651,16 @@ mod tests {
         assert_eq!(
             TelegramUpdate::ReadReceiptUpdated {
                 chat_id: 77,
-                direction: ReadDirection::Outbox,
+                direction: ReadDirection::Inbox,
                 max_message_id: 42,
-                unread_count: None
+                unread_count: Some(5),
             }
             .to_core_event(),
             Some(CoreEvent::ReadReceiptUpdated {
                 chat_id: 77,
-                direction: ReadDirection::Outbox,
+                direction: ReadDirection::Inbox,
                 max_message_id: 42,
-                unread_count: None
+                unread_count: Some(5),
             })
         );
         assert_eq!(
