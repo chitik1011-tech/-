@@ -775,6 +775,9 @@ impl CoreState {
                     }
                 });
             }
+            CoreEvent::ChatUnreadMarkChanged { chat_id, unread } => {
+                self.update_chat_action(*chat_id, |chat| chat.is_unread = Some(*unread));
+            }
             CoreEvent::ChatLeft { chat_id } => {
                 self.account.chats.retain(|chat| chat.id != *chat_id);
                 self.chat_capabilities.remove(chat_id);
