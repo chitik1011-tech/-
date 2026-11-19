@@ -1350,7 +1350,6 @@ mod tests {
         topic_update.saved_peer_id =
             Some(tl::enums::Peer::User(tl::types::PeerUser { user_id: 88 }));
         assert!(map_raw_dialog_unread_mark(&topic_update).is_none());
-
     }
 
     #[test]
