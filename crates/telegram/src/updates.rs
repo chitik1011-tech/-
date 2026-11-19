@@ -1008,17 +1008,14 @@ fn map_raw_dialog_unread_mark(
 
     // This is the manual unread flag, not the message unread count; the core
     // reducer keeps those states separate.
-    // Topic-scoped marks (including monoforum saved peers) cannot be represented
-    // by the current chat-level CoreState. Do not accidentally mark the parent chat.
+    // Monoforum topic marks carry a saved_peer_id and cannot be represented
+    // by the current chat-level CoreState. Do not mark the parent chat instead.
     if update.saved_peer_id.is_some() {
         return None;
     }
     let tl::enums::DialogPeer::Peer(dialog_peer) = &update.peer else {
         return None;
     };
-    if dialog_peer.top_msg_id != 0 {
-        return None;
-    }
 
     let chat_id = raw_peer_to_core(&dialog_peer.peer);
     (chat_id != 0).then_some(TelegramUpdate::ChatUnreadMarkChanged {
@@ -1330,7 +1327,6 @@ mod tests {
             unread: true,
             peer: tl::enums::DialogPeer::Peer(tl::types::DialogPeer {
                 peer: tl::enums::Peer::User(tl::types::PeerUser { user_id: 77 }),
-                top_msg_id: 0,
             }),
             saved_peer_id: None,
         };
@@ -1355,11 +1351,6 @@ mod tests {
             Some(tl::enums::Peer::User(tl::types::PeerUser { user_id: 88 }));
         assert!(map_raw_dialog_unread_mark(&topic_update).is_none());
 
-        let mut forum_topic_update = update;
-        if let tl::enums::DialogPeer::Peer(dialog_peer) = &mut forum_topic_update.peer {
-            dialog_peer.top_msg_id = 123;
-        }
-        assert!(map_raw_dialog_unread_mark(&forum_topic_update).is_none());
     }
 
     #[test]
