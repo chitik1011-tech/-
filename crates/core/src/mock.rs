@@ -172,6 +172,11 @@ impl MockTelegramBackend {
             CoreCommand::LoadContacts { .. } => Err(CoreError::Backend(
                 "contacts are unavailable in the mock backend".into(),
             )),
+            CoreCommand::ImportContacts { .. } => Ok(vec![
+                CoreEvent::ContactsImportFailed {
+                    error: "contacts are unavailable in the mock backend".into(),
+                },
+            ]),
             CoreCommand::LoadMessages { chat_id, limit } => {
                 let mut messages = self
                     .chats
