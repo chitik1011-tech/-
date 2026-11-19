@@ -1540,6 +1540,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 it.copy(
                     busy = false,
                     contactsLoading = false,
+                    contactsImporting = false,
                     error = message,
                 )
             }
@@ -2290,6 +2291,8 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 contacts = if (loggedOut) emptyList() else current.contacts,
                 contactTotal = if (loggedOut) 0 else current.contactTotal,
                 contactsLoading = false,
+                contactsImporting = false,
+                contactsImportSummary = if (loggedOut) null else current.contactsImportSummary,
                 contactsSearchQuery = if (loggedOut) null else current.contactsSearchQuery,
                 chatCapabilities = if (loggedOut) emptyMap() else current.chatCapabilities,
                 messages = if (loggedOut) emptyMap() else current.messages,
@@ -2475,6 +2478,8 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                     outbox = parsed.outbox,
                     busy = false,
                     contactsLoading = false,
+                    contactsImporting = it.contactsImporting,
+                    contactsImportSummary = it.contactsImportSummary,
                     lastEventType = "state",
                     lastEventPayload = payloadWithoutPrivateState(payload),
                     error = null,
