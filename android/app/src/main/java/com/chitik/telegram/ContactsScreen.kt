@@ -157,7 +157,8 @@ fun ContactsScreen(
                 text = {
                     Text(
                         "Names and phone numbers from this device will be uploaded to Telegram " +
-                            "to find matching users. Nothing is uploaded until you confirm.",
+                            "to find matching users. Only numbers that can be normalized to " +
+                            "international format are included. Nothing is uploaded until you confirm.",
                     )
                 },
                 confirmButton = {
