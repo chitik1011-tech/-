@@ -35,7 +35,7 @@ use crate::{
         PeerRegistry, clear_peer_registry, find_peer, forget_peer, load_chats, new_peer_registry,
     },
     config::TelegramConfig,
-    contacts::{load_contacts, search_contacts},
+    contacts::{import_phone_contacts, load_contacts, search_contacts},
     downloads::{MediaTarget, event as media_event, spawn_download, state_from_snapshot},
     error::{TelegramBackendError, api_error, session_error},
     messages::{
@@ -1249,6 +1249,26 @@ impl GrammersBackend {
                     .map_err(|error| crate::error::api_error("leave group or channel", error))?;
                 forget_peer(&self.peers, chat_id).await;
                 vec![CoreEvent::ChatLeft { chat_id }]
+            }
+            CoreCommand::ImportContacts { contacts } => {
+                if let Err(error) = self.require_ready().await {
+                    vec![CoreEvent::ContactsImportFailed {
+                        error: error.to_string(),
+                    }]
+                } else {
+                    match import_phone_contacts(&self.client, &contacts).await {
+                        Ok((imported_count, retry_count)) => vec![
+                            CoreEvent::ContactsImported {
+                                imported_count,
+                                retry_count,
+                            },
+                            CoreEvent::ContactsRefreshRequested,
+                        ],
+                        Err(error) => vec![CoreEvent::ContactsImportFailed {
+                            error: error.to_string(),
+                        }],
+                    }
+                }
             }
             CoreCommand::LoadContacts {
                 offset,
