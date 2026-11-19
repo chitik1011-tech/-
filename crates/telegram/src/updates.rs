@@ -55,6 +55,10 @@ pub enum TelegramUpdate {
         pts: i32,
     },
     ContactsRefreshRequested,
+    ChatUnreadChanged {
+        chat_id: i64,
+        unread: bool,
+    },
     ChatChanged {
         chat_id: i64,
     },
@@ -125,6 +129,12 @@ impl TelegramUpdate {
                 revision: *revision,
             }),
             Self::ContactsRefreshRequested => Some(CoreEvent::ContactsRefreshRequested),
+            Self::ChatUnreadChanged { chat_id, unread } => {
+                Some(CoreEvent::ChatUnreadChanged {
+                    chat_id: *chat_id,
+                    unread: *unread,
+                })
+            }
             Self::ReadReceiptUpdated {
                 chat_id,
                 direction,
@@ -938,6 +948,11 @@ async fn map_update(
                 }])
             }
             tl::enums::Update::ContactsReset => Ok(vec![TelegramUpdate::ContactsRefreshRequested]),
+            tl::enums::Update::DialogUnreadMark(update) => {
+                Ok(map_raw_dialog_unread_mark(update)
+                    .into_iter()
+                    .collect())
+            }
             tl::enums::Update::ReadHistoryInbox(update) => {
                 Ok(vec![TelegramUpdate::ReadReceiptUpdated {
                     chat_id: raw_peer_to_core(&update.peer),
@@ -986,6 +1001,30 @@ async fn message_added_if_new(
         .should_emit(&message)
         .await
         .then_some(TelegramUpdate::MessageAdded(message))
+}
+
+fn map_raw_dialog_unread_mark(
+    update: &grammers_client::tl::types::UpdateDialogUnreadMark,
+) -> Option<TelegramUpdate> {
+    use grammers_client::tl;
+
+    // Topic-scoped marks (including monoforum saved peers) cannot be represented
+    // by the current chat-level CoreState. Do not accidentally mark the parent chat.
+    if update.saved_peer_id.is_some() {
+        return None;
+    }
+    let tl::enums::DialogPeer::Peer(dialog_peer) = &update.peer else {
+        return None;
+    };
+    if dialog_peer.top_msg_id != 0 {
+        return None;
+    }
+
+    let chat_id = raw_peer_to_core(&dialog_peer.peer);
+    (chat_id != 0).then_some(TelegramUpdate::ChatUnreadChanged {
+        chat_id,
+        unread: update.unread,
+    })
 }
 
 fn map_raw_pinned_update(update: &grammers_client::tl::enums::Update) -> Option<TelegramUpdate> {
@@ -1279,6 +1318,46 @@ mod tests {
             action: tl::enums::SendMessageAction::SendMessageTypingAction,
         });
         assert!(map_raw_activity_update(&malformed, &mut generations).is_none());
+    }
+
+    #[test]
+    fn dialog_unread_mark_updates_only_map_chat_level_peers() {
+        use grammers_client::tl;
+
+        let update = tl::types::UpdateDialogUnreadMark {
+            unread: true,
+            peer: tl::enums::DialogPeer::Peer(tl::types::DialogPeer {
+                peer: tl::enums::Peer::User(tl::types::PeerUser { user_id: 77 }),
+                top_msg_id: 0,
+            }),
+            saved_peer_id: None,
+        };
+        let mapped = map_raw_dialog_unread_mark(&update);
+        assert_eq!(
+            mapped,
+            Some(TelegramUpdate::ChatUnreadChanged {
+                chat_id: 77,
+                unread: true,
+            })
+        );
+        assert_eq!(
+            mapped.and_then(|event| event.to_core_event()),
+            Some(CoreEvent::ChatUnreadChanged {
+                chat_id: 77,
+                unread: true,
+            })
+        );
+
+        let mut topic_update = update.clone();
+        topic_update.saved_peer_id =
+            Some(tl::enums::Peer::User(tl::types::PeerUser { user_id: 88 }));
+        assert!(map_raw_dialog_unread_mark(&topic_update).is_none());
+
+        let mut forum_topic_update = update;
+        if let tl::enums::DialogPeer::Peer(dialog_peer) = &mut forum_topic_update.peer {
+            dialog_peer.top_msg_id = 123;
+        }
+        assert!(map_raw_dialog_unread_mark(&forum_topic_update).is_none());
     }
 
     #[test]
