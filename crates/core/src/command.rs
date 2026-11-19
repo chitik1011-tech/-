@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     chat_pagination::{MAX_CHAT_CURSOR_BYTES, MAX_CHAT_PAGE_LIMIT},
-    contacts::{validate_contact_page, validate_contact_search},
+    contacts::{validate_contact_page, validate_contact_search, validate_phone_contact_import, PhoneContactInput},
     error::{CoreError, Result},
     peer::parse_peer_reference,
     search::SearchMessagesRequest,
@@ -41,6 +41,10 @@ pub enum CoreCommand {
         chat_id: i64,
     },
     /// Load one page from the authenticated account's Telegram contacts.
+    /// Import phone contacts explicitly selected by the Android user.
+    ImportContacts {
+        contacts: Vec<PhoneContactInput>,
+    },
     LoadContacts {
         offset: usize,
         limit: usize,
@@ -231,6 +235,7 @@ impl CoreCommand {
             Self::LoadProfile { .. } => "load_profile",
             Self::LeaveChat { .. } => "leave_chat",
             Self::LoadContacts { .. } => "load_contacts",
+            Self::ImportContacts { .. } => "import_contacts",
             Self::LoadMessages { .. } => "load_messages",
             Self::LoadMessagesPage { .. } => "load_messages_page",
             Self::LoadPinnedMessages { .. } => "load_pinned_messages",
@@ -319,6 +324,7 @@ impl CoreCommand {
                     Ok(())
                 }
             }
+            Self::ImportContacts { contacts } => validate_phone_contact_import(contacts),
             Self::LoadContacts {
                 offset,
                 limit,
