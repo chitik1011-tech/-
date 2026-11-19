@@ -2457,6 +2457,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                     unreadCount = chat.optLong("unread_count", 0L),
                     unreadMentionsCount = chat.unreadCounterOrNull("unread_mentions_count"),
                     unreadReactionsCount = chat.unreadCounterOrNull("unread_reactions_count"),
+                    isUnread = chat.opt("is_unread") as? Boolean,
                     lastMessage = lastMessage?.let {
                         ChatListPreview(
                             text = it.optString("text"),
