@@ -335,7 +335,7 @@ private fun TelegramRustApp(
                 sessionRestoreComplete = state.sessionRestoreComplete,
                 authorizationReady = state.authorization == AuthorizationUiStep.Ready,
                 selectedChatId = restoredChatId,
-                hasCachedMessages = state.messages[restoredChatId]?.isNotEmpty() == true,
+                hasCachedMessages = state.messages.containsKey(restoredChatId),
                 explicitlyLoadedForChat = lastExplicitChatLoadId == restoredChatId,
                 hasPendingLink = incomingLink != null,
             ) && incomingNotificationRoute == null && !showContacts && !showGlobalMessageSearch
