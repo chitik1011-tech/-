@@ -40,6 +40,7 @@ data class ContactListEntry(
     val displayName: String,
     val username: String?,
     val isMutual: Boolean,
+    val isContact: Boolean = true,
     val isBot: Boolean = false,
     val avatarPhotoId: Long? = null,
 )
@@ -53,6 +54,9 @@ fun ContactsScreen(
     onBack: () -> Unit,
     onRefresh: () -> Unit,
     onLoadMore: () -> Unit,
+    onSearchTelegram: (String) -> Unit,
+    onClearTelegramSearch: () -> Unit,
+    searchingQuery: String?,
     onContactSelected: (ContactListEntry) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -98,8 +102,32 @@ fun ContactsScreen(
             label = { Text("Search loaded contacts") },
             placeholder = { Text("Name or username") },
         )
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            OutlinedButton(
+                onClick = { onSearchTelegram(searchQuery.trim()) },
+                enabled = !isLoading &&
+                    searchQuery.trim().codePointCount(0, searchQuery.trim().length) >= 2,
+            ) { Text("Search Telegram") }
+            if (searchingQuery != null) {
+                TextButton(
+                    onClick = {
+                        searchQuery = ""
+                        onClearTelegramSearch()
+                    },
+                    enabled = !isLoading,
+                ) { Text("Show contacts") }
+            }
+        }
         Text(
-            "Search applies to contacts loaded so far.",
+            if (searchingQuery == null) {
+                "Search applies to contacts loaded so far. Search Telegram to find users by username."
+            } else {
+                "Telegram user results for: $searchingQuery"
+            },
             style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.padding(horizontal = 16.dp),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -149,7 +177,12 @@ fun ContactsScreen(
                     Spacer(Modifier.width(TelegramUiTokens.rowGap))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(contact.displayName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                        val subtitle = if (contact.isBot) "bot" else contact.username?.let { "@$it" }
+                        val subtitle = when {
+                            !contact.isContact -> contact.username?.let { "Telegram user · @$it" }
+                                ?: "Telegram user"
+                            contact.isBot -> "bot"
+                            else -> contact.username?.let { "@$it" }
+                        }
                         subtitle?.let {
                             Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
