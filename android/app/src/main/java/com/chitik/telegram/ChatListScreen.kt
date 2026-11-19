@@ -34,6 +34,7 @@ import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberDrawerState
@@ -75,6 +76,7 @@ data class ChatListEntry(
     val capabilities: ChatCapabilitiesUi = ChatCapabilitiesUi(),
     val unreadMentionsCount: Long? = null,
     val unreadReactionsCount: Long? = null,
+    val isUnread: Boolean? = null,
 )
 
 data class ChatListPreview(
@@ -444,6 +446,14 @@ private fun ChatListRow(chat: ChatListEntry, selected: Boolean, onClick: () -> U
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+                if (presentation.markedUnreadLabel != null) {
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .background(MaterialTheme.colorScheme.primary, CircleShape),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                }
                 if (presentation.unreadLabel != null) {
                     Spacer(Modifier.width(8.dp))
                     UnreadCounterBadge(count = chat.unreadCount)
