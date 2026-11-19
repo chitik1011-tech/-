@@ -129,12 +129,10 @@ impl TelegramUpdate {
                 revision: *revision,
             }),
             Self::ContactsRefreshRequested => Some(CoreEvent::ContactsRefreshRequested),
-            Self::ChatUnreadMarkChanged { chat_id, unread } => {
-                Some(CoreEvent::ChatUnreadMarkChanged {
-                    chat_id: *chat_id,
-                    unread: *unread,
-                })
-            }
+            Self::ChatUnreadMarkChanged { chat_id, unread } => Some(CoreEvent::ChatUnreadMarkChanged {
+                chat_id: *chat_id,
+                unread: *unread,
+            }),
             Self::ReadReceiptUpdated {
                 chat_id,
                 direction,
@@ -949,9 +947,7 @@ async fn map_update(
             }
             tl::enums::Update::ContactsReset => Ok(vec![TelegramUpdate::ContactsRefreshRequested]),
             tl::enums::Update::DialogUnreadMark(update) => {
-                Ok(map_raw_dialog_unread_mark(update)
-                    .into_iter()
-                    .collect())
+                Ok(map_raw_dialog_unread_mark(update).into_iter().collect())
             }
             tl::enums::Update::ReadHistoryInbox(update) => {
                 Ok(vec![TelegramUpdate::ReadReceiptUpdated {
