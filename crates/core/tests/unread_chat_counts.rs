@@ -63,6 +63,7 @@ fn a_read_receipt_does_not_clear_server_reported_counters() {
         chat_id: 7,
         direction: tg_mobile_core::ReadDirection::Inbox,
         max_message_id: 100,
+        unread_count: None,
     });
 
     let summary = state.chat(7).unwrap();

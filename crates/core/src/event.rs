@@ -120,6 +120,9 @@ pub enum CoreEvent {
         chat_id: i64,
         direction: crate::model::ReadDirection,
         max_message_id: i64,
+        /// Absolute unread message count reported by Telegram for inbox receipts.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        unread_count: Option<u32>,
     },
     MessageSearchStarted(SearchMessagesRequest),
     MessageSearchCompleted(MessageSearchPage),
