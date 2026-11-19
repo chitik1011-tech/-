@@ -63,6 +63,13 @@ import org.json.JSONArray
 import org.json.JSONObject
 import android.os.SystemClock
 
+data class PhoneContactInput(
+    val clientId: Long,
+    val phone: String,
+    val firstName: String,
+    val lastName: String,
+)
+
 data class VoiceRecordingUiState(
     val chatId: Long? = null,
     val durationMs: Long = 0L,
@@ -94,6 +101,8 @@ data class NativeUiState(
     val contacts: List<ContactListEntry> = emptyList(),
     val contactTotal: Int = 0,
     val contactsLoading: Boolean = false,
+    val contactsImporting: Boolean = false,
+    val contactsImportSummary: String? = null,
     val contactsRequestId: Long? = null,
     val contactsSearchQuery: String? = null,
     val chatCapabilities: Map<Long, ChatCapabilitiesUi> = emptyMap(),
@@ -916,6 +925,41 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         if (!accepted) _state.update {
             if (it.contactsRequestId == requestId) it.copy(contactsLoading = false) else it
         }
+    }
+
+    fun importPhoneContacts(contacts: List<PhoneContactInput>): Boolean {
+        if (contacts.isEmpty() || contacts.size > 5_000 || _state.value.contactsImporting) return false
+        _state.update {
+            it.copy(
+                contactsImporting = true,
+                contactsImportSummary = null,
+                error = null,
+            )
+        }
+        val payload = JSONObject().put(
+            "contacts",
+            JSONArray().apply {
+                contacts.forEach { contact ->
+                    put(
+                        JSONObject()
+                            .put("client_id", contact.clientId)
+                            .put("phone", contact.phone)
+                            .put("first_name", contact.firstName)
+                            .put("last_name", contact.lastName),
+                    )
+                }
+            },
+        )
+        val accepted = sendCommand(
+            JSONObject()
+                .put("type", "import_contacts")
+                .put("payload", payload)
+                .toString(),
+        )
+        if (!accepted) {
+            _state.update { it.copy(contactsImporting = false) }
+        }
+        return accepted
     }
 
     fun replyMessage(chatId: Long, replyToMessageId: Long, text: String): Boolean {
@@ -1789,6 +1833,40 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                     loadContacts(offset = request.offset, limit = request.limit)
                 }
             }
+            "contacts_imported" -> {
+                val result = runCatching {
+                    JSONObject(payload).optJSONObject("payload")
+                }.getOrNull()
+                val importedCount = result?.optInt("imported_count", 0)?.coerceAtLeast(0) ?: 0
+                val retryCount = result?.optInt("retry_count", 0)?.coerceAtLeast(0) ?: 0
+                _state.update {
+                    it.copy(
+                        contactsImporting = false,
+                        contactsImportSummary = if (retryCount > 0) {
+                            "Imported $importedCount contacts; $retryCount need retry."
+                        } else {
+                            "Imported $importedCount contacts."
+                        },
+                        lastEventType = type,
+                        lastEventPayload = "{\"imported_count\":$importedCount,\"retry_count\":$retryCount}",
+                        error = null,
+                    )
+                }
+            }
+            "contacts_import_failed" -> {
+                val message = runCatching {
+                    JSONObject(payload).optJSONObject("payload")?.optString("error")
+                }.getOrNull()?.takeIf(String::isNotBlank) ?: "Contact import failed"
+                _state.update {
+                    it.copy(
+                        contactsImporting = false,
+                        contactsImportSummary = null,
+                        error = message,
+                        lastEventType = type,
+                        lastEventPayload = "{\"error\":\"contact import failed\"}",
+                    )
+                }
+            }
             "messages_loaded" -> {
                 val target = parseReadTarget(payload)
                 _state.update {
@@ -2108,6 +2186,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 _state.update {
                     it.copy(
                         busy = false,
+                        contactsImporting = false,
                         profileLoadingPeerId = if (it.profileLoadingPeerId != null) null else it.profileLoadingPeerId,
                         profileError = if (it.profileLoadingPeerId != null) message else it.profileError,
                         contactsLoading = false,
