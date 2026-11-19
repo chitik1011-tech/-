@@ -66,6 +66,7 @@ pub enum TelegramUpdate {
         chat_id: i64,
         direction: ReadDirection,
         max_message_id: i64,
+        unread_count: Option<u32>,
     },
     Typing {
         chat_id: i64,
@@ -128,10 +129,12 @@ impl TelegramUpdate {
                 chat_id,
                 direction,
                 max_message_id,
+                unread_count,
             } => Some(CoreEvent::ReadReceiptUpdated {
                 chat_id: *chat_id,
                 direction: *direction,
                 max_message_id: *max_message_id,
+                unread_count: *unread_count,
             }),
             Self::Typing {
                 chat_id,
@@ -940,6 +943,7 @@ async fn map_update(
                     chat_id: raw_peer_to_core(&update.peer),
                     direction: ReadDirection::Inbox,
                     max_message_id: i64::from(update.max_id),
+                    unread_count: Some(u32::try_from(update.still_unread_count).unwrap_or(0)),
                 }])
             }
             tl::enums::Update::ReadHistoryOutbox(update) => {
@@ -947,6 +951,7 @@ async fn map_update(
                     chat_id: raw_peer_to_core(&update.peer),
                     direction: ReadDirection::Outbox,
                     max_message_id: i64::from(update.max_id),
+                    unread_count: None,
                 }])
             }
             tl::enums::Update::ReadChannelInbox(update) => {
@@ -954,6 +959,7 @@ async fn map_update(
                     chat_id: crate::ids::channel_id_to_core(update.channel_id),
                     direction: ReadDirection::Inbox,
                     max_message_id: i64::from(update.max_id),
+                    unread_count: Some(u32::try_from(update.still_unread_count).unwrap_or(0)),
                 }])
             }
             tl::enums::Update::ReadChannelOutbox(update) => {
@@ -961,6 +967,7 @@ async fn map_update(
                     chat_id: crate::ids::channel_id_to_core(update.channel_id),
                     direction: ReadDirection::Outbox,
                     max_message_id: i64::from(update.max_id),
+                    unread_count: None,
                 }])
             }
             _ => Ok(map_raw_pinned_update(&raw.raw)
@@ -1645,13 +1652,15 @@ mod tests {
             TelegramUpdate::ReadReceiptUpdated {
                 chat_id: 77,
                 direction: ReadDirection::Outbox,
-                max_message_id: 42
+                max_message_id: 42,
+                unread_count: None
             }
             .to_core_event(),
             Some(CoreEvent::ReadReceiptUpdated {
                 chat_id: 77,
                 direction: ReadDirection::Outbox,
-                max_message_id: 42
+                max_message_id: 42,
+                unread_count: None
             })
         );
         assert_eq!(
