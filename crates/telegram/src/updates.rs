@@ -1006,6 +1006,8 @@ fn map_raw_dialog_unread_mark(
 ) -> Option<TelegramUpdate> {
     use grammers_client::tl;
 
+    // This is the manual unread flag, not the message unread count; the core
+    // reducer keeps those states separate.
     // Topic-scoped marks (including monoforum saved peers) cannot be represented
     // by the current chat-level CoreState. Do not accidentally mark the parent chat.
     if update.saved_peer_id.is_some() {
