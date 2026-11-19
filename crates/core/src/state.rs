@@ -664,23 +664,37 @@ impl CoreState {
                 chat_id,
                 direction,
                 max_message_id,
+                unread_count,
             } => {
                 if *chat_id == 0 || *max_message_id <= 0 {
                     return;
                 }
-                if *direction == ReadDirection::Inbox {
+                let previous_inbox_boundary = self
+                    .read_receipts
+                    .get(chat_id)
+                    .map_or(0, |receipt| receipt.inbox_max_message_id);
+                let is_fresh_inbox_receipt = *max_message_id >= previous_inbox_boundary;
+                if *direction == ReadDirection::Inbox && is_fresh_inbox_receipt {
                     if let Some(chat) = self
                         .account
                         .chats
                         .iter_mut()
                         .find(|chat| chat.id == *chat_id)
                     {
-                        let covers_latest = chat
-                            .last_message
-                            .as_ref()
-                            .is_none_or(|message| message.id <= *max_message_id);
-                        if covers_latest {
-                            chat.unread_count = 0;
+                        if let Some(server_unread_count) = unread_count {
+                            // Telegram's still_unread_count is authoritative even when
+                            // max_id does not cover the dialog's latest message.
+                            chat.unread_count = *server_unread_count;
+                        } else {
+                            // Backward-compatible events without the server count retain
+                            // the previous conservative clear-only behavior.
+                            let covers_latest = chat
+                                .last_message
+                                .as_ref()
+                                .is_none_or(|message| message.id <= *max_message_id);
+                            if covers_latest {
+                                chat.unread_count = 0;
+                            }
                         }
                     }
                 }
