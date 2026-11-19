@@ -56,6 +56,20 @@ fn legacy_chat_json_deserializes_with_unknown_counters() {
 }
 
 #[test]
+fn clearing_manual_unread_mark_does_not_clear_unread_messages() {
+    let mut state = CoreState::default();
+    state.reduce(&CoreEvent::ChatsLoaded(vec![chat(7, None, None)]));
+    state.reduce(&CoreEvent::ChatUnreadMarkChanged {
+        chat_id: 7,
+        unread: false,
+    });
+
+    let summary = state.chat(7).unwrap();
+    assert_eq!(summary.is_unread, Some(false));
+    assert_eq!(summary.unread_count, 4);
+}
+
+#[test]
 fn a_read_receipt_does_not_clear_server_reported_counters() {
     let mut state = CoreState::default();
     state.reduce(&CoreEvent::ChatsLoaded(vec![chat(7, Some(2), Some(3))]));
