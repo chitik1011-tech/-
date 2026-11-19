@@ -192,7 +192,7 @@ private fun TelegramRustApp(
     val context = LocalContext.current
     val lifecycleOwner = remember(context) { context.findLifecycleOwner() }
     var selectedChatId by rememberSaveable { mutableLongStateOf(0L) }
-    var lastExplicitChatLoadId by remember { mutableStateOf<Long?>(null) }
+    var lastExplicitChatLoadId by remember(state.accountUserId) { mutableStateOf<Long?>(null) }
     var showContacts by rememberSaveable { mutableStateOf(false) }
     var showGlobalMessageSearch by rememberSaveable { mutableStateOf(false) }
     var draftsByChatId by rememberSaveable(stateSaver = chatDraftsStateSaver) {
@@ -321,6 +321,7 @@ private fun TelegramRustApp(
         activityStateRestored,
         state.sessionRestoreComplete,
         state.authorization,
+        state.accountUserId,
         selectedChatId,
         state.messages,
         incomingLink,
