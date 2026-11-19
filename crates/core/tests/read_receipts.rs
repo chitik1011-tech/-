@@ -193,11 +193,26 @@ fn read_receipt_wire_event_round_trips() {
         chat_id: 77,
         direction: ReadDirection::Inbox,
         max_message_id: 42,
-            unread_count: None,
+        unread_count: Some(7),
     };
     let json = serde_json::to_string(&event).unwrap();
     let decoded: CoreEvent = serde_json::from_str(&json).unwrap();
     assert_eq!(decoded, event);
+}
+
+#[test]
+fn legacy_read_receipt_wire_event_defaults_to_unknown_unread_count() {
+    let legacy = r#"{"type":"read_receipt_updated","payload":{"chat_id":77,"direction":"inbox","max_message_id":42}}"#;
+    let decoded: CoreEvent = serde_json::from_str(legacy).unwrap();
+    assert_eq!(
+        decoded,
+        CoreEvent::ReadReceiptUpdated {
+            chat_id: 77,
+            direction: ReadDirection::Inbox,
+            max_message_id: 42,
+            unread_count: None,
+        }
+    );
 }
 
 #[test]
