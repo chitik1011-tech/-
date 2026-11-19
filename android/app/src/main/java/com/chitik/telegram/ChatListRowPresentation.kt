@@ -13,6 +13,7 @@ internal data class ChatListRowPresentation(
     val unreadLabel: String?,
     val unreadMentionsLabel: String?,
     val unreadReactionsLabel: String?,
+    val markedUnreadLabel: String?,
     val accessibilityLabel: String,
 )
 
@@ -36,6 +37,7 @@ internal fun ChatListEntry.toChatListRowPresentation(
     val unreadLabel = formatUnreadCount(unreadCount)
     val unreadMentionsLabel = unreadMentionsCount?.let(::formatUnreadCount)
     val unreadReactionsLabel = unreadReactionsCount?.let(::formatUnreadCount)
+    val markedUnreadLabel = if (isUnread == true) "Marked unread" else null
     val accessibilityLabel = buildList {
         add(title)
         timestamp?.let { add(it) }
@@ -44,6 +46,7 @@ internal fun ChatListEntry.toChatListRowPresentation(
         unreadLabel?.let { add("$it unread") }
         unreadMentionsLabel?.let { add("$it unread mentions") }
         unreadReactionsLabel?.let { add("$it unread reactions") }
+        markedUnreadLabel?.let { add(it) }
     }.joinToString(", ")
 
     return ChatListRowPresentation(
@@ -54,6 +57,7 @@ internal fun ChatListEntry.toChatListRowPresentation(
         unreadLabel = unreadLabel,
         unreadMentionsLabel = unreadMentionsLabel,
         unreadReactionsLabel = unreadReactionsLabel,
+        markedUnreadLabel = markedUnreadLabel,
         accessibilityLabel = accessibilityLabel,
     )
 }

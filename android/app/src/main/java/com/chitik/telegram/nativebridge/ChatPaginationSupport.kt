@@ -213,6 +213,7 @@ private fun parseChatPageEntries(values: JSONArray): List<ChatListEntry> = build
                 lastMessage = lastMessage,
                 unreadMentionsCount = chat.unreadCounterOrNull("unread_mentions_count"),
                 unreadReactionsCount = chat.unreadCounterOrNull("unread_reactions_count"),
+                isUnread = chat.opt("is_unread") as? Boolean,
             ),
         )
     }
@@ -234,6 +235,7 @@ private fun mergeChatPage(
             } ?: pageChat.lastMessage,
             unreadMentionsCount = pageChat.unreadMentionsCount ?: previous?.unreadMentionsCount,
             unreadReactionsCount = pageChat.unreadReactionsCount ?: previous?.unreadReactionsCount,
+            isUnread = pageChat.isUnread ?: previous?.isUnread,
             capabilities = currentCapabilities[pageChat.id]
                 ?: previous?.capabilities
                 ?: pageChat.capabilities,
@@ -256,6 +258,7 @@ internal fun mergeChatListRefresh(
         incoming.copy(
             unreadMentionsCount = incoming.unreadMentionsCount ?: previous?.unreadMentionsCount,
             unreadReactionsCount = incoming.unreadReactionsCount ?: previous?.unreadReactionsCount,
+            isUnread = incoming.isUnread ?: previous?.isUnread,
             capabilities = currentCapabilities[incoming.id] ?: com.chitik.telegram.ChatCapabilitiesUi(),
         )
     }
