@@ -36,6 +36,22 @@ class ContactAccessibilityPresentationTest {
     }
 
     @Test
+    fun publicSearchResultIsLabeledAsATelegramUser() {
+        assertEquals(
+            "Ada, Username @ada_l, Telegram user",
+            contactItemAccessibilityLabel(
+                ContactListEntry(
+                    userId = 42,
+                    displayName = "Ada",
+                    username = "ada_l",
+                    isMutual = false,
+                    isContact = false,
+                ),
+            ),
+        )
+    }
+
+    @Test
     fun countLoadingErrorAndLoadMoreLabelsReflectVisibleState() {
         assertEquals("20 of 80 contacts loaded", contactsCountAccessibilityLabel(20, 80))
         assertEquals("Loading contacts", contactsLoadingAccessibilityLabel(0, 80))

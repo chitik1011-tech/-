@@ -94,6 +94,8 @@ data class NativeUiState(
     val contacts: List<ContactListEntry> = emptyList(),
     val contactTotal: Int = 0,
     val contactsLoading: Boolean = false,
+    val contactsRequestId: Long? = null,
+    val contactsSearchQuery: String? = null,
     val chatCapabilities: Map<Long, ChatCapabilitiesUi> = emptyMap(),
     val messages: Map<Long, List<ConversationMessageUi>> = emptyMap(),
     val globalMessageSearch: GlobalMessageSearchUiState = GlobalMessageSearchUiState(),
@@ -326,6 +328,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
     private var restartHandleAfterLogout = false
     private var authorizationRetryJob: Job? = null
     private var nextGlobalMessageSearchRequestId = 0L
+    private var contactsRequestCounter = 0L
 
     init {
         restoreAuthorizationFloodWait()
@@ -872,24 +875,47 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         reportDispatchResult(result, "Rust rejected the pin command")
     }
 
-    fun loadContacts(offset: Int = 0, limit: Int = 100) {
-        if (offset < 0 || limit !in 1..100) {
+    @Synchronized
+    private fun nextContactsRequestId(): Long {
+        contactsRequestCounter += 1L
+        if (contactsRequestCounter <= 0L) contactsRequestCounter = 1L
+        return contactsRequestCounter
+    }
+
+    @Synchronized
+    fun loadContacts(offset: Int = 0, limit: Int = 100, query: String? = null) {
+        val normalizedQuery = query?.trim()?.removePrefix("@")?.trim()?.takeIf(String::isNotEmpty)
+        if (offset < 0 || limit !in 1..100 ||
+            (normalizedQuery != null &&
+                (offset != 0 || normalizedQuery.codePointCount(0, normalizedQuery.length) < 2 ||
+                    normalizedQuery.toByteArray(Charsets.UTF_8).size > 256))
+        ) {
             setErrorIfOpen("Invalid contacts page")
             return
         }
-        _state.update { it.copy(contactsLoading = true, error = null) }
+        val requestId = nextContactsRequestId()
+        _state.update {
+            it.copy(
+                contactsLoading = true,
+                contactsRequestId = requestId,
+                contactsSearchQuery = normalizedQuery,
+                error = null,
+            )
+        }
+        val payload = JSONObject()
+            .put("offset", offset)
+            .put("limit", limit)
+            .put("request_id", requestId)
+        normalizedQuery?.let { payload.put("query", it) }
         val accepted = sendCommand(
             JSONObject()
                 .put("type", "load_contacts")
-                .put(
-                    "payload",
-                    JSONObject()
-                        .put("offset", offset)
-                        .put("limit", limit),
-                )
+                .put("payload", payload)
                 .toString(),
         )
-        if (!accepted) _state.update { it.copy(contactsLoading = false) }
+        if (!accepted) _state.update {
+            if (it.contactsRequestId == requestId) it.copy(contactsLoading = false) else it
+        }
     }
 
     fun replyMessage(chatId: Long, replyToMessageId: Long, text: String): Boolean {
@@ -1738,6 +1764,26 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
             "contacts_loaded" -> {
                 _state.update { it.reduceContactsLoaded(payload) }
             }
+            "contacts_load_started" -> {
+                val request = runCatching {
+                    JSONObject(payload).optJSONObject("payload")
+                }.getOrNull()
+                val requestId = request?.optLong("request_id", 0L)?.takeIf { it > 0L }
+                val offset = request?.optInt("offset", -1) ?: -1
+                _state.update { current ->
+                    if (requestId == null || requestId != current.contactsRequestId) {
+                        current
+                    } else {
+                        current.copy(
+                            lastEventType = type,
+                            lastEventPayload = "{\"request_id\":$requestId,\"offset\":$offset}",
+                        )
+                    }
+                }
+            }
+            "contacts_load_failed" -> {
+                _state.update { it.reduceContactsLoadFailed(payload) }
+            }
             "contacts_refresh_requested" -> {
                 contactsRefreshRequestForEvent(type)?.let { request ->
                     loadContacts(offset = request.offset, limit = request.limit)
@@ -2165,6 +2211,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 contacts = if (loggedOut) emptyList() else current.contacts,
                 contactTotal = if (loggedOut) 0 else current.contactTotal,
                 contactsLoading = false,
+                contactsSearchQuery = if (loggedOut) null else current.contactsSearchQuery,
                 chatCapabilities = if (loggedOut) emptyMap() else current.chatCapabilities,
                 messages = if (loggedOut) emptyMap() else current.messages,
                 chatActivities = if (loggedOut) emptyMap() else current.chatActivities,

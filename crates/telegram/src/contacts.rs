@@ -1,7 +1,10 @@
 use std::collections::BTreeMap;
 
 use grammers_client::{Client, peer::User, tl};
-use tg_mobile_core::{Contact, ContactBook, CoreError, MAX_CONTACT_PAGE_LIMIT};
+use tg_mobile_core::{
+    Contact, ContactBook, CoreError, MAX_CONTACT_PAGE_LIMIT, normalize_contact_search_query,
+    validate_contact_search,
+};
 
 use crate::{
     chats::{PeerRegistry, remember_peer},
@@ -71,12 +74,89 @@ pub(crate) async fn load_contacts(
             is_mutual,
             peer.is_bot(),
             peer.photo().map(|photo| photo.photo_id),
+            true,
         )?;
         contacts.upsert(contact)?;
     }
 
     let total = contacts.len();
     Ok((total, contacts.page(offset, limit)?))
+}
+
+/// Search Telegram's public username directory. Telegram excludes the current
+/// account's saved contacts from this RPC; callers can combine it with the
+/// already-loaded local snapshot when they need both.
+pub(crate) async fn search_contacts(
+    client: &Client,
+    peers: &PeerRegistry,
+    query: &str,
+    limit: usize,
+) -> tg_mobile_core::Result<Vec<Contact>> {
+    validate_contact_search(query, limit)?;
+    let response = client
+        .invoke(&tl::functions::contacts::Search {
+            q: normalize_contact_search_query(query),
+            limit: limit as i32,
+            bots: false,
+            broadcasts: false,
+        })
+        .await
+        .map_err(|error| api_error("search contacts", error))?;
+    let tl::enums::contacts::Found::Found(found) = response else {
+        return Err(CoreError::Backend(
+            "Telegram returned an unsupported contacts search result".into(),
+        ));
+    };
+
+    let mut result_ids = Vec::new();
+    for peer in found.my_results.into_iter().chain(found.results) {
+        if let tl::enums::Peer::User(peer) = peer {
+            if !result_ids.contains(&peer.user_id) {
+                result_ids.push(peer.user_id);
+            }
+        }
+    }
+
+    let mut users = found
+        .users
+        .into_iter()
+        .map(|user| {
+            let peer = User::from_raw(client, user);
+            (peer_id_to_core(peer.id()), peer)
+        })
+        .collect::<Vec<_>>();
+    let mut contacts = Vec::new();
+    for user_id in result_ids {
+        let Some(index) = users
+            .iter()
+            .position(|(candidate_id, _)| *candidate_id == user_id)
+        else {
+            continue;
+        };
+        let (_, peer) = users.remove(index);
+        if peer.deleted() {
+            continue;
+        }
+        let Some(peer_ref) = peer
+            .to_ref()
+            .await
+            .map_err(|error| CoreError::Backend(error.to_string()))?
+        else {
+            continue;
+        };
+        remember_peer(peers, user_id, peer_ref).await;
+        contacts.push(contact_summary(
+            user_id,
+            peer.first_name().unwrap_or_default(),
+            peer.last_name().unwrap_or_default(),
+            peer.username(),
+            false,
+            peer.is_bot(),
+            peer.photo().map(|photo| photo.photo_id),
+            false,
+        )?);
+    }
+    Ok(contacts)
 }
 
 fn contact_summary(
@@ -87,6 +167,7 @@ fn contact_summary(
     is_mutual: bool,
     is_bot: bool,
     avatar_photo_id: Option<i64>,
+    is_contact: bool,
 ) -> tg_mobile_core::Result<Contact> {
     let display_name = [first_name.trim(), last_name.trim()]
         .into_iter()
@@ -103,6 +184,7 @@ fn contact_summary(
         display_name,
         username: username.map(str::to_owned),
         is_mutual,
+        is_contact,
         is_bot,
         avatar_photo_id,
     }
@@ -125,6 +207,7 @@ mod tests {
             true,
             false,
             Some(9001),
+            true,
         )
         .unwrap();
         assert_eq!(contact.user_id, 42);
@@ -138,10 +221,27 @@ mod tests {
 
     #[test]
     fn missing_server_names_use_a_non_sensitive_fallback() {
-        let contact = contact_summary(8, " ", "", None, false, true, None).unwrap();
+        let contact = contact_summary(8, " ", "", None, false, true, None, true).unwrap();
         assert_eq!(contact.display_name, "Telegram user");
         assert_eq!(contact.user_id, 8);
         assert!(contact.is_bot);
+    }
+
+    #[test]
+    fn server_search_result_is_marked_as_not_a_saved_contact() {
+        let contact = contact_summary(
+            42,
+            "Ada",
+            "Lovelace",
+            Some("Ada_L"),
+            false,
+            false,
+            None,
+            false,
+        )
+        .unwrap();
+        assert!(!contact.is_contact);
+        assert_eq!(contact.username.as_deref(), Some("ada_l"));
     }
 
     #[tokio::test]
