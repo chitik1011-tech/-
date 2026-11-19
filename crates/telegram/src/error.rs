@@ -69,10 +69,13 @@ fn auth_rpc_error(context: &'static str, error: grammers_client::sender::RpcErro
         return CoreError::FloodWait { seconds };
     }
     if error.code >= 500 {
-        return CoreError::TransientSend(format!(
-            "{context}: Telegram RPC {rpc_name} (code {})",
+        // This RPC belongs to authorization, not the outgoing-message pipeline.
+        // Keep the server failure visible without misclassifying it as a retryable send.
+        return TelegramBackendError::Authorization(format!(
+            "{context}: temporary Telegram RPC {rpc_name} (code {})",
             error.code
-        ));
+        ))
+        .into();
     }
 
     // Keep the server's actual RPC class visible for diagnosis, but constrain
@@ -244,8 +247,9 @@ mod tests {
                 caused_by: None,
             }),
         );
-        assert!(matches!(temporary, CoreError::TransientSend(message)
-            if message.contains("RPC INTERNAL (code 500")));
+        assert!(matches!(temporary, CoreError::Backend(message)
+            if message.contains("check authorization")
+                && message.contains("temporary Telegram RPC INTERNAL (code 500")));
     }
 
     #[test]
