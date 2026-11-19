@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.clickable
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
@@ -58,9 +59,13 @@ fun ContactsScreen(
     onClearTelegramSearch: () -> Unit,
     searchingQuery: String?,
     onContactSelected: (ContactListEntry) -> Unit,
+    isImportingContacts: Boolean,
+    contactsImportSummary: String?,
+    onSyncPhoneContacts: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var searchQuery by rememberSaveable { mutableStateOf("") }
+    var showSyncConfirmation by rememberSaveable { mutableStateOf(false) }
     val visibleContacts = remember(contacts, searchQuery) {
         filterLoadedContacts(contacts, searchQuery)
     }
@@ -121,6 +126,52 @@ fun ContactsScreen(
                     enabled = !isLoading,
                 ) { Text("Show contacts") }
             }
+        }
+        OutlinedButton(
+            onClick = { showSyncConfirmation = true },
+            enabled = !isLoading && !isImportingContacts,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+        ) {
+            if (isImportingContacts) {
+                CircularProgressIndicator()
+                Spacer(Modifier.width(8.dp))
+                Text("Syncing phone contacts…")
+            } else {
+                Text("Sync phone contacts")
+            }
+        }
+        contactsImportSummary?.let { summary ->
+            Text(
+                summary,
+                modifier = Modifier.padding(horizontal = 16.dp).semantics {
+                    liveRegion = LiveRegionMode.Polite
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (showSyncConfirmation) {
+            AlertDialog(
+                onDismissRequest = { showSyncConfirmation = false },
+                title = { Text("Sync phone contacts?") },
+                text = {
+                    Text(
+                        "Names and phone numbers from this device will be uploaded to Telegram " +
+                            "to find matching users. Nothing is uploaded until you confirm.",
+                    )
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            showSyncConfirmation = false
+                            onSyncPhoneContacts()
+                        },
+                    ) { Text("Upload contacts") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showSyncConfirmation = false }) { Text("Cancel") }
+                },
+            )
         }
         Text(
             if (searchingQuery == null) {
