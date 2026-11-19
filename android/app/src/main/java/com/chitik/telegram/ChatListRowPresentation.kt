@@ -46,7 +46,7 @@ internal fun ChatListEntry.toChatListRowPresentation(
         unreadLabel?.let { add("$it unread") }
         unreadMentionsLabel?.let { add("$it unread mentions") }
         unreadReactionsLabel?.let { add("$it unread reactions") }
-        markedUnreadLabel?.let(::add)
+        markedUnreadLabel?.let { add(it) }
     }.joinToString(", ")
 
     return ChatListRowPresentation(
