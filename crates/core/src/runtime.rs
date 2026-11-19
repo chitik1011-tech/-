@@ -427,6 +427,15 @@ where
                         CoreCommand::SearchMessages(request) => Some(request.clone()),
                         _ => None,
                     };
+                    let contacts_request = match &command {
+                        CoreCommand::LoadContacts {
+                            offset,
+                            query,
+                            request_id: Some(request_id),
+                            ..
+                        } => Some((*request_id, *offset, query.clone())),
+                        _ => None,
+                    };
                     let mut skip_backend = false;
                     if let Some(cursor) = chat_page_request.as_ref() {
                         let pagination = &reduced_state.chat_pagination;
@@ -666,6 +675,19 @@ where
                             &mut activity_tracker,
                         );
                         persistence_dirty = true;
+                    }
+                    if let Some((request_id, offset, query)) = contacts_request {
+                        apply_event(
+                            CoreEvent::ContactsLoadStarted {
+                                request_id,
+                                offset,
+                                query,
+                            },
+                            &mut reduced_state,
+                            &state_tx,
+                            &event_tx_task,
+                            &mut activity_tracker,
+                        );
                     }
 
                     if skip_backend {
@@ -937,6 +959,17 @@ fn operation_error_events(command: &CoreCommand, error: CoreError) -> Vec<CoreEv
             chat_id: request.chat_id,
             query: request.query.clone(),
             before_message_id: request.before_message_id,
+            error: error.to_string(),
+        }],
+        CoreCommand::LoadContacts {
+            offset,
+            query,
+            request_id: Some(request_id),
+            ..
+        } => vec![CoreEvent::ContactsLoadFailed {
+            request_id: Some(*request_id),
+            offset: *offset,
+            query: query.clone(),
             error: error.to_string(),
         }],
         CoreCommand::SendTextReliable {
@@ -1461,6 +1494,29 @@ fn complete_operation_events(command: &CoreCommand, events: &mut Vec<CoreEvent>)
             });
         }
     }
+    if let CoreCommand::LoadContacts {
+        offset,
+        query,
+        request_id: Some(request_id),
+        ..
+    } = command
+    {
+        let complete = events.iter().any(|event| matches!(event,
+            CoreEvent::ContactsLoaded { request_id: Some(id), offset: event_offset, query: event_query, .. }
+                if id == request_id && event_offset == offset && event_query.as_deref().map(str::trim) == query.as_deref().map(str::trim)
+        ) || matches!(event,
+            CoreEvent::ContactsLoadFailed { request_id: Some(id), offset: event_offset, query: event_query, .. }
+                if id == request_id && event_offset == offset && event_query.as_deref().map(str::trim) == query.as_deref().map(str::trim)
+        ));
+        if !complete {
+            events.push(CoreEvent::ContactsLoadFailed {
+                request_id: Some(*request_id),
+                offset: *offset,
+                query: query.clone(),
+                error: "backend returned no contacts completion".into(),
+            });
+        }
+    }
     if let CoreCommand::SendTextReliable {
         client_id,
         chat_id,
@@ -1514,6 +1570,23 @@ fn recover_interrupted_operation(
                 query: request.query.clone(),
                 before_message_id: request.before_message_id,
                 error: "connection generation changed while searching messages".into(),
+            },
+            state,
+            state_tx,
+            event_tx,
+            activity_tracker,
+        ),
+        CoreCommand::LoadContacts {
+            offset,
+            query,
+            request_id: Some(request_id),
+            ..
+        } => apply_event(
+            CoreEvent::ContactsLoadFailed {
+                request_id: Some(*request_id),
+                offset: *offset,
+                query: query.clone(),
+                error: "connection generation changed while loading contacts".into(),
             },
             state,
             state_tx,

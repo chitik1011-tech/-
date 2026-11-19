@@ -4,7 +4,8 @@ package com.chitik.telegram
 internal fun contactItemAccessibilityLabel(contact: ContactListEntry): String = buildList {
     add(contact.displayName)
     contact.username?.takeIf(String::isNotBlank)?.let { add("Username @$it") }
-    if (contact.isMutual) add("Mutual contact") else add("Not a mutual contact")
+    if (!contact.isContact) add("Telegram user")
+    else if (contact.isMutual) add("Mutual contact") else add("Not a mutual contact")
     if (contact.isBot) add("Bot")
 }.joinToString(", ")
 

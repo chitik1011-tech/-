@@ -510,6 +510,9 @@ private fun TelegramRustApp(
             onBack = { showContacts = false },
             onRefresh = { viewModel.loadContacts(offset = 0) },
             onLoadMore = { viewModel.loadContacts(offset = state.contacts.size) },
+            onSearchTelegram = { query -> viewModel.loadContacts(offset = 0, query = query) },
+            onClearTelegramSearch = { viewModel.loadContacts(offset = 0) },
+            searchingQuery = state.contactsSearchQuery,
             onContactSelected = { contact ->
                 selectedChatId = contact.userId
                 replyToMessageId = null

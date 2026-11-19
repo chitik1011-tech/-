@@ -60,11 +60,14 @@ class ContactUiMappingTest {
     @Test
     fun parsesContactPagesWithoutRetainingRawIdentityFields() {
         val page = parseContactPage(
-            """{"type":"contacts_loaded","payload":{"offset":0,"total":1,"contacts":[{"user_id":42,"display_name":"Ada Lovelace","username":"ada_l","is_mutual":true}]}}""",
+            """{"type":"contacts_loaded","payload":{"offset":0,"total":1,"query":"ada","request_id":9,"contacts":[{"user_id":42,"display_name":"Ada Lovelace","username":"ada_l","is_mutual":false,"is_contact":false}]}}""",
         )
         assertEquals(0, page?.offset)
         assertEquals(1, page?.total)
+        assertEquals(9L, page?.requestId)
+        assertEquals("ada", page?.query)
         assertEquals(listOf(42L), page?.contacts?.map(ContactListEntry::userId))
+        assertEquals(false, page?.contacts?.single()?.isContact)
         assertNull(parseContactPage("""{"type":"contacts_loaded","payload":{}}"""))
     }
 }
