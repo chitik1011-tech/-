@@ -1075,7 +1075,9 @@ mod tests {
         map_raw_activity_update, message_added_if_new, next_with_recovery, update_token_is_current,
         wait_for_current_attempt,
     };
-    use super::{ConnectionState, TelegramUpdate, map_raw_pinned_update};
+    use super::{
+        ConnectionState, TelegramUpdate, map_raw_dialog_unread_mark, map_raw_pinned_update,
+    };
     use crate::messages::MessageDeduplicator;
     use tg_mobile_core::{
         ChatActivityKind, ChatActivityTracker, ConnectionMachine, CoreEvent,
