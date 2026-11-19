@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 
 use grammers_client::{Client, peer::User, tl};
 use tg_mobile_core::{
-    Contact, ContactBook, CoreError, MAX_CONTACT_PAGE_LIMIT, normalize_contact_search_query,
-    validate_contact_search,
+    Contact, ContactBook, CoreError, MAX_CONTACT_PAGE_LIMIT, PhoneContactInput,
+    normalize_contact_search_query, validate_contact_search, validate_phone_contact_import,
 };
 
 use crate::{
@@ -11,6 +11,36 @@ use crate::{
     error::api_error,
     ids::peer_id_to_core,
 };
+
+/// Import phone contacts only after the Android user explicitly grants permission
+/// and confirms the upload. Phone numbers are never copied into Contact or event state.
+pub(crate) async fn import_phone_contacts(
+    client: &Client,
+    contacts: &[PhoneContactInput],
+) -> tg_mobile_core::Result<(usize, usize)> {
+    validate_phone_contact_import(contacts)?;
+    let input_contacts = contacts
+        .iter()
+        .map(|contact| tl::types::InputPhoneContact {
+            client_id: contact.client_id,
+            phone: contact.phone.clone(),
+            first_name: contact.first_name.clone(),
+            last_name: contact.last_name.clone(),
+        })
+        .collect();
+    let response = client
+        .invoke(&tl::functions::contacts::ImportContacts {
+            contacts: input_contacts,
+        })
+        .await
+        .map_err(|error| api_error("import phone contacts", error))?;
+    let tl::enums::contacts::ImportedContacts::ImportedContacts(response) = response else {
+        return Err(CoreError::Backend(
+            "Telegram returned an unsupported contact import result".into(),
+        ));
+    };
+    Ok((response.imported.len(), response.retry_contacts.len()))
+}
 
 /// Load Telegram's contact snapshot, remember usable peer references for direct
 /// conversation navigation, and return one stable-ID-ordered page.
