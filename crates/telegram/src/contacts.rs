@@ -21,11 +21,13 @@ pub(crate) async fn import_phone_contacts(
     validate_phone_contact_import(contacts)?;
     let input_contacts = contacts
         .iter()
-        .map(|contact| tl::types::InputPhoneContact {
-            client_id: contact.client_id,
-            phone: contact.phone.clone(),
-            first_name: contact.first_name.clone(),
-            last_name: contact.last_name.clone(),
+        .map(|contact| {
+            tl::enums::InputContact::PhoneContact(tl::types::InputPhoneContact {
+                client_id: contact.client_id,
+                phone: contact.phone.clone(),
+                first_name: contact.first_name.clone(),
+                last_name: contact.last_name.clone(),
+            })
         })
         .collect();
     let response = client
