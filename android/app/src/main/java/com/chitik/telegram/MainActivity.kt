@@ -81,6 +81,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val activityStateRestored = savedInstanceState != null
         notificationPermissionRequester = NotificationPermissionRequester(this) { granted ->
             notificationPermissionGranted = granted
         }
@@ -100,6 +101,7 @@ class MainActivity : ComponentActivity() {
             TelegramAppTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     TelegramRustApp(
+                        activityStateRestored = activityStateRestored,
                         incomingLink = pendingTelegramLink,
                         incomingNotificationRoute = pendingNotificationRoute,
                         onDismissNotification = { dismissPendingNotificationRoute() },
@@ -177,6 +179,7 @@ private val chatDraftsStateSaver = mapSaver(
 
 @Composable
 private fun TelegramRustApp(
+    activityStateRestored: Boolean,
     incomingLink: TelegramLinkIntent?,
     onDismissLink: () -> Unit,
     incomingNotificationRoute: TelegramNotificationRoute?,
@@ -189,6 +192,7 @@ private fun TelegramRustApp(
     val context = LocalContext.current
     val lifecycleOwner = remember(context) { context.findLifecycleOwner() }
     var selectedChatId by rememberSaveable { mutableLongStateOf(0L) }
+    var lastExplicitChatLoadId by remember { mutableStateOf<Long?>(null) }
     var showContacts by rememberSaveable { mutableStateOf(false) }
     var showGlobalMessageSearch by rememberSaveable { mutableStateOf(false) }
     var draftsByChatId by rememberSaveable(stateSaver = chatDraftsStateSaver) {
@@ -203,6 +207,14 @@ private fun TelegramRustApp(
     val draft = draftForChat(draftsByChatId, draftAccountUserId, selectedChatId)
     fun setCurrentDraft(text: String) {
         draftsByChatId = updateDraftForChat(draftsByChatId, draftAccountUserId, selectedChatId, text)
+    }
+    fun markExplicitChatLoad(chatId: Long) {
+        lastExplicitChatLoadId = chatId
+    }
+    fun loadChat(chatId: Long) {
+        markExplicitChatLoad(chatId)
+        viewModel.loadMessages(chatId)
+        viewModel.loadPinnedMessages(chatId)
     }
     var lastRestoredFailureId by rememberSaveable { mutableLongStateOf(0L) }
     var replyToMessageId by rememberSaveable { mutableStateOf<Long?>(null) }
@@ -299,11 +311,35 @@ private fun TelegramRustApp(
             is NotificationRouteResolution.OpenChat -> {
                 selectedChatId = resolution.chatId
                 showContacts = false
-                viewModel.loadMessages(resolution.chatId)
-                viewModel.loadPinnedMessages(resolution.chatId)
+                loadChat(resolution.chatId)
                 onDismissNotification()
             }
             NotificationRouteResolution.Discard -> onDismissNotification()
+        }
+    }
+    LaunchedEffect(
+        activityStateRestored,
+        state.sessionRestoreComplete,
+        state.authorization,
+        selectedChatId,
+        state.messages,
+        incomingLink,
+        incomingNotificationRoute,
+        showContacts,
+        showGlobalMessageSearch,
+    ) {
+        val restoredChatId = selectedChatId
+        if (shouldLoadRestoredSelectedChat(
+                activityStateRestored = activityStateRestored,
+                sessionRestoreComplete = state.sessionRestoreComplete,
+                authorizationReady = state.authorization == AuthorizationUiStep.Ready,
+                selectedChatId = restoredChatId,
+                hasCachedMessages = state.messages[restoredChatId]?.isNotEmpty() == true,
+                explicitlyLoadedForChat = lastExplicitChatLoadId == restoredChatId,
+                hasPendingLink = incomingLink != null,
+            ) && incomingNotificationRoute == null && !showContacts && !showGlobalMessageSearch
+        ) {
+            loadChat(restoredChatId)
         }
     }
     val queuePickedMedia: (Uri?) -> Unit = { uri ->
@@ -497,6 +533,7 @@ private fun TelegramRustApp(
                 jumpToMessageId = result.messageId.toString()
                 replyToMessageId = null
                 replyToPreview = null
+                markExplicitChatLoad(result.chatId)
                 viewModel.loadMessagesBefore(result.chatId, result.messageId + 1L)
                 viewModel.loadPinnedMessages(result.chatId)
             },
@@ -515,8 +552,7 @@ private fun TelegramRustApp(
                 replyToMessageId = null
                 replyToPreview = null
                 jumpToMessageId = null
-                viewModel.loadMessages(contact.userId)
-                viewModel.loadPinnedMessages(contact.userId)
+                loadChat(contact.userId)
             },
         )
 
@@ -559,8 +595,7 @@ private fun TelegramRustApp(
                 replyToMessageId = null
                 replyToPreview = null
                 jumpToMessageId = null
-                viewModel.loadMessages(chatId)
-                viewModel.loadPinnedMessages(chatId)
+                loadChat(chatId)
             },
         )
 
@@ -664,6 +699,7 @@ private fun TelegramRustApp(
                 onOpenReplyTarget = { targetId ->
                     jumpToMessageId = targetId
                     if (replyTargetIndex(messages, targetId) < 0) {
+                        markExplicitChatLoad(selectedChatId)
                         targetId.toLongOrNull()?.takeIf { it in 1 until Long.MAX_VALUE }?.let {
                             viewModel.loadMessagesBefore(selectedChatId, it + 1L)
                         }
@@ -743,7 +779,10 @@ private fun TelegramRustApp(
                         Toast.makeText(context, "Сообщения скопированы", Toast.LENGTH_SHORT).show()
                     }
                 },
-                onRetry = { viewModel.loadMessages(selectedChatId) },
+                onRetry = {
+                    markExplicitChatLoad(selectedChatId)
+                    viewModel.loadMessages(selectedChatId)
+                },
                 onTogglePin = { chatId, messageId, isPinned ->
                     val parsedChat = chatId.toLongOrNull()
                     val parsedMessage = messageId.toLongOrNull()
@@ -754,6 +793,7 @@ private fun TelegramRustApp(
                 onJumpToPinned = { messageId ->
                     jumpToMessageId = messageId
                     if (messages.none { it.id == messageId }) {
+                        markExplicitChatLoad(selectedChatId)
                         messageId.toLongOrNull()?.takeIf { it > 0 && it < Long.MAX_VALUE }?.let {
                             viewModel.loadMessagesBefore(selectedChatId, it + 1L)
                         }
