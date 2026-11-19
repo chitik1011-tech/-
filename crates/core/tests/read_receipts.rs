@@ -124,6 +124,7 @@ fn inbox_and_outbox_receipts_are_monotonic_and_persisted() {
             chat_id: 77,
             direction,
             max_message_id,
+            unread_count: None,
         });
     }
 
@@ -138,11 +139,61 @@ fn inbox_and_outbox_receipts_are_monotonic_and_persisted() {
 }
 
 #[test]
+fn inbox_receipt_applies_server_remaining_count_and_ignores_older_boundaries() {
+    let mut state = CoreState::default();
+    state.account.chats.push(ChatSummary {
+        id: 77,
+        title: "chat".into(),
+        unread_count: 4,
+        archived: None,
+        muted: None,
+        pinned: None,
+        is_unread: None,
+        unread_mentions_count: None,
+        unread_reactions_count: None,
+        last_message: Some(last_message(25)),
+    });
+
+    state.reduce(&CoreEvent::ReadReceiptUpdated {
+        chat_id: 77,
+        direction: ReadDirection::Inbox,
+        max_message_id: 20,
+        unread_count: Some(3),
+    });
+    assert_eq!(state.chat(77).unwrap().unread_count, 3);
+
+    state.reduce(&CoreEvent::ReadReceiptUpdated {
+        chat_id: 77,
+        direction: ReadDirection::Inbox,
+        max_message_id: 22,
+        unread_count: Some(1),
+    });
+    assert_eq!(state.chat(77).unwrap().unread_count, 1);
+
+    state.reduce(&CoreEvent::ReadReceiptUpdated {
+        chat_id: 77,
+        direction: ReadDirection::Inbox,
+        max_message_id: 21,
+        unread_count: Some(8),
+    });
+    assert_eq!(state.chat(77).unwrap().unread_count, 1);
+
+    state.reduce(&CoreEvent::ReadReceiptUpdated {
+        chat_id: 77,
+        direction: ReadDirection::Outbox,
+        max_message_id: 23,
+        unread_count: None,
+    });
+    assert_eq!(state.chat(77).unwrap().unread_count, 1);
+}
+
+#[test]
 fn read_receipt_wire_event_round_trips() {
     let event = CoreEvent::ReadReceiptUpdated {
         chat_id: 77,
         direction: ReadDirection::Inbox,
         max_message_id: 42,
+            unread_count: None,
     };
     let json = serde_json::to_string(&event).unwrap();
     let decoded: CoreEvent = serde_json::from_str(&json).unwrap();
@@ -174,6 +225,7 @@ fn stale_connection_receipts_are_ignored_after_reconnect() {
             chat_id: 77,
             direction: ReadDirection::Outbox,
             max_message_id: 42,
+            unread_count: None,
         }),
     });
     assert!(!state.read_receipts.contains_key(&77));
@@ -184,6 +236,7 @@ fn stale_connection_receipts_are_ignored_after_reconnect() {
             chat_id: 77,
             direction: ReadDirection::Outbox,
             max_message_id: 42,
+            unread_count: None,
         }),
     });
     state.reduce(&CoreEvent::SessionUpdate {
@@ -192,6 +245,7 @@ fn stale_connection_receipts_are_ignored_after_reconnect() {
             chat_id: 77,
             direction: ReadDirection::Outbox,
             max_message_id: 40,
+            unread_count: None,
         }),
     });
     assert_eq!(state.read_receipts[&77].outbox_max_message_id, 42);
