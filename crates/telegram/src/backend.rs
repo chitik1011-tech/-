@@ -35,7 +35,7 @@ use crate::{
         PeerRegistry, clear_peer_registry, find_peer, forget_peer, load_chats, new_peer_registry,
     },
     config::TelegramConfig,
-    contacts::load_contacts,
+    contacts::{load_contacts, search_contacts},
     downloads::{MediaTarget, event as media_event, spawn_download, state_from_snapshot},
     error::{TelegramBackendError, api_error, session_error},
     messages::{
@@ -1250,14 +1250,25 @@ impl GrammersBackend {
                 forget_peer(&self.peers, chat_id).await;
                 vec![CoreEvent::ChatLeft { chat_id }]
             }
-            CoreCommand::LoadContacts { offset, limit } => {
+            CoreCommand::LoadContacts {
+                offset,
+                limit,
+                query,
+                request_id,
+            } => {
                 self.require_ready().await?;
-                let (total, contacts) =
-                    load_contacts(&self.client, &self.peers, offset, limit).await?;
+                let (total, contacts) = if let Some(query) = query.as_deref() {
+                    let contacts = search_contacts(&self.client, &self.peers, query, limit).await?;
+                    (contacts.len(), contacts)
+                } else {
+                    load_contacts(&self.client, &self.peers, offset, limit).await?
+                };
                 vec![CoreEvent::ContactsLoaded {
                     offset,
                     total,
                     contacts,
+                    query,
+                    request_id,
                 }]
             }
             CoreCommand::ResolvePeer { input } => {
