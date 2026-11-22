@@ -1,6 +1,7 @@
 package com.chitik.telegram
 
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -54,5 +55,17 @@ class ConversationScrollPolicyTest {
         assertFalse(isLatestConversationMessageVisible(9, setOf(6, 7, 8)))
         assertTrue(isLatestConversationMessageVisible(9, setOf(8, 9)))
         assertTrue(isLatestConversationMessageVisible(-1, emptySet()))
+    }
+
+    @Test
+    fun countsEveryMessageAppendedAfterTheLastObservedMessage() {
+        assertEquals(3, newMessagesAfterAnchor(listOf("10", "11", "12", "13", "14"), "11"))
+    }
+
+    @Test
+    fun missingOrUnsetAnchorUsesSafeFallback() {
+        assertEquals(0, newMessagesAfterAnchor(listOf("1", "2"), null))
+        assertEquals(1, newMessagesAfterAnchor(listOf("1", "2"), "deleted-anchor"))
+        assertEquals(0, newMessagesAfterAnchor(emptyList(), "1"))
     }
 }

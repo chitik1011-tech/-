@@ -238,6 +238,12 @@ internal fun decideConversationScroll(
 internal fun isLatestConversationMessageVisible(latestMessageIndex: Int, visibleItemIndices: Set<Int>): Boolean =
     latestMessageIndex < 0 || latestMessageIndex in visibleItemIndices
 
+internal fun newMessagesAfterAnchor(messageIds: List<String>, previousLatestMessageId: String?): Int {
+    if (messageIds.isEmpty() || previousLatestMessageId == null) return 0
+    val anchorIndex = messageIds.indexOfLast { it == previousLatestMessageId }
+    return if (anchorIndex >= 0) messageIds.lastIndex - anchorIndex else 1
+}
+
 internal fun shouldShowPinnedTargetFallback(
     targetMessageId: String?,
     loadedMessageIds: List<String>,
@@ -340,6 +346,7 @@ fun ConversationScreen(
     val listScope = rememberCoroutineScope()
     var hasOpenedConversation by rememberSaveable(state.chatId) { mutableStateOf(false) }
     var showNewMessages by rememberSaveable(state.chatId) { mutableStateOf(false) }
+    var pendingNewMessageCount by rememberSaveable(state.chatId) { mutableStateOf(0) }
     var lastObservedLatestMessageId by rememberSaveable(state.chatId) { mutableStateOf<String?>(null) }
     var viewerKey by rememberSaveable(state.chatId) { mutableStateOf<String?>(null) }
     var missingPinnedTarget by remember(state.chatId, state.selectionGeneration) { mutableStateOf<String?>(null) }
@@ -451,6 +458,12 @@ fun ConversationScreen(
 
         if (decision.scrollToLatest) {
             listState.animateScrollToItem(state.messages.lastIndex)
+            pendingNewMessageCount = 0
+        } else if (decision.showNewMessages == true) {
+            pendingNewMessageCount += newMessagesAfterAnchor(
+                messageIds = state.messages.map { it.id },
+                previousLatestMessageId = lastObservedLatestMessageId,
+            ).coerceAtLeast(1)
         }
         decision.showNewMessages?.let { showNewMessages = it }
         hasOpenedConversation = true
@@ -465,7 +478,10 @@ fun ConversationScreen(
                 visibleItemIndices = listState.layoutInfo.visibleItemsInfo.map { item -> item.index }.toSet(),
             )
         }.collect { isAtLatest ->
-            if (isAtLatest) showNewMessages = false
+            if (isAtLatest) {
+                showNewMessages = false
+                pendingNewMessageCount = 0
+            }
         }
     }
 
@@ -924,10 +940,11 @@ fun ConversationScreen(
                                         }
                                     }
                                     showNewMessages = false
+                                    pendingNewMessageCount = 0
                                 },
                                 modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp),
                             ) {
-                                Text("Новые сообщения ↓")
+                                Text("Новые сообщения${pendingNewMessageCount.takeIf { it > 0 }?.let { " · $it" }.orEmpty()} ↓")
                             }
                         }
                     }
