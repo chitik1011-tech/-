@@ -111,6 +111,8 @@ class VoiceAttachmentTest {
             assertEquals(2, player.playCalls)
             assertEquals(1, player.stopCalls)
 
+            coordinator.toggle(second) // Explicit user pause clears the pending play intent.
+            assertEquals(1, player.pauseCalls)
             coordinator.onHostStop()
             coordinator.onHostStart()
             assertEquals("paused playback must not resume", 2, player.playCalls)
