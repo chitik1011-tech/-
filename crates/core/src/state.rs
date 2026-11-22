@@ -1485,7 +1485,11 @@ impl CoreState {
     fn upsert_message(&mut self, message: MessageSummary) -> bool {
         let messages = self.messages.entry(message.chat_id).or_default();
         let inserted = if let Some(index) = messages.iter().position(|item| item.id == message.id) {
-            let merged = merge_message_snapshot(&messages[index], &message);
+            // Live stream events are applied in receipt order. Keep the latest
+            // duplicate event authoritative; only history-page snapshots need
+            // edit-aware merging because their request may have predated an edit.
+            let mut merged = message;
+            preserve_reaction_snapshot(&messages[index], &mut merged);
             messages[index] = merged;
             false
         } else {
