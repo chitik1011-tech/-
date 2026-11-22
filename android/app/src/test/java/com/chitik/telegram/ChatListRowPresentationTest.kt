@@ -93,6 +93,26 @@ class ChatListRowPresentationTest {
     }
 
     @Test
+    fun activeTelegramChatActivityReplacesMessagePreviewUntilItEnds() {
+        val row = chat(
+            lastMessage = ChatListPreview("Last message", now.epochSecond, true),
+            activityStatus = "печатает…",
+        ).toChatListRowPresentation(now, ZoneOffset.UTC, Locale.US)
+
+        assertEquals("печатает…", row.preview)
+        assertTrue(row.isActivityStatus)
+        assertFalse(row.outgoingPreview)
+        assertEquals("Morgan, 18:00, печатает…", row.accessibilityLabel)
+
+        val idle = chat(
+            lastMessage = ChatListPreview("Last message", now.epochSecond, true),
+            activityStatus = " ",
+        ).toChatListRowPresentation(now, ZoneOffset.UTC, Locale.US)
+        assertEquals("You: Last message", idle.preview)
+        assertFalse(idle.isActivityStatus)
+    }
+
+    @Test
     fun unavailableMessageFieldsStayAbsentAndDoNotInventReadState() {
         val noMessage = chat(lastMessage = null).toChatListRowPresentation(now, ZoneOffset.UTC, Locale.US)
         assertEquals("No messages yet", noMessage.preview)
@@ -113,6 +133,7 @@ class ChatListRowPresentationTest {
         unreadMentionsCount: Long? = null,
         unreadReactionsCount: Long? = null,
         isUnread: Boolean? = null,
+        activityStatus: String? = null,
         lastMessage: ChatListPreview?,
     ) = ChatListEntry(
         id = 45,
@@ -122,5 +143,6 @@ class ChatListRowPresentationTest {
         unreadMentionsCount = unreadMentionsCount,
         unreadReactionsCount = unreadReactionsCount,
         isUnread = isUnread,
+        activityStatus = activityStatus,
     )
 }

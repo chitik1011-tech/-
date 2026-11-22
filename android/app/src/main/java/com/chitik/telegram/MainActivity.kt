@@ -565,7 +565,13 @@ private fun TelegramRustApp(
         )
 
         selectedChatId == 0L -> ChatListScreen(
-            chats = state.chats,
+            chats = state.chats.map { chat ->
+                chat.copy(
+                    activityStatus = com.chitik.telegram.nativebridge.chatActivityStatus(
+                        state.chatActivities[chat.id].orEmpty(),
+                    ),
+                )
+            },
             selectedChatId = null,
             isLoading = state.busy || state.chatPagination.loading,
             error = state.error ?: state.chatPagination.error.takeIf { state.chats.isEmpty() },

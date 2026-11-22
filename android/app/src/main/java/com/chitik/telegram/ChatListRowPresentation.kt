@@ -10,6 +10,7 @@ internal data class ChatListRowPresentation(
     val timestamp: String?,
     val preview: String?,
     val outgoingPreview: Boolean,
+    val isActivityStatus: Boolean,
     val unreadLabel: String?,
     val unreadMentionsLabel: String?,
     val unreadReactionsLabel: String?,
@@ -41,13 +42,14 @@ internal fun ChatListEntry.toChatListRowPresentation(
         MessageTimestampFormatter.format(it.timestampUnix, now, zoneId, locale)
     }?.takeIf(String::isNotBlank)
     val text = message?.text?.trim()?.takeIf(String::isNotEmpty)
-    val preview = when {
+    val currentActivityStatus = this.activityStatus?.trim()?.takeIf(String::isNotEmpty)
+    val preview = currentActivityStatus ?: when {
         message == null -> "No messages yet"
         text == null -> null
         message.outgoing -> "You: $text"
         else -> text
     }
-    val outgoingPreview = message?.outgoing == true && text != null
+    val outgoingPreview = currentActivityStatus == null && message?.outgoing == true && text != null
     val unreadLabel = formatUnreadCount(unreadCount)
     val unreadMentionsLabel = unreadMentionsCount?.let(::formatUnreadCount)
     val unreadReactionsLabel = unreadReactionsCount?.let(::formatUnreadCount)
@@ -68,6 +70,7 @@ internal fun ChatListEntry.toChatListRowPresentation(
         timestamp = timestamp,
         preview = preview,
         outgoingPreview = outgoingPreview,
+        isActivityStatus = currentActivityStatus != null,
         unreadLabel = unreadLabel,
         unreadMentionsLabel = unreadMentionsLabel,
         unreadReactionsLabel = unreadReactionsLabel,
