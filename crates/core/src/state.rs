@@ -929,6 +929,24 @@ impl CoreState {
             CoreEvent::ChatMemberInvited { .. }
             | CoreEvent::MessageMutationSucceeded { .. }
             | CoreEvent::MessageMutationFailed { .. } => {}
+            CoreEvent::ChatMemberKicked { chat_id, user_id } => {
+                if let Some(profile) = self.profiles.get_mut(chat_id) {
+                    let removed_from_snapshot = if let Some(members) = profile.members.as_mut() {
+                        let previous_len = members.len();
+                        members.retain(|member| member.user_id != *user_id);
+                        members.len() < previous_len
+                    } else {
+                        false
+                    };
+                    if removed_from_snapshot {
+                        profile.member_count =
+                            profile.member_count.map(|count| count.saturating_sub(1));
+                    } else {
+                        profile.member_count = None;
+                    }
+                }
+                self.last_error = None;
+            }
             CoreEvent::MessageEdited(message) => {
                 if self.apply_message_edit(message) {
                     self.last_error = None;

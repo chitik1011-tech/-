@@ -50,6 +50,11 @@ pub enum CoreCommand {
         chat_id: i64,
         user_id: i64,
     },
+    /// Remove a user from a group/channel without revoking their message history.
+    KickChatMember {
+        chat_id: i64,
+        user_id: i64,
+    },
     /// Load one page from the authenticated account's Telegram contacts.
     LoadContacts {
         offset: usize,
@@ -246,6 +251,7 @@ impl CoreCommand {
             Self::LeaveChat { .. } => "leave_chat",
             Self::JoinChat { .. } => "join_chat",
             Self::InviteUserToChat { .. } => "invite_user_to_chat",
+            Self::KickChatMember { .. } => "kick_chat_member",
             Self::LoadContacts { .. } => "load_contacts",
             Self::AddContactByUsername { .. } => "add_contact_by_username",
             Self::LoadMessages { .. } => "load_messages",
@@ -597,6 +603,16 @@ impl CoreCommand {
                 if *user_id <= 0 {
                     Err(CoreError::InvalidInput(
                         "invite target user id must be positive".into(),
+                    ))
+                } else {
+                    Ok(())
+                }
+            }
+            Self::KickChatMember { chat_id, user_id } => {
+                validate_chat_id(*chat_id)?;
+                if *user_id <= 0 {
+                    Err(CoreError::InvalidInput(
+                        "kick target user id must be positive".into(),
                     ))
                 } else {
                     Ok(())
