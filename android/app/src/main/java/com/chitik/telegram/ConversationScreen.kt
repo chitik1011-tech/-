@@ -217,6 +217,9 @@ internal fun selectedForwardMessageIds(messages: List<ConversationMessageUi>, se
 internal fun replyTargetIndex(messages: List<ConversationMessageUi>, messageId: String): Int =
     messages.indexOfFirst { it.id == messageId }
 
+internal fun replyComposerTargetId(messageId: String?): String? =
+    messageId?.takeIf { it.isNotBlank() }
+
 internal data class ConversationScrollDecision(
     val scrollToLatest: Boolean,
     /** Null means the current new-message affordance state should be preserved. */
@@ -713,7 +716,9 @@ fun ConversationScreen(
                         onSendLocation = { onSendLocation(state.chatId) },
                         onPickPhotoOrVideo = onPickPhotoOrVideo,
                         onPickDocument = onPickDocument,
+                        replyingToMessageId = state.replyingToMessageId,
                         replyingToPreview = state.replyingToPreview,
+                        onOpenReplyTarget = onOpenReplyTarget,
                         onCancelReply = onCancelReply,
                     )
                 }
@@ -1988,7 +1993,9 @@ private fun ComposerBar(
     onPickPhotoOrVideo: (() -> Unit)? = null,
     onPickDocument: (() -> Unit)? = null,
     showLocationAction: Boolean = true,
+    replyingToMessageId: String? = null,
     replyingToPreview: String? = null,
+    onOpenReplyTarget: (String) -> Unit = {},
     onCancelReply: () -> Unit = {},
 ) {
     val canSubmit = draft.isNotBlank() && !sending && canSend && !voiceRecording
@@ -2014,12 +2021,43 @@ private fun ComposerBar(
                 )
             }
             replyingToPreview?.let { preview ->
+                val replyTarget = replyComposerTargetId(replyingToMessageId)
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(preview, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis,
-                        style = MaterialTheme.typography.labelMedium)
+                    Surface(
+                        modifier = Modifier.padding(end = 8.dp).size(width = 3.dp, height = 34.dp),
+                        shape = RoundedCornerShape(2.dp),
+                        color = MaterialTheme.colorScheme.primary,
+                    ) {}
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .then(
+                                if (replyTarget != null) {
+                                    Modifier
+                                        .clickable(onClickLabel = "Перейти к исходному сообщению") {
+                                            onOpenReplyTarget(replyTarget)
+                                        }
+                                        .semantics {
+                                            contentDescription = "Ответ на сообщение: $preview. Перейти к исходному сообщению"
+                                        }
+                                } else {
+                                    Modifier
+                                },
+                            )
+                            .padding(vertical = 3.dp),
+                    ) {
+                        Text(
+                            "Ответ",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(preview, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.labelMedium)
+                    }
                     TextButton(onClick = onCancelReply) { Text("Отмена") }
                 }
             }
