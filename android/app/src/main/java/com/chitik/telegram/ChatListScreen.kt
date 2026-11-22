@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -40,6 +41,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Refresh
@@ -49,6 +51,7 @@ import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.ManageSearch
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -299,95 +302,105 @@ fun ChatListScreen(
                     )
                 }
             }
-            if (error != null && asyncContentErrorPlacement(contentMode) == AsyncContentErrorPlacement.Inline) {
-                ErrorRetryState(
-                    title = "Couldn’t load chats", message = error,
-                    retryLabel = "Try again", retryEnabled = !isLoading, onRetry = onRefresh,
-                )
-            }
-            when (contentMode) {
-                AsyncContentMode.Loading -> LoadingState(
-                    message = "Loading chats…",
-                    modifier = Modifier.weight(1f).fillMaxWidth().padding(24.dp),
-                )
-                AsyncContentMode.Empty -> EmptyState(
-                    title = "No conversations yet",
-                    description = "Your Telegram conversations will appear here.",
-                    actionLabel = if (hasMoreChats && query.isBlank()) "Load more chats" else "Refresh chats",
-                    onAction = if (hasMoreChats && query.isBlank()) onLoadMoreChats else onRefresh,
-                    modifier = Modifier.weight(1f).fillMaxWidth().padding(24.dp),
-                )
-                AsyncContentMode.Error -> error?.let { message ->
-                    Box(
-                        modifier = Modifier.weight(1f).fillMaxWidth().padding(24.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        ErrorRetryState(
-                            title = "Couldn’t load chats",
-                            message = message,
-                            retryLabel = "Try again",
-                            retryEnabled = !isLoading,
-                            onRetry = onRefresh,
-                        )
-                    }
+            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                if (error != null && asyncContentErrorPlacement(contentMode) == AsyncContentErrorPlacement.Inline) {
+                    ErrorRetryState(
+                        title = "Couldn’t load chats", message = error,
+                        retryLabel = "Try again", retryEnabled = !isLoading, onRetry = onRefresh,
+                    )
                 }
-                AsyncContentMode.Content -> LazyColumn(
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
-                    state = listState,
-                ) {
-                    if (visibleChats.isEmpty()) {
-                        item(key = "search_empty") {
-                            Column(
-                                modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp, vertical = 48.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.spacedBy(8.dp),
-                            ) {
-                                Icon(
-                                    Icons.Default.Search,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(28.dp),
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                                Text(
-                                    "No matching loaded chats",
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                        }
-                    }
-                    items(visibleChats, key = ChatListEntry::id) { chat ->
-                        ChatListRow(
-                            chat = chat,
-                            selected = chat.id == selectedChatId,
-                            onClick = { onChatSelected(chat.id) },
-                        )
-                        HorizontalDivider(
-                            modifier = Modifier.padding(start = TelegramUiTokens.chatListDividerInset),
-                            thickness = 0.5.dp,
-                            color = MaterialTheme.colorScheme.outlineVariant,
-                        )
-                    }
-                    if (chatPageError != null) {
-                        item(key = "chat_page_error") {
+                when (contentMode) {
+                    AsyncContentMode.Loading -> LoadingState(
+                        message = "Loading chats…",
+                        modifier = Modifier.fillMaxSize().padding(24.dp),
+                    )
+                    AsyncContentMode.Empty -> EmptyState(
+                        title = "No conversations yet",
+                        description = "Your Telegram conversations will appear here.",
+                        actionLabel = if (hasMoreChats && query.isBlank()) "Load more chats" else "Refresh chats",
+                        onAction = if (hasMoreChats && query.isBlank()) onLoadMoreChats else onRefresh,
+                        modifier = Modifier.fillMaxSize().padding(24.dp),
+                    )
+                    AsyncContentMode.Error -> error?.let { message ->
+                        Box(
+                            modifier = Modifier.fillMaxSize().padding(24.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
                             ErrorRetryState(
-                                title = "Couldn’t load more chats",
-                                message = chatPageError,
-                                retryLabel = "Retry",
-                                retryEnabled = !isLoadingMoreChats,
-                                onRetry = onRetryChatPage,
-                                modifier = Modifier.padding(16.dp),
+                                title = "Couldn’t load chats",
+                                message = message,
+                                retryLabel = "Try again",
+                                retryEnabled = !isLoading,
+                                onRetry = onRefresh,
                             )
                         }
-                    } else if (hasMoreChats && isLoadingMoreChats) {
-                        item(key = "chat_page_loading") {
-                            Box(
-                                modifier = Modifier.fillMaxWidth().padding(20.dp),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                    }
+                    AsyncContentMode.Content -> LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        state = listState,
+                    ) {
+                        if (visibleChats.isEmpty()) {
+                            item(key = "search_empty") {
+                                Column(
+                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp, vertical = 48.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    Icon(
+                                        Icons.Default.Search,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(28.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    Text(
+                                        "No matching loaded chats",
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
                             }
                         }
+                        items(visibleChats, key = ChatListEntry::id) { chat ->
+                            ChatListRow(
+                                chat = chat,
+                                selected = chat.id == selectedChatId,
+                                onClick = { onChatSelected(chat.id) },
+                            )
+                            HorizontalDivider(
+                                modifier = Modifier.padding(start = TelegramUiTokens.chatListDividerInset),
+                                thickness = 0.5.dp,
+                                color = MaterialTheme.colorScheme.outlineVariant,
+                            )
+                        }
+                        if (chatPageError != null) {
+                            item(key = "chat_page_error") {
+                                ErrorRetryState(
+                                    title = "Couldn’t load more chats",
+                                    message = chatPageError,
+                                    retryLabel = "Retry",
+                                    retryEnabled = !isLoadingMoreChats,
+                                    onRetry = onRetryChatPage,
+                                    modifier = Modifier.padding(16.dp),
+                                )
+                            }
+                        } else if (hasMoreChats && isLoadingMoreChats) {
+                            item(key = "chat_page_loading") {
+                                Box(
+                                    modifier = Modifier.fillMaxWidth().padding(20.dp),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                                }
+                            }
+                        }
+                    }
+                }
+                if (chatListShouldShowNewChatAction(searching)) {
+                    FloatingActionButton(
+                        onClick = onOpenContacts,
+                        modifier = Modifier.align(Alignment.BottomEnd).navigationBarsPadding().padding(16.dp),
+                    ) {
+                        Icon(Icons.Default.Edit, contentDescription = "New message")
                     }
                 }
             }
@@ -490,6 +503,8 @@ private fun ChatListRow(chat: ChatListEntry, selected: Boolean, onClick: () -> U
 }
 
 internal data class ChatListMessageSearchAction(val onClick: () -> Unit)
+
+internal fun chatListShouldShowNewChatAction(searching: Boolean): Boolean = !searching
 
 internal fun chatListMessageSearchAction(
     onOpenMessageSearch: (() -> Unit)?,
