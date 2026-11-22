@@ -69,17 +69,17 @@ fn parse_chat_join_url(input: &str) -> Result<ChatJoinTarget, PeerParseError> {
     let path = path.strip_prefix('/').ok_or(PeerParseError::InvalidUrl)?;
     let segments: Vec<_> = path.split('/').collect();
     match segments.as_slice() {
-        [username] => {
-            let username = username.to_ascii_lowercase();
-            validate_username(&username)?;
-            Ok(ChatJoinTarget::PublicUsername { username })
-        }
         [invite] if invite.starts_with('+') => {
             let hash = &invite[1..];
             validate_invite_hash(hash)?;
             Ok(ChatJoinTarget::InviteHash {
                 hash: hash.to_owned(),
             })
+        }
+        [username] => {
+            let username = username.to_ascii_lowercase();
+            validate_username(&username)?;
+            Ok(ChatJoinTarget::PublicUsername { username })
         }
         ["joinchat", hash] => {
             validate_invite_hash(hash)?;
