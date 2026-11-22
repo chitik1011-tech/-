@@ -10,6 +10,29 @@ import org.junit.Test
 
 class VoicePlaybackCoordinatorTest {
     @Test
+    fun shortVoiceCompletionPublishesDurationEvenBeforeFirstProgressTick() {
+        val directory = Files.createTempDirectory("voice-playback-fast-complete").toFile()
+        val file = File(directory, "short.ogg").apply { writeBytes(byteArrayOf(1)) }
+        val player = FakeVoicePlayer(positionMs = 1_000L, durationMs = 1_000L)
+        val coordinator = VoicePlaybackCoordinator(VoicePlayerFactory { player }, FakeScheduler())
+        try {
+            coordinator.toggle(file)
+            val listener = player.currentListener!!
+            listener.onPlayingChanged(true)
+
+            assertEquals(0L, coordinator.state.durationMs)
+            listener.onCompleted()
+
+            assertFalse(coordinator.state.isPlaying)
+            assertEquals(1_000L, coordinator.state.positionMs)
+            assertEquals(1_000L, coordinator.state.durationMs)
+        } finally {
+            coordinator.release()
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
     fun callbacksAndProgressFromReplacedPlayerCannotMutateCurrentPlayback() {
         val directory = Files.createTempDirectory("voice-playback-epoch").toFile()
         val firstFile = File(directory, "first.ogg").apply { writeBytes(byteArrayOf(1)) }
