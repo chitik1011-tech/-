@@ -78,6 +78,7 @@ data class ChatListEntry(
     val unreadMentionsCount: Long? = null,
     val unreadReactionsCount: Long? = null,
     val isUnread: Boolean? = null,
+    val activityStatus: String? = null,
 )
 
 data class ChatListPreview(
@@ -458,7 +459,8 @@ private fun ChatListRow(chat: ChatListEntry, selected: Boolean, onClick: () -> U
                         fontSize = TelegramUiTokens.chatPreviewTextSize,
                         lineHeight = TelegramUiTokens.chatRowTextLineHeight,
                     ),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = if (presentation.isActivityStatus) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
