@@ -4,6 +4,105 @@ use std::fmt;
 use crate::error::CoreError;
 
 pub const MAX_PEER_REFERENCE_LENGTH: usize = 2_048;
+pub const MAX_CHAT_INVITE_HASH_LENGTH: usize = 256;
+
+/// A public Telegram group/channel identity or a private invite token.
+/// Constructing this value never performs network I/O or joins a chat.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "value", rename_all = "snake_case")]
+pub enum ChatJoinTarget {
+    PublicUsername { username: String },
+    InviteHash { hash: String },
+}
+
+impl ChatJoinTarget {
+    /// Validate a target received over the Rust/Android wire boundary.
+    pub fn validate(&self) -> Result<(), PeerParseError> {
+        match self {
+            Self::PublicUsername { username } => validate_username(username),
+            Self::InviteHash { hash } => validate_invite_hash(hash),
+        }
+    }
+}
+
+/// Parse an explicit public username or Telegram invite link into a join target.
+/// Accepted links are restricted to `t.me` and `www.t.me`; parsing has no side effects.
+pub fn parse_chat_join_target(input: &str) -> Result<ChatJoinTarget, PeerParseError> {
+    let input = input.trim();
+    if let Some(username) = input.strip_prefix('@') {
+        validate_username(username)?;
+        return Ok(ChatJoinTarget::PublicUsername {
+            username: username.to_ascii_lowercase(),
+        });
+    }
+
+    if input.starts_with("http://") || input.starts_with("https://") {
+        return parse_chat_join_url(input);
+    }
+
+    Err(PeerParseError::UnsupportedUrl)
+}
+
+fn parse_chat_join_url(input: &str) -> Result<ChatJoinTarget, PeerParseError> {
+    let (scheme, rest) = input.split_once("://").ok_or(PeerParseError::InvalidUrl)?;
+    if scheme != "http" && scheme != "https" {
+        return Err(PeerParseError::UnsupportedUrl);
+    }
+    let authority_end = rest
+        .find(|ch| ch == '/' || ch == '?' || ch == '#')
+        .unwrap_or(rest.len());
+    let authority = &rest[..authority_end];
+    if authority.contains('@') || authority.contains(':') || authority.is_empty() {
+        return Err(PeerParseError::InvalidUrl);
+    }
+    if authority != "t.me" && authority != "www.t.me" {
+        return Err(PeerParseError::UnsupportedUrl);
+    }
+
+    let suffix = &rest[authority_end..];
+    if suffix.contains('#') {
+        return Err(PeerParseError::InvalidUrl);
+    }
+    let path = suffix.split_once('?').map_or(suffix, |(path, _)| path);
+    if path.contains('%') || !path.is_ascii() {
+        return Err(PeerParseError::InvalidUrl);
+    }
+    let path = path.strip_prefix('/').ok_or(PeerParseError::InvalidUrl)?;
+    let segments: Vec<_> = path.split('/').collect();
+    match segments.as_slice() {
+        [username] => {
+            validate_username(username)?;
+            Ok(ChatJoinTarget::PublicUsername {
+                username: username.to_ascii_lowercase(),
+            })
+        }
+        [invite] if invite.starts_with('+') => {
+            let hash = &invite[1..];
+            validate_invite_hash(hash)?;
+            Ok(ChatJoinTarget::InviteHash {
+                hash: hash.to_owned(),
+            })
+        }
+        ["joinchat", hash] => {
+            validate_invite_hash(hash)?;
+            Ok(ChatJoinTarget::InviteHash {
+                hash: (*hash).to_owned(),
+            })
+        }
+        _ => Err(PeerParseError::UnsupportedUrl),
+    }
+}
+
+fn validate_invite_hash(hash: &str) -> Result<(), PeerParseError> {
+    if !(1..=MAX_CHAT_INVITE_HASH_LENGTH).contains(&hash.len())
+        || !hash
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+    {
+        return Err(PeerParseError::InvalidUrl);
+    }
+    Ok(())
+}
 
 /// A syntactically validated target. Parsing is deterministic and never performs I/O.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -335,6 +434,72 @@ fn parse_positive_i64(value: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_explicit_public_join_targets_and_invites_without_network_access() {
+        assert_eq!(
+            parse_chat_join_target("@Example_Channel").unwrap(),
+            ChatJoinTarget::PublicUsername {
+                username: "example_channel".into()
+            }
+        );
+        assert_eq!(
+            parse_chat_join_target("https://t.me/Example_Channel").unwrap(),
+            ChatJoinTarget::PublicUsername {
+                username: "example_channel".into()
+            }
+        );
+        assert_eq!(
+            parse_chat_join_target("https://t.me/+AbC_123-x?single").unwrap(),
+            ChatJoinTarget::InviteHash {
+                hash: "AbC_123-x".into()
+            }
+        );
+        assert_eq!(
+            parse_chat_join_target("http://www.t.me/joinchat/AbC_123-x").unwrap(),
+            ChatJoinTarget::InviteHash {
+                hash: "AbC_123-x".into()
+            }
+        );
+    }
+
+    #[test]
+    fn chat_join_target_validation_rejects_ambiguous_or_hostile_links() {
+        for input in [
+            "https://t.me.evil/+AbC_123",
+            "https://user@t.me/+AbC_123",
+            "https://t.me:443/+AbC_123",
+            "https://t.me/%2bAbC_123",
+            "https://t.me/joinchat/invalid.hash",
+            "https://t.me/a_channel/extra",
+            "https://t.me/+",
+            "@ab",
+        ] {
+            assert!(parse_chat_join_target(input).is_err(), "{input}");
+        }
+
+        assert!(
+            ChatJoinTarget::InviteHash {
+                hash: "valid_1".into()
+            }
+            .validate()
+            .is_ok()
+        );
+        assert!(
+            ChatJoinTarget::InviteHash {
+                hash: "bad/hash".into()
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            ChatJoinTarget::PublicUsername {
+                username: "A-valid".into()
+            }
+            .validate()
+            .is_err()
+        );
+    }
 
     #[test]
     fn parses_usernames_and_normalizes_ascii_case() {

@@ -10,6 +10,7 @@ use grammers_client::{
     Client,
     media::Media,
     message::InputReactions,
+    peer::Peer,
     sender::{SenderPool, SenderPoolHandle},
     session::{storages::SqliteSession, types::PeerKind, updates::UpdatesLike},
     tl,
@@ -18,10 +19,10 @@ use tg_media_cache::{CacheConfig, MediaCache};
 use tg_mobile_core::{
     AttachmentDownloadState, AuthorizationState, BackendFuture, BackendUpdateReceiver,
     BackendUpdateSender, ConnectionToken, CoreCommand, CoreError, CoreEvent, DownloadState,
-    ForwardMessagesResult, ForwardOutcome, MessageLinkResolution, MessagePeer, MessageSummary,
-    OutgoingMediaAttachment, OutgoingSend, PeerReference, PeerResolution, TelegramBackend,
-    TransferDirection, TransferError, TransferManager, TransferState, TransferToken, UploadState,
-    backend_update_channel,
+    ChatJoinTarget, ForwardMessagesResult, ForwardOutcome, MessageLinkResolution, MessagePeer,
+    MessageSummary, OutgoingMediaAttachment, OutgoingSend, PeerReference, PeerResolution,
+    TelegramBackend, TransferDirection, TransferError, TransferManager, TransferState,
+    TransferToken, UploadState, backend_update_channel, parse_chat_join_target,
 };
 use tokio::{
     sync::{broadcast, mpsc, watch},
@@ -1249,6 +1250,92 @@ impl GrammersBackend {
                     .map_err(|error| crate::error::api_error("leave group or channel", error))?;
                 forget_peer(&self.peers, chat_id).await;
                 vec![CoreEvent::ChatLeft { chat_id }]
+            }
+            CoreCommand::JoinChat { input } => {
+                self.require_ready().await?;
+                let target = parse_chat_join_target(&input)?;
+                let joined = match target {
+                    ChatJoinTarget::PublicUsername { username } => {
+                        let peer = self
+                            .client
+                            .resolve_username(&username)
+                            .await
+                            .map_err(|error| {
+                                crate::error::api_error("resolve join target", error)
+                            })?
+                            .ok_or_else(|| {
+                                CoreError::InvalidInput(
+                                    "Telegram username was not found".into(),
+                                )
+                            })?;
+                        let joinable = match &peer {
+                            Peer::Channel(_) => true,
+                            Peer::Group(group) => group.is_megagroup(),
+                            Peer::User(_) | Peer::Community(_) => false,
+                        };
+                        if !joinable {
+                            return Err(CoreError::InvalidInput(
+                                "username does not identify a public group or channel".into(),
+                            ));
+                        }
+                        let peer_ref = peer
+                            .to_ref()
+                            .await
+                            .map_err(|error| CoreError::Backend(error.to_string()))?
+                            .ok_or_else(|| {
+                                CoreError::Backend(
+                                    "Telegram did not provide access to the public chat".into(),
+                                )
+                            })?;
+                        self.client
+                            .join_chat(peer_ref)
+                            .await
+                            .map_err(|error| {
+                                crate::error::api_error("join public Telegram chat", error)
+                            })?
+                            .ok_or_else(|| {
+                                CoreError::Backend(
+                                    "Telegram did not confirm joining the public chat".into(),
+                                )
+                            })?
+                    }
+                    ChatJoinTarget::InviteHash { hash } => self
+                        .client
+                        .accept_invite_link(&format!("https://t.me/+{hash}"))
+                        .await
+                        .map_err(|error| {
+                            crate::error::api_error("join Telegram invite", error)
+                        })?
+                        .ok_or_else(|| {
+                            CoreError::Backend(
+                                "Telegram did not confirm joining; the invite may require approval".into(),
+                            )
+                        })?,
+                };
+                if !matches!(&joined, Peer::Group(_) | Peer::Channel(_)) {
+                    return Err(CoreError::InvalidInput(
+                        "invite did not resolve to a group or channel".into(),
+                    ));
+                }
+                let chat_id = crate::ids::peer_id_to_core(joined.id());
+                let peer_ref = joined
+                    .to_ref()
+                    .await
+                    .map_err(|error| CoreError::Backend(error.to_string()))?
+                    .ok_or_else(|| {
+                        CoreError::Backend("joined Telegram chat has no peer reference".into())
+                    })?;
+                crate::chats::remember_peer(&self.peers, chat_id, peer_ref).await;
+
+                // Refresh the current chat list so the newly joined dialog is visible.
+                let (chats, capabilities) = load_chats(&self.client, &self.peers, 100).await?;
+                let mut events = vec![CoreEvent::ChatsLoaded(chats)];
+                events.extend(
+                    capabilities
+                        .into_iter()
+                        .map(CoreEvent::ChatCapabilitiesUpdated),
+                );
+                events
             }
             CoreCommand::LoadContacts {
                 offset,
