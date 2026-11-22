@@ -183,7 +183,22 @@ class VoicePlaybackCoordinator internal constructor(
         override fun onCompleted() {
             if (!isCurrent(source, epoch)) return
             stopProgressTick()
-            update(state.copy(isPlaying = false, positionMs = state.durationMs))
+            val durationMs = runCatching { source.durationMs() }
+                .getOrNull()
+                ?.coerceAtLeast(0L)
+                ?: state.durationMs
+            val completedPositionMs = durationMs.takeIf { it > 0L }
+                ?: runCatching { source.currentPositionMs() }
+                    .getOrNull()
+                    ?.coerceAtLeast(0L)
+                ?: state.positionMs
+            update(
+                state.copy(
+                    isPlaying = false,
+                    positionMs = completedPositionMs,
+                    durationMs = durationMs,
+                ),
+            )
         }
 
         override fun onError(message: String) {
