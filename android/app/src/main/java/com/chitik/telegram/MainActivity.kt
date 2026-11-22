@@ -192,6 +192,7 @@ private fun TelegramRustApp(
     val context = LocalContext.current
     val lifecycleOwner = remember(context) { context.findLifecycleOwner() }
     var selectedChatId by rememberSaveable { mutableLongStateOf(0L) }
+    var selectedChatAccountUserId by rememberSaveable { mutableLongStateOf(0L) }
     var lastExplicitChatLoadId by remember(state.accountUserId) { mutableStateOf<Long?>(null) }
     var showContacts by rememberSaveable { mutableStateOf(false) }
     var showGlobalMessageSearch by rememberSaveable { mutableStateOf(false) }
@@ -199,6 +200,10 @@ private fun TelegramRustApp(
         mutableStateOf(emptyMap<ChatDraftKey, String>())
     }
     val draftAccountUserId = state.accountUserId ?: 0L
+    fun selectChat(chatId: Long, accountUserId: Long? = state.accountUserId) {
+        selectedChatId = chatId
+        selectedChatAccountUserId = if (chatId == 0L) 0L else accountUserId ?: 0L
+    }
     LaunchedEffect(state.accountIdentityResolved, state.accountUserId) {
         if (state.accountIdentityResolved && state.accountUserId != null && state.accountUserId != 0L) {
             draftsByChatId = draftsForAccount(draftsByChatId, draftAccountUserId)
@@ -309,7 +314,7 @@ private fun TelegramRustApp(
                 }
             }
             is NotificationRouteResolution.OpenChat -> {
-                selectedChatId = resolution.chatId
+                selectChat(resolution.chatId)
                 showContacts = false
                 loadChat(resolution.chatId)
                 onDismissNotification()
@@ -325,6 +330,8 @@ private fun TelegramRustApp(
         state.busy,
         state.loadingHistoryBefore,
         selectedChatId,
+        selectedChatAccountUserId,
+        state.accountIdentityResolved,
         state.messages,
         incomingLink,
         incomingNotificationRoute,
@@ -332,7 +339,11 @@ private fun TelegramRustApp(
         showGlobalMessageSearch,
     ) {
         val restoredChatId = selectedChatId
-        if (shouldLoadRestoredSelectedChat(
+        if (chatSelectionBelongsToActiveAccount(
+                selectedChatAccountUserId = selectedChatAccountUserId.takeIf { it > 0L },
+                accountIdentityResolved = state.sessionRestoreComplete && state.accountIdentityResolved,
+                activeAccountUserId = state.accountUserId,
+            ) && shouldLoadRestoredSelectedChat(
                 activityStateRestored = activityStateRestored,
                 sessionRestoreComplete = state.sessionRestoreComplete,
                 authorizationReady = state.authorization == AuthorizationUiStep.Ready,
@@ -470,7 +481,7 @@ private fun TelegramRustApp(
                 wasAuthorizationReady = previousAuthorizationReady,
                 isAuthorizationReady = authorizationReady,
             )) {
-            selectedChatId = 0L
+            selectChat(0L)
             showContacts = false
             showGlobalMessageSearch = false
             profilePeerId = 0L
@@ -482,6 +493,30 @@ private fun TelegramRustApp(
         }
         previousAuthorizationReady = authorizationReady
     }
+    LaunchedEffect(
+        state.sessionRestoreComplete,
+        state.accountIdentityResolved,
+        state.accountUserId,
+        selectedChatId,
+        selectedChatAccountUserId,
+    ) {
+        if (shouldClearChatSelectionForAccountMismatch(
+                selectedChatId = selectedChatId,
+                selectedChatAccountUserId = selectedChatAccountUserId.takeIf { it > 0L },
+                accountIdentityResolved = state.sessionRestoreComplete && state.accountIdentityResolved,
+                activeAccountUserId = state.accountUserId,
+            )
+        ) {
+            selectChat(0L)
+            showContacts = false
+            showGlobalMessageSearch = false
+            profilePeerId = 0L
+            replyToMessageId = null
+            replyToPreview = null
+            jumpToMessageId = null
+            pendingLocationChatId = 0L
+        }
+    }
     LaunchedEffect(state.lastEventType, state.lastEventPayload) {
         if (state.lastEventType == "chat_left") {
             val chatId = runCatching {
@@ -491,7 +526,7 @@ private fun TelegramRustApp(
             }.getOrNull()
             if (chatId != null && chatId == selectedChatId) {
                 setCurrentDraft("")
-                selectedChatId = 0L
+                selectChat(0L)
                 profilePeerId = 0L
                 replyToMessageId = null
                 replyToPreview = null
@@ -519,7 +554,7 @@ private fun TelegramRustApp(
             onSubmitPassword = viewModel::submitPassword,
             onBack = {
                 if (state.telegramConfigured) {
-                    selectedChatId = 0L
+                    selectChat(0L)
                     viewModel.restartAuthorization()
                 }
             },
@@ -537,7 +572,7 @@ private fun TelegramRustApp(
             onSearch = viewModel::searchAllMessages,
             onOpenResult = { result: GlobalMessageSearchResultUi ->
                 showGlobalMessageSearch = false
-                selectedChatId = result.chatId
+                selectChat(result.chatId)
                 jumpToMessageId = result.messageId.toString()
                 replyToMessageId = null
                 replyToPreview = null
@@ -559,7 +594,7 @@ private fun TelegramRustApp(
             onClearTelegramSearch = { viewModel.loadContacts(offset = 0) },
             searchingQuery = state.contactsSearchQuery,
             onContactSelected = { contact ->
-                selectedChatId = contact.userId
+                selectChat(contact.userId)
                 replyToMessageId = null
                 replyToPreview = null
                 jumpToMessageId = null
@@ -598,7 +633,7 @@ private fun TelegramRustApp(
             },
             onLogout = {
                 onDismissNotification()
-                selectedChatId = 0L
+                selectChat(0L)
                 showContacts = false
                 showGlobalMessageSearch = false
                 draftsByChatId = emptyMap()
@@ -608,7 +643,7 @@ private fun TelegramRustApp(
                 viewModel.logout()
             },
             onChatSelected = { chatId ->
-                selectedChatId = chatId
+                selectChat(chatId)
                 replyToMessageId = null
                 replyToPreview = null
                 jumpToMessageId = null
@@ -697,7 +732,7 @@ private fun TelegramRustApp(
                     jumpToMessageId = jumpToMessageId,
                 ),
                 onBack = {
-                    selectedChatId = 0L
+                    selectChat(0L)
                     replyToMessageId = null
                     replyToPreview = null
                     jumpToMessageId = null
