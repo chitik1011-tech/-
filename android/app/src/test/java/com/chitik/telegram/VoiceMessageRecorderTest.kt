@@ -3,6 +3,7 @@ package com.chitik.telegram
 import java.io.File
 import java.io.IOException
 import java.nio.file.Files
+import com.chitik.telegram.nativebridge.decodeTelegramVoiceWaveform
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -56,7 +57,7 @@ class VoiceMessageRecorderTest {
     fun successfulOggOpusRecordingReturnsPrivatePathAndElapsedDuration() {
         val directory = Files.createTempDirectory("voice-ready").toFile()
         var now = 10_000L
-        val engine = FakeEngine()
+        val engine = FakeEngine(amplitudes = listOf(0, 10, 20, 30))
         val recorder = controller(directory, clock = { now }, engineFactory = { engine })
         try {
             assertEquals(VoiceRecorderResult.RecordingStarted, recorder.start())
@@ -65,6 +66,7 @@ class VoiceMessageRecorderTest {
                 recorder.start(),
             )
             now += 1_275L
+            repeat(4) { recorder.sampleAmplitude() }
 
             val result = recorder.stop()
             assertTrue(result is VoiceRecorderResult.RecordingReady)
@@ -74,6 +76,7 @@ class VoiceMessageRecorderTest {
             assertTrue(voice.fileName.endsWith(".ogg"))
             assertTrue(voice.path.startsWith(directory.absolutePath))
             assertEquals(4L, voice.sizeBytes)
+            assertEquals(listOf(0, 10, 20, 31), decodeTelegramVoiceWaveform(voice.waveform))
             assertTrue(voice.file.isFile)
             assertTrue(engine.stopped)
             assertTrue(engine.released)
@@ -194,8 +197,10 @@ class VoiceMessageRecorderTest {
         private val failStop: Boolean = false,
         private val writePartialOnStart: Boolean = false,
         private val writeOnStop: Boolean = true,
+        amplitudes: List<Int> = emptyList(),
     ) : VoiceRecordingEngine {
         private lateinit var output: File
+        private val amplitudeIterator = amplitudes.iterator()
         var stopped = false
         var released = false
 
@@ -214,5 +219,7 @@ class VoiceMessageRecorderTest {
         override fun release() {
             released = true
         }
+
+        override fun sampleAmplitude(): Int? = amplitudeIterator.takeIf { it.hasNext() }?.next()
     }
 }

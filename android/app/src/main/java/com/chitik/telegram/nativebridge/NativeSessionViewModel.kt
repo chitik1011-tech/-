@@ -1029,6 +1029,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                         if (epoch != voiceRecordingEpoch) break
                         val recording = _state.value.voiceRecording
                         if (recording.chatId != chatId) break
+                        voiceRecorder.sampleAmplitude()
                         val elapsed = (SystemClock.elapsedRealtime() - voiceRecordingStartedAtMs)
                             .coerceAtLeast(0L)
                         _state.update { currentState ->
@@ -1138,6 +1139,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         mimeType = mimeType,
         sizeBytes = sizeBytes,
         voiceDurationMs = durationMs,
+        voiceWaveform = waveform,
     )
 
     private fun voiceRecorderFailureMessage(failure: VoiceRecorderFailure): String = when (failure) {
@@ -1228,6 +1230,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         videoWidth = videoWidth,
         videoHeight = videoHeight,
         voiceDurationMs = voiceDurationMs,
+        voiceWaveform = voiceWaveform,
     )
 
     private fun submitMessageMutation(

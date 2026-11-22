@@ -49,6 +49,9 @@ internal fun reliableMediaCommand(
         .put("mime_type", media.mimeType)
         .put("size_bytes", media.sizeBytes)
     media.voiceDurationMs?.let { attachment.put("voice_duration_ms", it) }
+    media.voiceWaveform?.let { waveform ->
+        attachment.put("voice_waveform", org.json.JSONArray(waveform))
+    }
     media.videoDurationMs?.let { attachment.put("video_duration_ms", it) }
     media.videoWidth?.let { attachment.put("video_width", it) }
     media.videoHeight?.let { attachment.put("video_height", it) }
@@ -75,6 +78,7 @@ data class OutgoingMediaUi(
     val videoWidth: Int? = null,
     val videoHeight: Int? = null,
     val voiceDurationMs: Long? = null,
+    val voiceWaveform: List<Int>? = null,
 )
 
 data class OutgoingTextSendUi(
@@ -132,6 +136,11 @@ internal fun parseOutgoingTextSend(value: JSONObject?): OutgoingTextSendUi? {
             .takeIf { kind == "video" && it in 1..32768 }
         val voiceDurationMs = item.optLong("voice_duration_ms", -1L)
             .takeIf { kind == "voice" && it in 1_000L..172_800_000L }
+        val voiceWaveform = item.optJSONArray("voice_waveform")?.let { waveform ->
+            if (kind != "voice" || waveform.length() !in 1..4096) return@let null
+            (0 until waveform.length()).map { waveform.optInt(it, -1) }
+                .takeIf { values -> values.all { it in 0..255 } }
+        }
         val dimensions = if (videoWidth != null && videoHeight != null) {
             videoWidth to videoHeight
         } else {
@@ -153,6 +162,7 @@ internal fun parseOutgoingTextSend(value: JSONObject?): OutgoingTextSendUi? {
             dimensions?.first,
             dimensions?.second,
             voiceDurationMs,
+            voiceWaveform,
         ) else null
     }
     if (status == "uploading" && media == null) return null
