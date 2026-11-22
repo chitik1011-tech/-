@@ -44,6 +44,11 @@ pub struct CoreState {
     active_contacts_request: Option<ContactsRequestState>,
     #[serde(skip)]
     last_contacts_request_id: Option<u64>,
+    /// Dialog values captured when the current page request started. Live
+    /// action updates that arrive while the request is in flight outrank its
+    /// older server snapshot.
+    #[serde(skip)]
+    chat_page_baseline: Option<BTreeMap<i64, ChatSummary>>,
     /// Session-scoped permissions reported by Telegram, keyed by stable chat ID.
     #[serde(default)]
     pub chat_capabilities: BTreeMap<i64, ChatCapabilities>,
@@ -116,6 +121,7 @@ impl Default for CoreState {
             contacts: ContactBook::default(),
             active_contacts_request: None,
             last_contacts_request_id: None,
+            chat_page_baseline: None,
             chat_capabilities: BTreeMap::new(),
             connection_state: ConnectionState::Disconnected,
             connection_machine: ConnectionMachine::default(),
@@ -423,6 +429,14 @@ impl CoreState {
                 self.last_error = None;
             }
             CoreEvent::ChatsPageLoading { cursor } => {
+                self.chat_page_baseline = Some(
+                    self.account
+                        .chats
+                        .iter()
+                        .cloned()
+                        .map(|chat| (chat.id, chat))
+                        .collect(),
+                );
                 let pagination = &mut self.chat_pagination;
                 pagination.loading = true;
                 pagination.requested_cursor = cursor.clone();
@@ -435,6 +449,7 @@ impl CoreState {
                 }
 
                 let first_page = page.requested_cursor.is_none();
+                let baseline = self.chat_page_baseline.take().unwrap_or_default();
                 let old_chats = std::mem::take(&mut self.account.chats);
                 let mut merged = if first_page {
                     Vec::new()
@@ -443,6 +458,27 @@ impl CoreState {
                 };
                 for mut incoming in page.chats.iter().cloned() {
                     if let Some(existing) = old_chats.iter().find(|chat| chat.id == incoming.id) {
+                        if let Some(at_request) = baseline.get(&incoming.id) {
+                            // These fields can be changed by live Telegram updates
+                            // while a dialog page is in flight. Preserve only
+                            // values that actually changed since request start,
+                            // allowing the page to refresh all other fields.
+                            if existing.unread_count != at_request.unread_count {
+                                incoming.unread_count = existing.unread_count;
+                            }
+                            if existing.archived != at_request.archived {
+                                incoming.archived = existing.archived;
+                            }
+                            if existing.muted != at_request.muted {
+                                incoming.muted = existing.muted;
+                            }
+                            if existing.pinned != at_request.pinned {
+                                incoming.pinned = existing.pinned;
+                            }
+                            if existing.is_unread != at_request.is_unread {
+                                incoming.is_unread = existing.is_unread;
+                            }
+                        }
                         if incoming.unread_mentions_count.is_none() {
                             incoming.unread_mentions_count = existing.unread_mentions_count;
                         }
@@ -512,10 +548,13 @@ impl CoreState {
                 }
             }
             CoreEvent::ChatsPageFailed { cursor, error } => {
-                let pagination = &mut self.chat_pagination;
-                if !pagination.loading || pagination.requested_cursor != *cursor {
+                if !self.chat_pagination.loading
+                    || self.chat_pagination.requested_cursor != *cursor
+                {
                     return;
                 }
+                self.chat_page_baseline = None;
+                let pagination = &mut self.chat_pagination;
                 pagination.loading = false;
                 pagination.requested_cursor = None;
                 if let Some(cursor) = cursor {
