@@ -17,10 +17,12 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -1278,25 +1280,43 @@ private fun ReactionRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        reactions.forEach { reaction ->
-            Surface(
-                modifier = Modifier.clickable(enabled = !pending) {
-                    onReaction(if (reaction.chosenByMe) null else reaction)
-                },
-                shape = RoundedCornerShape(16.dp),
-                color = if (reaction.chosenByMe) MaterialTheme.colorScheme.secondaryContainer
-                else MaterialTheme.colorScheme.surface,
-                contentColor = MaterialTheme.colorScheme.onSurface,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        if (reactions.isNotEmpty()) {
+            Row(
+                modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                Text(
-                    text = "${reaction.display} ${reaction.count}",
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                    style = MaterialTheme.typography.labelMedium,
-                )
+                reactions.forEach { reaction ->
+                    Surface(
+                        modifier = Modifier
+                            .clickable(enabled = !pending) {
+                                onReaction(if (reaction.chosenByMe) null else reaction)
+                            }
+                            .semantics {
+                                contentDescription = reactionChipAccessibilityLabel(reaction)
+                            },
+                        shape = RoundedCornerShape(16.dp),
+                        color = if (reaction.chosenByMe) MaterialTheme.colorScheme.secondaryContainer
+                        else MaterialTheme.colorScheme.surface,
+                        contentColor = MaterialTheme.colorScheme.onSurface,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    ) {
+                        Text(
+                            text = "${reaction.display} ${reaction.count}",
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            style = MaterialTheme.typography.labelMedium,
+                        )
+                    }
+                }
             }
         }
-        TextButton(onClick = { pickerOpen = true }, enabled = !pending) { Text("+") }
+        TextButton(
+            onClick = { pickerOpen = true },
+            enabled = !pending,
+            modifier = Modifier.semantics {
+                contentDescription = reactionPickerAccessibilityLabel
+            },
+        ) { Text("+") }
         DropdownMenu(expanded = pickerOpen, onDismissRequest = { pickerOpen = false }) {
             common.forEach { emoji ->
                 DropdownMenuItem(
