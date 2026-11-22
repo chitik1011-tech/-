@@ -395,14 +395,14 @@ fun ChatListScreen(
                         }
                     }
                 }
-            if (chatListShouldShowNewChatAction(searching)) {
-                FloatingActionButton(
-                    onClick = onOpenContacts,
-                    modifier = Modifier.align(Alignment.BottomEnd).navigationBarsPadding().padding(16.dp),
-                ) {
-                    Icon(Icons.Default.Edit, contentDescription = "New message")
+                if (chatListShouldShowNewChatAction(searching)) {
+                    FloatingActionButton(
+                        onClick = onOpenContacts,
+                        modifier = Modifier.align(Alignment.BottomEnd).navigationBarsPadding().padding(16.dp),
+                    ) {
+                        Icon(Icons.Default.Edit, contentDescription = "New message")
+                    }
                 }
-            }
             }
         }
     }
