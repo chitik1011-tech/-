@@ -2111,12 +2111,8 @@ mod shared_media_download_tests {
         let queued = transfers
             .queue_download(remote.token)
             .expect("queue transfer");
-        let downloading = transfers
-            .start_download(queued)
-            .expect("start transfer");
-        let completed = transfers
-            .complete(downloading)
-            .expect("complete transfer");
+        let downloading = transfers.start_download(queued).expect("start transfer");
+        let completed = transfers.complete(downloading).expect("complete transfer");
         let snapshot = transfers.get(completed).expect("snapshot");
 
         assert_eq!(active_download_state(&snapshot, None, true), None);
