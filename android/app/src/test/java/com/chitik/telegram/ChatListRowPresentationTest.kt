@@ -28,6 +28,19 @@ class ChatListRowPresentationTest {
     }
 
     @Test
+    fun chatRowSemanticsExposeSelectionStateWithoutChangingItsDescription() {
+        val presentation = chat(lastMessage = null).toChatListRowPresentation(now, ZoneOffset.UTC, Locale.US)
+
+        val selected = chatListRowSemantics(presentation, selected = true)
+        assertEquals(presentation.accessibilityLabel, selected.accessibilityLabel)
+        assertTrue(selected.selected)
+
+        val unselected = chatListRowSemantics(presentation, selected = false)
+        assertEquals(presentation.accessibilityLabel, unselected.accessibilityLabel)
+        assertFalse(unselected.selected)
+    }
+
+    @Test
     fun mentionsAndReactionsHaveBoundedLabelsAndAccessibleDescriptions() {
         val row = chat(
             unreadMentionsCount = 1_000,

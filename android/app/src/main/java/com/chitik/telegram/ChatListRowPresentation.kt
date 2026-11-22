@@ -17,6 +17,20 @@ internal data class ChatListRowPresentation(
     val accessibilityLabel: String,
 )
 
+/** Semantics exposed by a selectable chat row to accessibility services. */
+internal data class ChatListRowSemantics(
+    val accessibilityLabel: String,
+    val selected: Boolean,
+)
+
+internal fun chatListRowSemantics(
+    presentation: ChatListRowPresentation,
+    selected: Boolean,
+): ChatListRowSemantics = ChatListRowSemantics(
+    accessibilityLabel = presentation.accessibilityLabel,
+    selected = selected,
+)
+
 internal fun ChatListEntry.toChatListRowPresentation(
     now: Instant = Instant.now(),
     zoneId: ZoneId = ZoneId.systemDefault(),
