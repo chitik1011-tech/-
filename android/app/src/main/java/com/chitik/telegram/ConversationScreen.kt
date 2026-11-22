@@ -969,6 +969,10 @@ fun ConversationScreen(
                 onTogglePin(message.chatId, message.id, message.id in state.pinnedMessageIds)
                 actionTarget = null
             },
+            onCopy = { text ->
+                onCopy(text)
+                actionTarget = null
+            },
         )
     }
 
@@ -1285,6 +1289,7 @@ private fun MessageActionDialog(
     onEdit: () -> Unit,
     onDelete: () -> Unit,
     onTogglePin: () -> Unit,
+    onCopy: (String) -> Unit,
 ) {
     val pinAction = messagePinActionPresentation(
         message = message,
@@ -1293,12 +1298,16 @@ private fun MessageActionDialog(
         isPending = pinPending,
         mutationPending = mutationPending,
     )
+    val copyText = messageContextCopyText(message)
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Действия с сообщением") },
         text = {
             Column {
                 TextButton(onClick = onReply, enabled = !mutationPending) { Text("Ответить") }
+                copyText?.let { text ->
+                    TextButton(onClick = { onCopy(text) }, enabled = !mutationPending) { Text("Копировать") }
+                }
                 TextButton(onClick = onSelectForForward, enabled = !mutationPending) { Text("Выбрать для пересылки") }
                 pinAction.label?.let { label ->
                     Row(verticalAlignment = Alignment.CenterVertically) {

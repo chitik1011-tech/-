@@ -1,6 +1,8 @@
 package com.chitik.telegram
 
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -17,6 +19,13 @@ class MessageMutationSupportTest {
         assertTrue(supportsDeleteForMe(42L))
         assertTrue(supportsDeleteForMe(-42L))
         assertFalse(supportsDeleteForMe(-1_000_000_000_042L))
+    }
+
+    @Test
+    fun messageContextCopyIsAvailableOnlyForNonblankText() {
+        assertEquals("  keep exact text  ", messageContextCopyText(message("  keep exact text  ")))
+        assertNull(messageContextCopyText(message("  \n  ")))
+        assertNull(messageContextCopyText(message("")))
     }
 
     @Test
