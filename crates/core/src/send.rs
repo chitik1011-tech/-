@@ -78,9 +78,11 @@ impl OutgoingMediaAttachment {
         if self.kind != OutgoingMediaKind::Voice && self.voice_waveform.is_some() {
             return Err("voice waveform can only be set for voice media".into());
         }
-        if self.voice_waveform.as_ref().is_some_and(|waveform| {
-            waveform.is_empty() || waveform.len() > 4096
-        }) {
+        if self
+            .voice_waveform
+            .as_ref()
+            .is_some_and(|waveform| waveform.is_empty() || waveform.len() > 4096)
+        {
             return Err("voice waveform must contain between 1 and 4096 bytes".into());
         }
         if self.kind == OutgoingMediaKind::Voice {

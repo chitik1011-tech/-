@@ -7,6 +7,7 @@ import android.media.MediaRecorder
 import android.os.Build
 import android.os.SystemClock
 import androidx.core.content.ContextCompat
+import com.chitik.telegram.nativebridge.packTelegramVoiceWaveform
 import java.io.File
 import java.util.UUID
 
@@ -76,6 +77,10 @@ class VoiceMessageRecorder(context: Context) : AutoCloseable {
 
     @Synchronized
     fun stop(): VoiceRecorderResult = controller.stop()
+
+    /** Returns the current microphone peak and records it for the outgoing Telegram waveform. */
+    @Synchronized
+    fun sampleAmplitude(): Int? = controller.sampleAmplitude()
 
     /** Discard an active recording and remove its partial file. Safe to call more than once. */
     @Synchronized
