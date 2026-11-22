@@ -68,4 +68,27 @@ class ConversationScrollPolicyTest {
         assertEquals(1, newMessagesAfterAnchor(listOf("1", "2"), "deleted-anchor"))
         assertEquals(0, newMessagesAfterAnchor(emptyList(), "1"))
     }
+
+    @Test
+    fun floatingDateUsesTheDayOfTheViewportMessage() {
+        val messages = listOf(
+            message("1", dateSeparator = "Вчера"),
+            message("2", dateSeparator = "Вчера"),
+            message("3", dateSeparator = "Сегодня"),
+        )
+
+        assertEquals("Вчера", conversationFloatingDateLabel(messages, 1))
+        assertEquals("Сегодня", conversationFloatingDateLabel(messages, 2))
+        assertNull(conversationFloatingDateLabel(messages, -1))
+        assertNull(conversationFloatingDateLabel(emptyList(), 0))
+    }
+
+    private fun message(id: String, dateSeparator: String) = ConversationMessageUi(
+        id = id,
+        chatId = "5",
+        text = "",
+        timestamp = "",
+        dateSeparator = dateSeparator,
+        isOutgoing = false,
+    )
 }

@@ -2,6 +2,9 @@ package com.chitik.telegram
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -80,6 +83,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.chitik.telegram.nativebridge.OutgoingTextSendUi
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
 import kotlin.math.roundToInt
@@ -220,6 +225,14 @@ internal fun replyTargetIndex(messages: List<ConversationMessageUi>, messageId: 
 internal fun replyComposerTargetId(messageId: String?): String? =
     messageId?.takeIf { it.isNotBlank() }
 
+internal fun conversationFloatingDateLabel(messages: List<ConversationMessageUi>, firstVisibleIndex: Int): String? {
+    if (firstVisibleIndex !in messages.indices) return null
+    for (index in firstVisibleIndex downTo 0) {
+        messages[index].dateSeparator.takeIf(String::isNotBlank)?.let { return it }
+    }
+    return null
+}
+
 internal data class ConversationScrollDecision(
     val scrollToLatest: Boolean,
     /** Null means the current new-message affordance state should be preserved. */
@@ -350,6 +363,8 @@ fun ConversationScreen(
     var hasOpenedConversation by rememberSaveable(state.chatId) { mutableStateOf(false) }
     var showNewMessages by rememberSaveable(state.chatId) { mutableStateOf(false) }
     var pendingNewMessageCount by rememberSaveable(state.chatId) { mutableStateOf(0) }
+    var floatingDateLabel by remember(state.chatId) { mutableStateOf<String?>(null) }
+    var showFloatingDate by remember(state.chatId) { mutableStateOf(false) }
     var lastObservedLatestMessageId by rememberSaveable(state.chatId) { mutableStateOf<String?>(null) }
     var viewerKey by rememberSaveable(state.chatId) { mutableStateOf<String?>(null) }
     var missingPinnedTarget by remember(state.chatId, state.selectionGeneration) { mutableStateOf<String?>(null) }
@@ -486,6 +501,20 @@ fun ConversationScreen(
                 pendingNewMessageCount = 0
             }
         }
+    }
+
+    LaunchedEffect(listState, state.messages) {
+        snapshotFlow { listState.isScrollInProgress to listState.firstVisibleItemIndex }
+            .collectLatest { (scrolling, firstVisibleIndex) ->
+                val date = conversationFloatingDateLabel(state.messages, firstVisibleIndex)
+                if (scrolling && date != null) {
+                    floatingDateLabel = date
+                    showFloatingDate = true
+                } else {
+                    delay(900)
+                    showFloatingDate = false
+                }
+            }
     }
 
     Scaffold(
@@ -934,6 +963,29 @@ fun ConversationScreen(
                                             strokeWidth = 2.dp,
                                         )
                                     }
+                                }
+                            }
+                        }
+                        Column(
+                            modifier = Modifier.align(Alignment.TopCenter).padding(top = 6.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            AnimatedVisibility(
+                                visible = showFloatingDate && floatingDateLabel != null,
+                                enter = fadeIn(),
+                                exit = fadeOut(),
+                            ) {
+                                Surface(
+                                    shape = RoundedCornerShape(14.dp),
+                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.92f),
+                                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                ) {
+                                    Text(
+                                        text = floatingDateLabel.orEmpty(),
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        textAlign = TextAlign.Center,
+                                    )
                                 }
                             }
                         }
