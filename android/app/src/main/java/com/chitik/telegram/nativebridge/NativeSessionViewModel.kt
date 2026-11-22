@@ -1,6 +1,13 @@
+Warning: truncated output (original token count: 33643)
+Total output lines: 3063
+
 package com.chitik.telegram.nativebridge
 
 import android.app.Application
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -138,6 +145,8 @@ data class NativeUiState(
     val voiceRecording: VoiceRecordingUiState = VoiceRecordingUiState(),
     val deleteError: String? = null,
     val busy: Boolean = false,
+    val connectionRecoveryNeeded: Boolean = false,
+    val connectionRecoveryAttempts: Int = 0,
     val lastEventType: String = "none",
     val lastEventPayload: String = "",
     val error: String? = null,
@@ -190,11 +199,14 @@ internal fun NativeUiState.applyConnectionLifecycle(payload: String): NativeUiSt
         "logout",
         "shutdown",
     )
+    val terminalFailure = eventType == "connect_failed" &&
+        event?.optBoolean("retryable", true) == false
     val generationChanged = token != null && reactionConnectionToken != null &&
         token != reactionConnectionToken
     val updated = copy(reactionConnectionToken = token ?: reactionConnectionToken)
-    return if (disconnected || generationChanged) {
+    return if (disconnected || generationChanged || terminalFailure || eventType == "transport_connected") {
         updated.copy(
+            connectionRecoveryNeeded = terminalFailure,
             chatActivities = emptyMap(),
             latestChatActivityGeneration = 0L,
         ).clearPendingReactionsAfterConnectionChange()
@@ -325,6 +337,28 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
     private val notifications = TelegramNotificationPublisher(application)
     private val notificationEventGate = NotificationEventGate()
     private val liveReadReceiptPolicy = LiveReadReceiptPolicy()
+    private val connectivityManager = application.getSystemService(
+        Context.CONNECTIVITY_SERVICE,
+    ) as? ConnectivityManager
+    private val connectionRecoveryInProgress = java.util.concurrent.atomic.AtomicBoolean(false)
+    @Volatile
+    private var recoveryNetwork: Network? = null
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) {
+            onValidatedNetworkChanged(network)
+        }
+
+        override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
+            if (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) {
+                onValidatedNetworkChanged(network)
+            }
+        }
+
+        override fun onLost(network: Network) {
+            // Keep the last identity: a flapping interface may reappear as the same Network.
+            // The attempt budget resets only after a genuinely different validated Network.
+        }
+    }
     @Volatile
     private var restartHandleAfterLogout = false
     private var authorizationRetryJob: Job? = null
@@ -332,8 +366,84 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
     private var contactsRequestCounter = 0L
 
     init {
+        try {
+            connectivityManager?.registerDefaultNetworkCallback(networkCallback)
+        } catch (_: Exception) {
+            // Activity resume remains a recovery trigger if callback registration is unavailable.
+        }
         restoreAuthorizationFloodWait()
         initializeNativeSession()
+    }
+
+    private fun onValidatedNetworkChanged(network: Network) {
+        val capabilities = connectivityManager?.getNetworkCapabilities(network) ?: return
+        if (!capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) return
+        if (recoveryNetwork != network) {
+            recoveryNetwork = network
+            _state.update { it.copy(connectionRecoveryAttempts = 0) }
+        }
+        tryRecoverTerminalConnection()
+    }
+
+    fun recoverConnectionIfNeeded() = tryRecoverTerminalConnection()
+
+    private fun isValidatedNetworkAvailable(): Boolean {
+        val manager = connectivityManager ?: return false
+        val network = manager.activeNetwork ?: return false
+        return try {
+            manager.getNetworkCapabilities(network)
+                ?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun tryRecoverTerminalConnection() {
+        val current = _state.value
+        if (!shouldAutomaticallyRecoverConnection(
+                authorized = current.authorization == AuthorizationUiStep.Ready,
+                terminalFailure = current.connectionRecoveryNeeded,
+                networkValidated = isValidatedNetworkAvailable(),
+                attempts = current.connectionRecoveryAttempts,
+            ) ||
+            !connectionRecoveryInProgress.compareAndSet(false, true)
+        ) return
+
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val before = _state.value
+                if (before.authorization != AuthorizationUiStep.Ready ||
+                    !before.connectionRecoveryNeeded ||
+                    !isValidatedNetworkAvailable()
+                ) return@launch
+                _state.update {
+                    it.copy(
+                        connectionRecoveryAttempts = it.connectionRecoveryAttempts + 1,
+                        busy = true,
+                    )
+                }
+                val config = TelegramRuntimeConfigStore.load(getApplication())
+                    ?: throw IllegalStateException("Telegram configuration is unavailable")
+                val newHandle = replaceNativeHandle(config)
+                lifecycle.runIfOpen {
+                    _state.update {
+                        it.copy(
+                            nativeHandle = newHandle,
+                            telegramConfigured = true,
+                            busy = false,
+                            error = null,
+                        )
+                    }
+                }
+                sendStartCommand()
+            } catch (error: Exception) {
+                lifecycle.runIfOpen {
+                    _state.update { it.copy(busy = false, error = error.message ?: error::class.java.simpleName) }
+                }
+            } finally {
+                connectionRecoveryInProgress.set(false)
+            }
+        }
     }
 
     private fun restoreAuthorizationFloodWait() {
@@ -1370,366 +1480,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                     deletingMessages = false,
                     deleteError = "Не удалось отправить запрос удаления",
                     busy = false,
-                )
-            }
-        }
-    }
-
-    fun votePoll(poll: ConversationPollUi, optionIds: List<List<Int>>) {
-        if (poll.closed) {
-            _state.update {
-                it.copy(pollVoteErrors = it.pollVoteErrors + (poll.id to "Опрос закрыт"))
-            }
-            return
-        }
-
-        val optionsJson = JSONArray()
-        optionIds.forEach { optionId ->
-            val optionJson = JSONArray()
-            optionId.forEach { byte -> optionJson.put(byte) }
-            optionsJson.put(optionJson)
-        }
-
-        _state.update {
-            it.copy(
-                votingPollIds = it.votingPollIds + poll.id,
-                pollVoteErrors = it.pollVoteErrors - poll.id,
-            )
-        }
-
-        val accepted = sendCommand(
-            JSONObject()
-                .put("type", "vote_poll")
-                .put(
-                    "payload",
-                    JSONObject()
-                        .put("poll_id", poll.id)
-                        .put("chat_id", poll.chatId)
-                        .put("message_id", poll.messageId)
-                        .put("option_ids", optionsJson),
-                )
-                .toString(),
-        )
-        if (!accepted) {
-            _state.update {
-                it.copy(
-                    votingPollIds = it.votingPollIds - poll.id,
-                    pollVoteErrors = it.pollVoteErrors +
-                        (poll.id to "Не удалось отправить голос"),
-                )
-            }
-        }
-    }
-
-    fun downloadMedia(
-        chatId: Long,
-        messageId: Long,
-        attachmentIndex: Int,
-        retry: Boolean = false,
-    ) {
-        sendCommand(
-            JSONObject()
-                .put("type", if (retry) "retry_media_download" else "download_media")
-                .put(
-                    "payload",
-                    JSONObject()
-                        .put("chat_id", chatId)
-                        .put("message_id", messageId)
-                        .put("attachment_index", attachmentIndex),
-                )
-                .toString(),
-        )
-    }
-
-    fun cancelMediaDownload(
-        chatId: Long,
-        messageId: Long,
-        attachmentIndex: Int,
-    ) {
-        sendCommand(
-            JSONObject()
-                .put("type", "cancel_media_download")
-                .put(
-                    "payload",
-                    JSONObject()
-                        .put("chat_id", chatId)
-                        .put("message_id", messageId)
-                        .put("attachment_index", attachmentIndex),
-                )
-                .toString(),
-        )
-    }
-
-    private fun markRead(chatId: Long, maxMessageId: Long) {
-        if (chatId == 0L || maxMessageId <= 0L) return
-        sendCommand(
-            JSONObject()
-                .put("type", "mark_read")
-                .put(
-                    "payload",
-                    JSONObject()
-                        .put("chat_id", chatId)
-                        .put("max_message_id", maxMessageId),
-                )
-                .toString(),
-        )
-    }
-
-    private fun sendCommand(commandJson: String): Boolean {
-        if (!NativeLibrary.isLoaded) {
-            setErrorIfOpen("Native bridge is not available")
-            return false
-        }
-
-        val result = runCatching {
-            lifecycle.dispatchCommand { currentHandle ->
-                NativeBridge.sendCommand(currentHandle, commandJson)
-            }
-        }.getOrElse { error ->
-            setErrorIfOpen(error.message ?: error::class.java.simpleName)
-            return false
-        }
-
-        reportDispatchResult(result, "Rust rejected the command")
-        return result == LifecycleDispatchResult.Accepted ||
-            result == LifecycleDispatchResult.Duplicate
-    }
-
-    private fun reportDispatchResult(
-        result: LifecycleDispatchResult,
-        rejectedMessage: String,
-    ) {
-        when (result) {
-            LifecycleDispatchResult.Accepted -> Unit
-            LifecycleDispatchResult.Duplicate -> Unit
-            LifecycleDispatchResult.Closed -> Unit
-            LifecycleDispatchResult.NoHandle -> setErrorIfOpen("Native bridge is not available")
-            LifecycleDispatchResult.Rejected -> setErrorIfOpen(rejectedMessage)
-        }
-    }
-
-    private fun setErrorIfOpen(message: String) {
-        lifecycle.runIfOpen {
-            _state.update {
-                it.copy(
-                    busy = false,
-                    contactsLoading = false,
-                    error = message,
-                )
-            }
-        }
-    }
-
-    private fun markMessageMutationUnconfirmed(message: String) {
-        _state.update {
-            val mutation = messageMutationStateAfterSessionChange(
-                pending = it.messageMutationPending,
-                currentError = it.messageMutationError,
-                reason = message,
-            )
-            it.copy(
-                messageMutationPending = mutation.pending,
-                messageMutationError = mutation.error,
-            )
-        }
-    }
-
-    private fun onNativeEvent(generation: Long, type: String, payload: String) {
-        if (!lifecycle.onNativeEvent(generation, type)) return
-        lifecycle.runIfCurrent(generation) {
-            handleNotificationEvent(generation, type, payload)
-            handleNativeEvent(generation, type, payload)
-        }
-    }
-
-    /** Publishes only generation-validated live events; snapshots and history never notify. */
-    private fun handleNotificationEvent(generation: Long, type: String, payload: String) {
-        if (type == "authorization_changed") {
-            val nextAuthorization = runCatching {
-                val event = JSONObject(payload)
-                val rawAuthorization = event.optString("payload")
-                rawAuthorization.takeIf {
-                    it in setOf(
-                        "WaitingForPhoneNumber",
-                        "WaitingForCode",
-                        "WaitingForPassword",
-                        "Ready",
-                        "LoggingOut",
-                        "Closed",
-                    )
-                }?.let(::parseAuthorization)
-            }.getOrNull()
-            val wasReady = _state.value.authorization == AuthorizationUiStep.Ready
-            val isReady = nextAuthorization == AuthorizationUiStep.Ready
-            if (NotificationCleanupPolicy.shouldClearOnAuthorizationChange(
-                    wasAuthorized = wasReady,
-                    authorizationEventParsed = nextAuthorization != null,
-                    isAuthorizedNow = isReady,
-                )
-            ) {
-                notificationEventGate.reset(null)
-                notifications.cancelPublishedNotifications()
-            } else if (!wasReady && isReady) {
-                notificationEventGate.reset(generation)
-            }
-            return
-        }
-        if (_state.value.authorization == AuthorizationUiStep.Ready) {
-            if (type == "chat_left") {
-                val chatId = runCatching {
-                    JSONObject(payload).optJSONObject("payload")?.optLong("chat_id")
-                }.getOrNull()?.takeIf { it != 0L }
-                val accountUserId = _state.value.accountUserId
-                if (chatId != null && accountUserId != null && accountUserId > 0L) {
-                    notifications.cancelChat(accountUserId, chatId)
-                }
-            }
-            when (val cancellation = NotificationCancellationPolicy.fromEvent(type, payload)) {
-                is NotificationCancellation.ReadThrough -> {
-                    notifications.cancelReadThrough(
-                        accountUserId = _state.value.accountUserId ?: return,
-                        chatId = cancellation.chatId,
-                        maxMessageId = cancellation.maxMessageId,
-                    )
-                }
-                is NotificationCancellation.MessagesChanged -> {
-                    notifications.cancelForMessages(
-                        accountUserId = _state.value.accountUserId ?: return,
-                        chatId = cancellation.chatId,
-                        messageIds = cancellation.messageIds,
-                    )
-                }
-                null -> Unit
-            }
-        }
-        val message = notificationEventGate.incoming(
-            generation = generation,
-            eventType = type,
-            payload = payload,
-            authorized = _state.value.authorization == AuthorizationUiStep.Ready,
-        ) ?: return
-        val accountUserId = _state.value.accountUserId
-            ?.takeIf { _state.value.accountIdentityResolved && it > 0L }
-            ?: return
-        val chat = _state.value.chats.firstOrNull { it.id == message.chatId }
-        notifications.publish(
-            TelegramNotificationPublisher.IncomingMessage(
-                chatId = message.chatId,
-                accountUserId = accountUserId,
-                messageId = message.messageId,
-                chatTitle = chat?.title ?: "Telegram",
-                body = message.preview,
-                // Core peer IDs are positive for users and negative for groups/channels.
-                isGroup = message.chatId < 0L,
-            ),
-        )
-    }
-
-    /** Keeps both notification decision and publisher suppression aligned with Android UI state. */
-    fun setNotificationVisibility(foreground: Boolean, chatId: Long?) {
-        notificationEventGate.updateVisibility(foreground, chatId)
-        liveReadReceiptPolicy.updateVisibility(foreground, chatId)
-        notifications.setVisibleChat(
-            chatId = if (foreground) chatId else null,
-            accountUserId = _state.value.accountUserId,
-        )
-    }
-
-    private fun handleNativeEvent(generation: Long, type: String, payload: String) {
-        when (type) {
-            "connection_lifecycle" -> {
-                _state.update { current ->
-                    current.applyConnectionLifecycleAndGeneration(payload).copy(
-                        lastEventType = type,
-                        lastEventPayload = payload,
-                    )
-                }
-            }
-            "messages_deleted" -> {
-                val deleted = parseDeletedMessages(payload)
-                _state.update { current ->
-                    if (deleted == null) {
-                        current.copy(lastEventType = type, lastEventPayload = payload)
-                    } else {
-                        current.finishBulkDelete(deleted.first, deleted.second).copy(
-                            lastEventType = type,
-                            lastEventPayload = payload,
-                        )
-                    }
-                }
-            }
-            "chat_activity_changed", "chat_activity_ended", "chat_activity_expired" -> {
-                val activityEvent = parseChatActivityEvent(type, payload)
-                _state.update { current ->
-                    val updated = activityEvent?.let(current::applyChatActivityEvent)
-                    current.copy(
-                        chatActivities = updated?.chatActivities ?: current.chatActivities,
-                        latestChatActivityGeneration = updated?.latestChatActivityGeneration
-                            ?: current.latestChatActivityGeneration,
-                        lastEventType = type,
-                        lastEventPayload = "",
-                    )
-                }
-            }
-            "state" -> applyStatePayload(payload)
-            "account_identity_updated" -> {
-                val accountUserId = runCatching {
-                    val value = JSONObject(payload).opt("payload")
-                    if (value == null || value == JSONObject.NULL) null else (value as? Number)?.toLong()
-                }.getOrNull()?.takeIf { it > 0L }
-                _state.update {
-                    it.copy(
-                        accountUserId = accountUserId,
-                        accountIdentityResolved = true,
-                        lastEventType = type,
-                        lastEventPayload = "",
-                    )
-                }
-                // Identity resolution happens after restore and after account changes. Keep
-                // same-account notices across handle recreation, but retire all foreign and
-                // pre-account-scoped notices once the active account is known.
-                notifications.reconcileAccount(accountUserId)
-            }
-            "message_send_state_changed" -> {
-                val send = parseOutgoingTextSendEvent(payload)
-                send?.let { cleanupTerminalOutgoingMedia(listOf(it)) }
-                _state.update { current ->
-                    if (send == null) current.copy(lastEventType = type, lastEventPayload = "")
-                    else current.applyOutgoingTextSend(send).copy(
-                        lastEventType = type,
-                        lastEventPayload = "",
-                    )
-                }
-            }
-            "authorization_changed" -> applyAuthorizationEvent(payload)
-            "authorization_code_delivery_changed" -> applyAuthorizationCodeDeliveryEvent(payload)
-            "chats_loaded" -> {
-                val loadedChats = runCatching {
-                    JSONObject(payload).optJSONArray("payload")?.let(::parseChats)
-                }.getOrNull()
-                _state.update {
-                    val pagination = if (loadedChats != null) {
-                        it.chatPagination.copy(
-                            loaded = true,
-                            loading = false,
-                            requestedCursor = null,
-                            nextCursor = null,
-                            consumedCursors = emptySet(),
-                            exhausted = true,
-                            error = null,
-                            retryRequest = null,
-                        )
-                    } else it.chatPagination
-                    it.copy(
-                        chats = loadedChats?.let { chats ->
-                            mergeChatListRefresh(it.chats, chats, it.chatCapabilities)
-                        } ?: it.chats,
-                        chatsLoaded = loadedChats != null || it.chatsLoaded,
-                        chatPagination = pagination,
-                        busy = false,
-                        lastEventType = type,
-                        lastEventPayload = payload,
-                        error = null,
+       …3643 tokens truncated…             error = null,
                     )
                 }
             }
@@ -2937,6 +2688,11 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
     }
 
     override fun onCleared() {
+        try {
+            connectivityManager?.unregisterNetworkCallback(networkCallback)
+        } catch (_: Exception) {
+            // Callback may not have been registered.
+        }
         cancelVoiceRecording()
         voiceRecorder.close()
         voiceRecordingJob?.cancel()
