@@ -1106,6 +1106,12 @@ impl CoreState {
                         ));
                         return;
                     }
+                    // Terminal states represent an acknowledged or permanently
+                    // rejected request. Detached upload callbacks and duplicate
+                    // RPC results must never resurrect them in the outbox.
+                    if existing.state.is_terminal() {
+                        return;
+                    }
                     if update.transfer_generation < existing.transfer_generation {
                         return;
                     }

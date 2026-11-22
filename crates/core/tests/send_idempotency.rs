@@ -342,6 +342,41 @@ fn core_state_tracks_retryable_outbox_and_removes_success() {
 }
 
 #[test]
+fn late_upload_progress_cannot_resurrect_a_completed_media_send() {
+    let mut state = CoreState::default();
+    let media = OutgoingMediaAttachment {
+        kind: OutgoingMediaKind::Photo,
+        path: "/private/photo.jpg".into(),
+        file_name: "photo.jpg".into(),
+        mime_type: "image/jpeg".into(),
+        size_bytes: 512,
+        voice_duration_ms: None,
+        voice_waveform: None,
+        video_duration_ms: None,
+        video_width: None,
+        video_height: None,
+    };
+
+    state.reduce(&CoreEvent::MessageSendStateChanged(
+        OutgoingSend::uploading_media(777, 2, media.clone(), "caption", 128, 3),
+    ));
+    state.reduce(&CoreEvent::MessageSendStateChanged(
+        OutgoingSend::sent_media(777, 2, media.clone(), "caption", 91, 3),
+    ));
+    assert!(!state.outbox.contains_key(&777));
+
+    state.reduce(&CoreEvent::MessageSendStateChanged(
+        OutgoingSend::uploading_media(777, 2, media, "caption", 512, 3),
+    ));
+
+    assert!(!state.outbox.contains_key(&777));
+    assert!(matches!(
+        state.send_ledger.get(&777).map(|send| &send.state),
+        Some(OutgoingSendState::Sent { message_id: 91 })
+    ));
+}
+
+#[test]
 fn core_state_rejects_client_id_collision_while_request_is_in_outbox() {
     let mut state = CoreState::default();
     state.reduce(&CoreEvent::MessageSendStateChanged(OutgoingSend::sending(

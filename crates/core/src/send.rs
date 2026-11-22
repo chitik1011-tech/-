@@ -437,7 +437,10 @@ pub enum OutgoingSendState {
 
 impl OutgoingSendState {
     pub const fn is_terminal(&self) -> bool {
-        matches!(self, Self::Sent { .. } | Self::Rejected { .. })
+        matches!(
+            self,
+            Self::Sent { .. } | Self::Rejected { .. } | Self::Failed { retryable: false, .. }
+        )
     }
 }
 
