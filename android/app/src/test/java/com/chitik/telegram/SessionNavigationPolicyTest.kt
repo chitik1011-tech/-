@@ -34,4 +34,46 @@ class SessionNavigationPolicyTest {
             ),
         )
     }
+
+    @Test
+    fun clearsSavedChatWhenRestoredSessionBelongsToAnotherAccount() {
+        assertTrue(
+            shouldClearChatSelectionForAccountMismatch(
+                selectedChatId = -41L,
+                selectedChatAccountUserId = 100L,
+                accountIdentityResolved = true,
+                activeAccountUserId = 200L,
+            ),
+        )
+    }
+
+    @Test
+    fun preservesChatOnlyForTheSameResolvedAccount() {
+        assertTrue(
+            chatSelectionBelongsToActiveAccount(
+                selectedChatAccountUserId = 100L,
+                accountIdentityResolved = true,
+                activeAccountUserId = 100L,
+            ),
+        )
+        assertFalse(
+            chatSelectionBelongsToActiveAccount(
+                selectedChatAccountUserId = 100L,
+                accountIdentityResolved = false,
+                activeAccountUserId = null,
+            ),
+        )
+    }
+
+    @Test
+    fun clearsLegacyUnscopedSelectionAfterIdentityResolves() {
+        assertTrue(
+            shouldClearChatSelectionForAccountMismatch(
+                selectedChatId = 41L,
+                selectedChatAccountUserId = null,
+                accountIdentityResolved = true,
+                activeAccountUserId = 100L,
+            ),
+        )
+    }
 }
