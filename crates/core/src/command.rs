@@ -61,6 +61,10 @@ pub enum CoreCommand {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         request_id: Option<u64>,
     },
+    /// Add an existing Telegram user to the account's contacts by public username.
+    AddContactByUsername {
+        username: String,
+    },
     LoadMessages {
         chat_id: i64,
         limit: usize,
@@ -243,6 +247,7 @@ impl CoreCommand {
             Self::JoinChat { .. } => "join_chat",
             Self::InviteUserToChat { .. } => "invite_user_to_chat",
             Self::LoadContacts { .. } => "load_contacts",
+            Self::AddContactByUsername { .. } => "add_contact_by_username",
             Self::LoadMessages { .. } => "load_messages",
             Self::LoadMessagesPage { .. } => "load_messages_page",
             Self::LoadPinnedMessages { .. } => "load_pinned_messages",
@@ -359,6 +364,7 @@ impl CoreCommand {
                     Ok(())
                 }
             }
+            Self::AddContactByUsername { username } => validate_contact_username(username),
             Self::LoadMessages { chat_id, limit } => {
                 validate_chat_id(*chat_id)?;
                 validate_limit("message load", *limit, MAX_MESSAGE_LOAD_LIMIT)
@@ -638,6 +644,24 @@ fn validate_media_target(chat_id: i64, message_id: i64, attachment_index: usize)
         ));
     }
     Ok(())
+}
+
+fn validate_contact_username(input: &str) -> Result<()> {
+    let input = input.trim();
+    let normalized = if input.starts_with('@')
+        || input.starts_with("http://")
+        || input.starts_with("https://")
+    {
+        input.to_owned()
+    } else {
+        format!("@{input}")
+    };
+    match parse_peer_reference(&normalized)? {
+        crate::peer::PeerReference::Username { .. } => Ok(()),
+        _ => Err(CoreError::InvalidInput(
+            "adding a contact requires a public Telegram username".into(),
+        )),
+    }
 }
 
 fn validate_message_target(chat_id: i64, message_id: i64) -> Result<()> {

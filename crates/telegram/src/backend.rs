@@ -36,7 +36,7 @@ use crate::{
         PeerRegistry, clear_peer_registry, find_peer, forget_peer, load_chats, new_peer_registry,
     },
     config::TelegramConfig,
-    contacts::{load_contacts, search_contacts},
+    contacts::{add_contact_by_username, load_contacts, search_contacts},
     downloads::{MediaTarget, event as media_event, spawn_download, state_from_snapshot},
     error::{TelegramBackendError, api_error, session_error},
     messages::{
@@ -1485,6 +1485,11 @@ impl GrammersBackend {
                     query,
                     request_id,
                 }]
+            }
+            CoreCommand::AddContactByUsername { username } => {
+                self.require_ready().await?;
+                let contact = add_contact_by_username(&self.client, &self.peers, &username).await?;
+                vec![CoreEvent::ContactAdded(contact)]
             }
             CoreCommand::ResolvePeer { input } => {
                 self.require_ready().await?;

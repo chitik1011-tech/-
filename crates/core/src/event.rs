@@ -85,6 +85,8 @@ pub enum CoreEvent {
     },
     /// Telegram invalidated its local contact snapshot; the client should reload it.
     ContactsRefreshRequested,
+    /// Telegram accepted adding this user to the account's saved contacts.
+    ContactAdded(Contact),
     MessagesLoaded {
         chat_id: i64,
         messages: Vec<MessageSummary>,
@@ -293,6 +295,7 @@ impl CoreEvent {
             Self::ContactsLoadStarted { .. } => "contacts_load_started",
             Self::ContactsLoadFailed { .. } => "contacts_load_failed",
             Self::ContactsRefreshRequested => "contacts_refresh_requested",
+            Self::ContactAdded(_) => "contact_added",
             Self::MessagesLoaded { .. } => "messages_loaded",
             Self::MessagesPageLoading { .. } => "messages_page_loading",
             Self::MessagesPageLoaded { .. } => "messages_page_loaded",
