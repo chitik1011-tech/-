@@ -9,6 +9,8 @@ use grammers_client::{
 use tg_media_cache::MediaCache;
 use tg_mobile_core::{AvatarReference, ChatMemberSummary, PeerKind, PeerPresence, PeerProfile};
 
+use crate::chats::{PeerRegistry, remember_peer};
+
 const PROFILE_MEMBER_PREVIEW_LIMIT: usize = 100;
 
 /// Convert the profile fields available in Grammers' resolved peer snapshot.
@@ -97,6 +99,7 @@ pub(crate) async fn visible_members(
     client: &Client,
     peer: &Peer,
     peer_ref: PeerRef,
+    peers: &PeerRegistry,
 ) -> Option<(Vec<ChatMemberSummary>, bool)> {
     if !matches!(peer, Peer::Group(_) | Peer::Channel(_)) {
         return None;
@@ -106,7 +109,13 @@ pub(crate) async fn visible_members(
     let mut members = Vec::with_capacity(PROFILE_MEMBER_PREVIEW_LIMIT);
     while members.len() < PROFILE_MEMBER_PREVIEW_LIMIT {
         match participants.next().await.ok()? {
-            Some(participant) => members.push(member_summary(participant)),
+            Some(participant) => {
+                let user_id = crate::ids::peer_id_to_core(participant.user.id());
+                if let Ok(Some(user_ref)) = participant.user.to_ref().await {
+                    remember_peer(peers, user_id, user_ref).await;
+                }
+                members.push(member_summary(participant));
+            }
             None => return Some((members, false)),
         }
     }

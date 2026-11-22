@@ -164,6 +164,11 @@ pub enum CoreEvent {
         chat_id: i64,
         user_id: i64,
     },
+    /// Telegram accepted removing this user from a group or channel.
+    ChatMemberKicked {
+        chat_id: i64,
+        user_id: i64,
+    },
     ChatArchived {
         chat_id: i64,
         archived: bool,
@@ -312,6 +317,7 @@ impl CoreEvent {
             Self::ProfileUpdated(_) => "profile_updated",
             Self::ChatLeft { .. } => "chat_left",
             Self::ChatMemberInvited { .. } => "chat_member_invited",
+            Self::ChatMemberKicked { .. } => "chat_member_kicked",
             Self::ChatArchived { .. } => "chat_archived",
             Self::ChatMuted { .. } => "chat_muted",
             Self::ChatPinned { .. } => "chat_pinned",

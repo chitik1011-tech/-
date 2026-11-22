@@ -344,6 +344,13 @@ fn build_snapshot(
     } else {
         Value::Known(false)
     };
+    let can_ban_users = if denied {
+        Value::Known(false)
+    } else if creator {
+        Value::Known(true)
+    } else {
+        Value::Known(admin.is_some_and(|rights| rights.ban_users))
+    };
     let banned_status = if denied {
         Value::Known(true)
     } else {
@@ -380,6 +387,7 @@ fn build_snapshot(
             member_banned(|r| r.invite_users),
             default_banned(|r| r.invite_users),
         ),
+        can_ban_users,
         can_manage_chat,
         can_post_messages: if broadcast {
             if creator {
@@ -444,6 +452,7 @@ fn denied_snapshot(chat_id: i64, chat_kind: ChatKind) -> ChatCapabilities {
         can_edit_messages: Value::Known(false),
         can_forward_messages: Value::Known(false),
         can_invite_users: Value::Known(false),
+        can_ban_users: Value::Known(false),
         can_manage_chat: Value::Known(false),
         can_post_messages: Value::Known(false),
         can_edit_others_messages: Value::Known(false),

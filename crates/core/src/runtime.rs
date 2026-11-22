@@ -1232,6 +1232,25 @@ fn command_capability_error(command: &CoreCommand, state: &CoreState) -> Option<
             }
             None
         }
+        CoreCommand::KickChatMember { chat_id, .. } => {
+            let Some(capabilities) = state.chat_capabilities.get(chat_id) else {
+                return Some(
+                    "Telegram has not confirmed ban permission; refresh chats first".into(),
+                );
+            };
+            if !matches!(
+                capabilities.chat_kind,
+                ChatKind::Group | ChatKind::Supergroup | ChatKind::Channel
+            ) {
+                return Some("Removing members is only supported for groups and channels".into());
+            }
+            if !capabilities.allows(ChatAction::BanUsers) {
+                return Some(
+                    "Telegram has not confirmed that you can remove members from this chat".into(),
+                );
+            }
+            None
+        }
         _ => None,
     }
 }
@@ -1406,6 +1425,50 @@ mod capability_tests {
                 chat_id: -12,
                 chat_kind: ChatKind::Private,
                 can_invite_users: CapabilityValue::Known(true),
+                ..ChatCapabilities::default()
+            },
+        );
+        assert!(command_capability_error(&command, &state).is_some());
+    }
+
+    #[test]
+    fn kicking_members_requires_authoritative_ban_right_for_group_or_channel() {
+        let command = CoreCommand::KickChatMember {
+            chat_id: -12,
+            user_id: 34,
+        };
+        let mut state = CoreState::default();
+        state.account.authorization = crate::model::AuthorizationState::Ready;
+        assert!(command_capability_error(&command, &state).is_some());
+
+        state.chat_capabilities.insert(
+            -12,
+            ChatCapabilities {
+                chat_id: -12,
+                chat_kind: ChatKind::Supergroup,
+                can_ban_users: CapabilityValue::Known(false),
+                ..ChatCapabilities::default()
+            },
+        );
+        assert!(command_capability_error(&command, &state).is_some());
+
+        state.chat_capabilities.insert(
+            -12,
+            ChatCapabilities {
+                chat_id: -12,
+                chat_kind: ChatKind::Channel,
+                can_ban_users: CapabilityValue::Known(true),
+                ..ChatCapabilities::default()
+            },
+        );
+        assert_eq!(command_capability_error(&command, &state), None);
+
+        state.chat_capabilities.insert(
+            -12,
+            ChatCapabilities {
+                chat_id: -12,
+                chat_kind: ChatKind::Private,
+                can_ban_users: CapabilityValue::Known(true),
                 ..ChatCapabilities::default()
             },
         );

@@ -1271,7 +1271,8 @@ impl GrammersBackend {
                     .map_err(|error| crate::error::api_error("load profile", error))?;
                 let mut profile = crate::profiles::profile_from_peer(peer_id, &peer);
                 if let Some((members, truncated)) =
-                    crate::profiles::visible_members(&self.client, &peer, peer_ref).await
+                    crate::profiles::visible_members(&self.client, &peer, peer_ref, &self.peers)
+                        .await
                 {
                     profile.members = Some(members);
                     profile.members_truncated = truncated;
@@ -1464,6 +1465,52 @@ impl GrammersBackend {
                     }
                 }
                 vec![CoreEvent::ChatMemberInvited { chat_id, user_id }]
+            }
+            CoreCommand::KickChatMember { chat_id, user_id } => {
+                self.require_ready().await?;
+                let chat_ref = find_peer(&self.peers, chat_id)
+                    .await
+                    .ok_or(TelegramBackendError::UnknownChat(chat_id))?;
+                if !matches!(chat_ref.id.kind(), PeerKind::Chat | PeerKind::Channel) {
+                    return Err(CoreError::InvalidInput(
+                        "members can only be removed from groups and channels".into(),
+                    ));
+                }
+                let chat_peer = self
+                    .client
+                    .resolve_peer(chat_ref.clone())
+                    .await
+                    .map_err(|error| crate::error::api_error("load member permissions", error))?;
+                let capabilities = crate::capabilities::from_peer(&chat_peer, chat_id);
+                require_ban_permission(&capabilities)?;
+
+                let user_ref = find_peer(&self.peers, user_id).await.ok_or_else(|| {
+                    CoreError::InvalidInput(
+                        "member peer is not loaded; open the chat member list first".into(),
+                    )
+                })?;
+                if user_ref.id.kind() != PeerKind::User {
+                    return Err(CoreError::InvalidInput(
+                        "kick target must be a Telegram user".into(),
+                    ));
+                }
+                let member_permissions = self
+                    .client
+                    .get_permissions(chat_ref.clone(), user_ref.clone())
+                    .await
+                    .map_err(|error| {
+                        crate::error::api_error("verify Telegram chat member", error)
+                    })?;
+                if member_permissions.is_banned() || member_permissions.has_left() {
+                    return Err(CoreError::InvalidInput(
+                        "kick target is not an active member of this chat".into(),
+                    ));
+                }
+                self.client
+                    .kick_participant(chat_ref, user_ref)
+                    .await
+                    .map_err(|error| crate::error::api_error("kick Telegram chat member", error))?;
+                vec![CoreEvent::ChatMemberKicked { chat_id, user_id }]
             }
             CoreCommand::LoadContacts {
                 offset,
@@ -2251,6 +2298,20 @@ fn require_invite_permission(
     }
 }
 
+fn require_ban_permission(
+    capabilities: &tg_mobile_core::ChatCapabilities,
+) -> tg_mobile_core::Result<()> {
+    match capabilities.permission(ChatAction::BanUsers) {
+        tg_mobile_core::CapabilityValue::Known(true) => Ok(()),
+        tg_mobile_core::CapabilityValue::Known(false) => Err(CoreError::InvalidInput(
+            "Telegram permissions do not allow removing members from this chat".into(),
+        )),
+        tg_mobile_core::CapabilityValue::Unknown => Err(CoreError::InvalidInput(
+            "Telegram did not report permission to remove members from this chat".into(),
+        )),
+    }
+}
+
 fn input_user_for_invite(peer: &Peer) -> tg_mobile_core::Result<tl::enums::InputUser> {
     let Peer::User(user) = peer else {
         return Err(CoreError::InvalidInput(
@@ -2293,6 +2354,29 @@ mod invite_permission_tests {
         assert!(require_invite_permission(&allowed).is_ok());
         assert!(require_invite_permission(&denied).is_err());
         assert!(require_invite_permission(&unknown).is_err());
+    }
+}
+
+#[cfg(test)]
+mod ban_permission_tests {
+    use super::require_ban_permission;
+    use tg_mobile_core::{CapabilityValue, ChatCapabilities};
+
+    #[test]
+    fn only_an_authoritative_ban_right_authorizes_kicking_members() {
+        let allowed = ChatCapabilities {
+            can_ban_users: CapabilityValue::Known(true),
+            ..ChatCapabilities::default()
+        };
+        let denied = ChatCapabilities {
+            can_ban_users: CapabilityValue::Known(false),
+            ..ChatCapabilities::default()
+        };
+        let unknown = ChatCapabilities::default();
+
+        assert!(require_ban_permission(&allowed).is_ok());
+        assert!(require_ban_permission(&denied).is_err());
+        assert!(require_ban_permission(&unknown).is_err());
     }
 }
 
