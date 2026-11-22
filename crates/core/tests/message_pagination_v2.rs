@@ -152,6 +152,112 @@ fn old_persisted_state_defaults_deleted_message_tombstones_to_empty() {
 }
 
 #[test]
+fn repeated_page_failures_clear_tombstones_and_retry_response_stays_protected() {
+    let mut state = CoreState::default();
+
+    for message_id in 1..=3 {
+        state.reduce(&CoreEvent::MessagesPageLoading {
+            chat_id: 7,
+            before_message_id: None,
+        });
+        state.reduce(&CoreEvent::MessagesDeleted {
+            chat_id: Some(7),
+            message_ids: vec![message_id],
+        });
+        assert!(state.deleted_message_ids[&7].contains(&message_id));
+
+        state.reduce(&CoreEvent::MessagesPageLoadFailed {
+            chat_id: 7,
+            before_message_id: None,
+            error: "temporary network failure".into(),
+        });
+        assert!(!state.deleted_message_ids.contains_key(&7));
+
+        // A late completion from the failed attempt is rejected after the
+        // matching failure closes its loading state.
+        state.reduce(&CoreEvent::MessagesPageLoaded {
+            chat_id: 7,
+            before_message_id: None,
+            messages: vec![message(message_id, message_id * 100)],
+            next_before_message_id: None,
+            has_more: false,
+        });
+        assert!(state.messages_for_chat(7).is_empty());
+    }
+
+    state.reduce(&CoreEvent::MessagesPageLoading {
+        chat_id: 7,
+        before_message_id: None,
+    });
+    state.reduce(&CoreEvent::MessagesDeleted {
+        chat_id: Some(7),
+        message_ids: vec![9],
+    });
+    state.reduce(&CoreEvent::MessagesPageLoaded {
+        chat_id: 7,
+        before_message_id: None,
+        messages: vec![message(9, 900), message(10, 1_000)],
+        next_before_message_id: None,
+        has_more: false,
+    });
+
+    assert_eq!(
+        state
+            .messages_for_chat(7)
+            .iter()
+            .map(|message| message.id)
+            .collect::<Vec<_>>(),
+        vec![10]
+    );
+    assert!(!state.deleted_message_ids.contains_key(&7));
+}
+
+#[test]
+fn completing_one_chat_page_does_not_clear_another_chats_tombstones() {
+    let mut state = CoreState::default();
+    for chat_id in [7, 8] {
+        state.reduce(&CoreEvent::MessagesPageLoading {
+            chat_id,
+            before_message_id: None,
+        });
+        state.reduce(&CoreEvent::MessagesDeleted {
+            chat_id: Some(chat_id),
+            message_ids: vec![chat_id],
+        });
+    }
+
+    state.reduce(&CoreEvent::MessagesPageLoadFailed {
+        chat_id: 7,
+        before_message_id: None,
+        error: "temporary network failure".into(),
+    });
+    assert!(!state.deleted_message_ids.contains_key(&7));
+    assert!(state.deleted_message_ids[&8].contains(&8));
+
+    let mut other_chat_deleted = message(8, 800);
+    other_chat_deleted.chat_id = 8;
+    let mut other_chat_kept = message(9, 900);
+    other_chat_kept.chat_id = 8;
+    state.reduce(&CoreEvent::MessagesPageLoaded {
+        chat_id: 8,
+        before_message_id: None,
+        messages: vec![other_chat_deleted, other_chat_kept],
+        next_before_message_id: None,
+        has_more: false,
+    });
+
+    assert_eq!(
+        state
+            .messages_for_chat(8)
+            .iter()
+            .map(|message| message.id)
+            .collect::<Vec<_>>(),
+        vec![9]
+    );
+    assert!(state.deleted_message_ids.is_empty());
+}
+
+#[test]
 fn older_page_survives_merge_into_a_full_message_cache() {
     let mut state = CoreState::default();
     let recent_window = (513..=1024)

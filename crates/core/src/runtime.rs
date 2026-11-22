@@ -345,6 +345,8 @@ where
                                 history.error = Some("shutdown interrupted message loading".into());
                             }
                         }
+                        // No backend page request survives a runtime shutdown.
+                        reduced_state.deleted_message_ids.clear();
                         reduced_state.chat_pagination.loading = false;
                         reduced_state.chat_pagination.requested_cursor = None;
                         if reduced_state.chat_pagination.loaded {
@@ -1765,6 +1767,8 @@ async fn restore_state<S: StateStore>(
                 history.loading = false;
                 history.requested_before_message_id = None;
             }
+            // Restored state has no in-flight page requests to protect against.
+            state.deleted_message_ids.clear();
             state.chat_pagination.loading = false;
             state.chat_pagination.requested_cursor = None;
             for (client_id, send) in state.outbox.clone() {
@@ -2575,5 +2579,44 @@ mod media_restore_generation_tests {
                 AttachmentDownloadState::Queued
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod message_tombstone_restore_tests {
+    use super::restore_state;
+    use crate::{
+        model::MessageHistoryState,
+        state::CoreState,
+        storage::{MemoryStateStore, StateStore},
+    };
+    use std::collections::BTreeSet;
+    use tokio::sync::{broadcast, watch};
+
+    #[tokio::test]
+    async fn restore_drops_tombstones_when_no_page_request_survives() {
+        let store = MemoryStateStore::default();
+        let mut persisted = CoreState::default();
+        persisted.message_history.insert(
+            7,
+            MessageHistoryState {
+                loading: true,
+                requested_before_message_id: None,
+                ..MessageHistoryState::default()
+            },
+        );
+        persisted.deleted_message_ids.insert(7, BTreeSet::from([9]));
+        store.save(&persisted).await.unwrap();
+
+        let (state_tx, _) = watch::channel(CoreState::default());
+        let (event_tx, _) = broadcast::channel(8);
+        let restored = restore_state(&store, &state_tx, &event_tx).await;
+
+        assert!(restored.deleted_message_ids.is_empty());
+        assert!(!restored.message_history[&7].loading);
+        assert_eq!(
+            restored.message_history[&7].requested_before_message_id,
+            None
+        );
     }
 }
