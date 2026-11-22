@@ -1075,9 +1075,9 @@ mod tests {
     use super::{
         ActivityGenerations, ActivitySignal, MAX_TRACKED_CHAT_ACTIVITIES, NextOutcome,
         RetryBackoff, UPDATE_RETRY_INITIAL_DELAY, UPDATE_RETRY_MAX_DELAY, UpdateSource,
-        activity_signal, emit_lifecycle, emit_update, inbox_unread_count, is_transient_update_error,
-        map_raw_activity_update, message_added_if_new, next_with_recovery, update_token_is_current,
-        wait_for_current_attempt,
+        activity_signal, emit_lifecycle, emit_update, inbox_unread_count,
+        is_transient_update_error, map_raw_activity_update, message_added_if_new,
+        next_with_recovery, update_token_is_current, wait_for_current_attempt,
     };
     use super::{
         ConnectionState, TelegramUpdate, map_raw_dialog_unread_mark, map_raw_pinned_update,
