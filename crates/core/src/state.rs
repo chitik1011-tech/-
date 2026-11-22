@@ -1302,6 +1302,7 @@ impl CoreState {
 
         let mut incoming = incoming.clone();
         preserve_reaction_snapshot(current, &mut incoming);
+        preserve_attachment_transfer_state(current, &mut incoming);
 
         let mut updated = false;
         if let Some(messages) = self.messages.get_mut(&incoming.chat_id) {
@@ -1551,6 +1552,7 @@ impl CoreState {
             // edit-aware merging because their request may have predated an edit.
             let mut merged = message;
             preserve_reaction_snapshot(&messages[index], &mut merged);
+            preserve_attachment_transfer_state(&messages[index], &mut merged);
             messages[index] = merged;
             false
         } else {
@@ -1632,7 +1634,23 @@ fn merge_message_snapshot(existing: &MessageSummary, incoming: &MessageSummary) 
         existing.clone()
     };
     preserve_reaction_snapshot(existing, &mut merged);
+    preserve_attachment_transfer_state(existing, &mut merged);
     merged
+}
+
+fn preserve_attachment_transfer_state(existing: &MessageSummary, incoming: &mut MessageSummary) {
+    for attachment in &mut incoming.attachments {
+        let Some(previous) = existing
+            .attachments
+            .iter()
+            .find(|previous| previous.file_reference == attachment.file_reference)
+        else {
+            continue;
+        };
+
+        attachment.download_generation = previous.download_generation;
+        attachment.download_state = previous.download_state.clone();
+    }
 }
 
 #[cfg(test)]
