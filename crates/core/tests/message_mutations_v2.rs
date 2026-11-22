@@ -81,6 +81,43 @@ fn stale_edit_cannot_roll_back_a_newer_cached_message_or_preview() {
 }
 
 #[test]
+fn delayed_history_page_cannot_roll_back_a_live_message_edit() {
+    let mut state = CoreState::default();
+    seed_chat(&mut state, 7);
+    let original = message(7, 10, 100, "before");
+    state.reduce(&CoreEvent::MessagesLoaded {
+        chat_id: 7,
+        messages: vec![original.clone()],
+    });
+    state.reduce(&CoreEvent::MessagesPageLoading {
+        chat_id: 7,
+        before_message_id: None,
+    });
+
+    let mut edited = original.clone();
+    edited.text = "after".into();
+    edited.edited = true;
+    edited.edit_timestamp_unix = Some(150);
+    state.reduce(&CoreEvent::MessageEdited(edited.clone()));
+
+    // This page was requested before the live edit and therefore contains an
+    // older Telegram snapshot for the same message ID.
+    state.reduce(&CoreEvent::MessagesPageLoaded {
+        chat_id: 7,
+        before_message_id: None,
+        messages: vec![original],
+        next_before_message_id: None,
+        has_more: false,
+    });
+
+    assert_eq!(state.messages_for_chat(7), &[edited.clone()]);
+    assert_eq!(
+        state.chat(7).and_then(|chat| chat.last_message.as_ref()),
+        Some(&edited)
+    );
+}
+
+#[test]
 fn duplicate_edit_is_idempotent_and_does_not_clear_later_error() {
     let mut state = CoreState::default();
     seed_chat(&mut state, 7);
