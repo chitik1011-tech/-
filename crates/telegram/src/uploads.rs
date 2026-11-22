@@ -173,6 +173,7 @@ pub(crate) fn spawn_media_send(
         .with_session_token(session_generation, session_epoch);
         let mut reader = ProgressReader {
             inner: file,
+            expected_bytes: media.size_bytes,
             transferred: 0,
             last_reported: 0,
             threshold: (media.size_bytes / 100)
@@ -189,8 +190,8 @@ pub(crate) fn spawn_media_send(
             .upload_stream(&mut reader, upload_size, media.file_name.clone())
             .await
         {
-            Ok(uploaded) => uploaded,
-            Err(_) => {
+            Ok(uploaded) if reader.transferred == media.size_bytes => uploaded,
+            Ok(_) => {
                 fail_attempt(
                     &transfers,
                     active,
@@ -199,8 +200,31 @@ pub(crate) fn spawn_media_send(
                     chat_id,
                     media,
                     caption,
-                    "Telegram media upload failed",
-                    true,
+                    "Selected file changed during upload",
+                    false,
+                    transfer_generation,
+                    session_generation,
+                    session_epoch,
+                )
+                .await;
+                return;
+            }
+            Err(error) => {
+                let file_changed = error.kind() == io::ErrorKind::UnexpectedEof;
+                fail_attempt(
+                    &transfers,
+                    active,
+                    &updates,
+                    client_id,
+                    chat_id,
+                    media,
+                    caption,
+                    if file_changed {
+                        "Selected file changed during upload"
+                    } else {
+                        "Telegram media upload failed"
+                    },
+                    !file_changed,
                     transfer_generation,
                     session_generation,
                     session_epoch,
@@ -332,6 +356,7 @@ async fn fail_attempt(
 
 struct ProgressReader {
     inner: File,
+    expected_bytes: u64,
     transferred: u64,
     last_reported: u64,
     threshold: u64,
@@ -351,9 +376,16 @@ impl AsyncRead for ProgressReader {
     ) -> Poll<io::Result<()>> {
         let this = self.get_mut();
         let before = buffer.filled().len();
+        let remaining_capacity = buffer.remaining();
         let result = Pin::new(&mut this.inner).poll_read(cx, buffer);
         if matches!(&result, Poll::Ready(Ok(()))) {
             let read = buffer.filled().len().saturating_sub(before) as u64;
+            if read == 0 && remaining_capacity > 0 && this.transferred < this.expected_bytes {
+                return Poll::Ready(Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "selected media file ended before its queued size",
+                )));
+            }
             if read > 0 {
                 this.transferred = this.transferred.saturating_add(read);
                 let current = this.transferred;
@@ -382,6 +414,81 @@ impl AsyncRead for ProgressReader {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{
+        fs,
+        sync::atomic::{AtomicU64, Ordering},
+    };
+    use tg_mobile_core::{OutgoingMediaKind, TransferDirection, backend_update_channel};
+
+    static TEST_FILE_ID: AtomicU64 = AtomicU64::new(0);
+
+    fn test_file_path() -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "tg-upload-size-{}-{}",
+            std::process::id(),
+            TEST_FILE_ID.fetch_add(1, Ordering::Relaxed),
+        ))
+    }
+
+    #[tokio::test]
+    async fn progress_reader_rejects_premature_eof_from_a_truncated_media_file() {
+        use tokio::io::AsyncReadExt;
+
+        let path = test_file_path();
+        fs::write(&path, b"12345").expect("create original file");
+        let file = File::open(&path).await.expect("open file");
+        tokio::fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .await
+            .expect("open writable file handle")
+            .set_len(3)
+            .await
+            .expect("truncate after opening read handle");
+
+        let media = OutgoingMediaAttachment {
+            kind: OutgoingMediaKind::Document,
+            path: path.to_string_lossy().into_owned(),
+            file_name: "document.bin".into(),
+            mime_type: "application/octet-stream".into(),
+            size_bytes: 5,
+            voice_duration_ms: None,
+            voice_waveform: None,
+            video_duration_ms: None,
+            video_width: None,
+            video_height: None,
+        };
+        let transfers = Arc::new(TransferManager::new());
+        let pending = transfers
+            .request(TransferDirection::Upload, "media-test", Some(5))
+            .expect("request upload");
+        let active = transfers.start_upload(pending.token).expect("start upload");
+        let (updates, _receiver) = backend_update_channel();
+        let base = OutgoingSend::uploading_media(1, 2, media, "", 0, 1);
+        let mut reader = ProgressReader {
+            inner: file,
+            expected_bytes: 5,
+            transferred: 0,
+            last_reported: 0,
+            threshold: 5,
+            token: active,
+            transfers,
+            updates,
+            base,
+            session_generation: 1,
+            session_epoch: 1,
+        };
+        let mut bytes = Vec::new();
+
+        let error = reader
+            .read_to_end(&mut bytes)
+            .await
+            .expect_err("a truncated file must not be treated as a successful upload stream");
+        assert_eq!(error.kind(), io::ErrorKind::UnexpectedEof);
+        assert_eq!(bytes, b"123");
+        drop(reader);
+        fs::remove_file(path).expect("remove temporary test file");
+    }
 
     #[test]
     fn upload_cancellation_and_send_submission_are_mutually_exclusive() {
