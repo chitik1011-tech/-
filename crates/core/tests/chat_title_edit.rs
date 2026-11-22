@@ -1,5 +1,5 @@
 use tg_mobile_core::{
-    CoreCommand, CoreError, CoreEvent, CoreState, PeerProfile, decode_command, encode_event,
+    decode_command, encode_event, CoreCommand, CoreError, CoreEvent, CoreState, PeerProfile,
     MAX_CHAT_TITLE_CHARS,
 };
 
