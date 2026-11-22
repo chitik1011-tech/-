@@ -40,6 +40,7 @@ import com.chitik.telegram.notifications.NotificationCleanupPolicy
 import com.chitik.telegram.notifications.NotificationCancellation
 import com.chitik.telegram.notifications.NotificationCancellationPolicy
 import com.chitik.telegram.notifications.NotificationEventGate
+import com.chitik.telegram.notifications.NotificationVisibilityCoordinator
 import com.chitik.telegram.notifications.NotificationWireParser
 import com.chitik.telegram.notifications.TelegramNotificationPublisher
 import com.chitik.telegram.MediaAttachmentUi
@@ -334,6 +335,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
     private var voiceRecordingEpoch = 0L
     private val notifications = TelegramNotificationPublisher(application)
     private val notificationEventGate = NotificationEventGate()
+    private val notificationVisibilityCoordinator = NotificationVisibilityCoordinator()
     private val liveReadReceiptPolicy = LiveReadReceiptPolicy()
     private val connectivityManager = application.getSystemService(
         Context.CONNECTIVITY_SERVICE,
@@ -1710,37 +1712,43 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 null -> Unit
             }
         }
-        val message = notificationEventGate.incoming(
-            generation = generation,
-            eventType = type,
-            payload = payload,
-            authorized = _state.value.authorization == AuthorizationUiStep.Ready,
-        ) ?: return
-        val accountUserId = _state.value.accountUserId
-            ?.takeIf { _state.value.accountIdentityResolved && it > 0L }
-            ?: return
-        val chat = _state.value.chats.firstOrNull { it.id == message.chatId }
-        notifications.publish(
-            TelegramNotificationPublisher.IncomingMessage(
-                chatId = message.chatId,
-                accountUserId = accountUserId,
-                messageId = message.messageId,
-                chatTitle = chat?.title ?: "Telegram",
-                body = message.preview,
-                // Core peer IDs are positive for users and negative for groups/channels.
-                isGroup = message.chatId < 0L,
-            ),
-        )
+        notificationVisibilityCoordinator.withStableVisibility {
+            val message = notificationEventGate.incoming(
+                generation = generation,
+                eventType = type,
+                payload = payload,
+                authorized = _state.value.authorization == AuthorizationUiStep.Ready,
+            ) ?: return@withStableVisibility
+            val accountUserId = _state.value.accountUserId
+                ?.takeIf { _state.value.accountIdentityResolved && it > 0L }
+                ?: return@withStableVisibility
+            val chat = _state.value.chats.firstOrNull { it.id == message.chatId }
+            notifications.publish(
+                TelegramNotificationPublisher.IncomingMessage(
+                    chatId = message.chatId,
+                    accountUserId = accountUserId,
+                    messageId = message.messageId,
+                    chatTitle = chat?.title ?: "Telegram",
+                    body = message.preview,
+                    // Core peer IDs are positive for users and negative for groups/channels.
+                    isGroup = message.chatId < 0L,
+                ),
+            )
+        }
     }
 
     /** Keeps both notification decision and publisher suppression aligned with Android UI state. */
     fun setNotificationVisibility(foreground: Boolean, chatId: Long?) {
-        notificationEventGate.updateVisibility(foreground, chatId)
-        liveReadReceiptPolicy.updateVisibility(foreground, chatId)
-        notifications.setVisibleChat(
-            chatId = if (foreground) chatId else null,
-            accountUserId = _state.value.accountUserId,
+        notificationVisibilityCoordinator.updateVisibility(
+            updatePlanner = { notificationEventGate.updateVisibility(foreground, chatId) },
+            updatePublisher = {
+                notifications.setVisibleChat(
+                    chatId = if (foreground) chatId else null,
+                    accountUserId = _state.value.accountUserId,
+                )
+            },
         )
+        liveReadReceiptPolicy.updateVisibility(foreground, chatId)
     }
 
     private fun handleNativeEvent(generation: Long, type: String, payload: String) {
