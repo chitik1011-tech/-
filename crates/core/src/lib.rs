@@ -61,8 +61,9 @@ pub use model::{
     PeerProfile, ReactionRevision, ReadDirection, ReadReceipt, ReplyMetadata, Venue,
 };
 pub use peer::{
-    parse_peer_reference, MessageLink, MessageLinkMetadata, MessageLinkResolution, MessagePeer,
-    PeerParseError, PeerReference, PeerResolution, MAX_PEER_REFERENCE_LENGTH,
+    parse_chat_join_target, parse_peer_reference, ChatJoinTarget, MessageLink, MessageLinkMetadata,
+    MessageLinkResolution, MessagePeer, PeerParseError, PeerReference, PeerResolution,
+    MAX_CHAT_INVITE_HASH_LENGTH, MAX_PEER_REFERENCE_LENGTH,
 };
 pub use poll::{PollOption, PollSummary, MAX_POLL_OPTIONS};
 pub use runtime::{spawn_core, spawn_core_with_store, CoreHandle, PERSISTENCE_FLUSH_INTERVAL_MS};

@@ -593,6 +593,9 @@ impl MockTelegramBackend {
                 self.pinned_messages.remove(&chat_id);
                 Ok(vec![CoreEvent::ChatLeft { chat_id }])
             }
+            CoreCommand::JoinChat { .. } => Err(CoreError::Backend(
+                "joining chats requires the Telegram MTProto backend".into(),
+            )),
             CoreCommand::Logout => {
                 self.authorization = AuthorizationState::Closed;
                 Ok(vec![CoreEvent::AuthorizationChanged(

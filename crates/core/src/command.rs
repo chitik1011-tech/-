@@ -4,7 +4,7 @@ use crate::{
     chat_pagination::{MAX_CHAT_CURSOR_BYTES, MAX_CHAT_PAGE_LIMIT},
     contacts::{validate_contact_page, validate_contact_search},
     error::{CoreError, Result},
-    peer::parse_peer_reference,
+    peer::{parse_chat_join_target, parse_peer_reference},
     search::SearchMessagesRequest,
     send::OutgoingMediaAttachment,
 };
@@ -39,6 +39,11 @@ pub enum CoreCommand {
     /// Leave a group or channel and remove its local dialog snapshot.
     LeaveChat {
         chat_id: i64,
+    },
+    /// Join a public group/channel by username or a private chat by invite link.
+    /// The command is the explicit action; parsing a link alone never joins it.
+    JoinChat {
+        input: String,
     },
     /// Load one page from the authenticated account's Telegram contacts.
     LoadContacts {
@@ -230,6 +235,7 @@ impl CoreCommand {
             Self::LoadChatsPage { .. } => "load_chats_page",
             Self::LoadProfile { .. } => "load_profile",
             Self::LeaveChat { .. } => "leave_chat",
+            Self::JoinChat { .. } => "join_chat",
             Self::LoadContacts { .. } => "load_contacts",
             Self::LoadMessages { .. } => "load_messages",
             Self::LoadMessagesPage { .. } => "load_messages_page",
@@ -571,6 +577,9 @@ impl CoreCommand {
             | Self::MarkChatUnread { chat_id }
             | Self::MarkChatRead { chat_id } => validate_chat_id(*chat_id),
             Self::LeaveChat { chat_id } => validate_chat_id(*chat_id),
+            Self::JoinChat { input } => parse_chat_join_target(input)
+                .map(|_| ())
+                .map_err(Into::into),
             Self::UpdateDraft(draft) => draft.validate(),
             Self::ClearDraft {
                 chat_id,

@@ -6,7 +6,7 @@ license.workspace = true
 rust-version = "1.88"
 
 [dependencies]
-grammers-client = "=0.12.0"
+grammers-client = { version = "=0.12.0", features = ["parse_invite_link"] }
 grammers-mtproto = "=0.12.0"
 grammers-session = { version = "=0.12.0", features = ["sqlite-storage"] }
 tg-mobile-core = { path = "../core" }
