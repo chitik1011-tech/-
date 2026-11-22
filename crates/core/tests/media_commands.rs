@@ -160,6 +160,66 @@ fn media_transfer_events_update_only_the_target_attachment() {
 }
 
 #[test]
+fn message_reload_preserves_the_downloaded_local_attachment() {
+    let mut state = CoreState::default();
+    state.reduce(&CoreEvent::MessageAdded(message_with_photo()));
+    let path = PathBuf::from("/private/cache/item.media");
+
+    state.reduce(&CoreEvent::MediaTransferUpdated {
+        chat_id: 42,
+        message_id: 7,
+        attachment_index: 0,
+        session_generation: 0,
+        generation: 3,
+        state: AttachmentDownloadState::Downloaded {
+            local_path: path.clone(),
+        },
+    });
+    state.reduce(&CoreEvent::MessagesLoaded {
+        chat_id: 42,
+        messages: vec![message_with_photo()],
+    });
+
+    let attachment = &state.messages_for_chat(42)[0].attachments[0];
+    assert_eq!(attachment.download_generation, 3);
+    assert_eq!(
+        attachment.download_state,
+        AttachmentDownloadState::Downloaded { local_path: path }
+    );
+}
+
+#[test]
+fn editing_a_message_preserves_downloaded_state_for_unchanged_media() {
+    let mut state = CoreState::default();
+    state.reduce(&CoreEvent::MessageAdded(message_with_photo()));
+    let path = PathBuf::from("/private/cache/item.media");
+    state.reduce(&CoreEvent::MediaTransferUpdated {
+        chat_id: 42,
+        message_id: 7,
+        attachment_index: 0,
+        session_generation: 0,
+        generation: 4,
+        state: AttachmentDownloadState::Downloaded {
+            local_path: path.clone(),
+        },
+    });
+
+    let mut edited = message_with_photo();
+    edited.text = "updated caption".into();
+    edited.edited = true;
+    edited.edit_timestamp_unix = Some(2);
+    state.reduce(&CoreEvent::MessageEdited(edited));
+
+    let message = &state.messages_for_chat(42)[0];
+    assert_eq!(message.text, "updated caption");
+    assert_eq!(message.attachments[0].download_generation, 4);
+    assert_eq!(
+        message.attachments[0].download_state,
+        AttachmentDownloadState::Downloaded { local_path: path }
+    );
+}
+
+#[test]
 fn stale_progress_cannot_overwrite_cancellation_or_a_newer_retry() {
     let mut state = CoreState::default();
     state.reduce(&CoreEvent::MessageAdded(message_with_photo()));
