@@ -956,6 +956,20 @@ impl CoreState {
                 }
                 self.last_error = None;
             }
+            CoreEvent::ChatTitleChanged { chat_id, title } => {
+                if let Some(chat) = self
+                    .account
+                    .chats
+                    .iter_mut()
+                    .find(|chat| chat.id == *chat_id)
+                {
+                    chat.title.clone_from(title);
+                }
+                if let Some(profile) = self.profiles.get_mut(chat_id) {
+                    profile.display_name = Some(title.clone());
+                }
+                self.last_error = None;
+            }
             CoreEvent::MessageEdited(message) => {
                 if self.apply_message_edit(message) {
                     self.last_error = None;

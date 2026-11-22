@@ -1251,6 +1251,25 @@ fn command_capability_error(command: &CoreCommand, state: &CoreState) -> Option<
             }
             None
         }
+        CoreCommand::EditChatTitle { chat_id, .. } => {
+            let Some(capabilities) = state.chat_capabilities.get(chat_id) else {
+                return Some(
+                    "Telegram has not confirmed change-info permission; refresh chats first".into(),
+                );
+            };
+            if !matches!(
+                capabilities.chat_kind,
+                ChatKind::Group | ChatKind::Supergroup | ChatKind::Channel
+            ) {
+                return Some("Only groups and channels have editable titles".into());
+            }
+            if !capabilities.allows(ChatAction::ChangeInfo) {
+                return Some(
+                    "Telegram has not confirmed that you can change this chat's title".into(),
+                );
+            }
+            None
+        }
         _ => None,
     }
 }
@@ -1469,6 +1488,50 @@ mod capability_tests {
                 chat_id: -12,
                 chat_kind: ChatKind::Private,
                 can_ban_users: CapabilityValue::Known(true),
+                ..ChatCapabilities::default()
+            },
+        );
+        assert!(command_capability_error(&command, &state).is_some());
+    }
+
+    #[test]
+    fn changing_chat_title_requires_authoritative_change_info_right() {
+        let command = CoreCommand::EditChatTitle {
+            chat_id: -12,
+            title: "New group name".into(),
+        };
+        let mut state = CoreState::default();
+        state.account.authorization = crate::model::AuthorizationState::Ready;
+        assert!(command_capability_error(&command, &state).is_some());
+
+        state.chat_capabilities.insert(
+            -12,
+            ChatCapabilities {
+                chat_id: -12,
+                chat_kind: ChatKind::Supergroup,
+                can_change_info: CapabilityValue::Known(false),
+                ..ChatCapabilities::default()
+            },
+        );
+        assert!(command_capability_error(&command, &state).is_some());
+
+        state.chat_capabilities.insert(
+            -12,
+            ChatCapabilities {
+                chat_id: -12,
+                chat_kind: ChatKind::Channel,
+                can_change_info: CapabilityValue::Known(true),
+                ..ChatCapabilities::default()
+            },
+        );
+        assert_eq!(command_capability_error(&command, &state), None);
+
+        state.chat_capabilities.insert(
+            -12,
+            ChatCapabilities {
+                chat_id: -12,
+                chat_kind: ChatKind::Private,
+                can_change_info: CapabilityValue::Known(true),
                 ..ChatCapabilities::default()
             },
         );

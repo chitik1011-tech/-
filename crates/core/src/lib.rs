@@ -35,8 +35,8 @@ pub use chat_pagination::{
     ChatPage, ChatPaginationState, MAX_CHAT_CURSOR_BYTES, MAX_CHAT_PAGE_LIMIT,
 };
 pub use command::{
-    CoreCommand, MAX_CHAT_LOAD_LIMIT, MAX_EDIT_MESSAGE_TEXT_BYTES, MAX_MESSAGE_LOAD_LIMIT,
-    MAX_REACTION_BYTES,
+    CoreCommand, MAX_CHAT_LOAD_LIMIT, MAX_CHAT_TITLE_CHARS, MAX_EDIT_MESSAGE_TEXT_BYTES,
+    MAX_MESSAGE_LOAD_LIMIT, MAX_REACTION_BYTES,
 };
 pub use connection::ConnectionState;
 pub use connection_machine::{
