@@ -478,27 +478,21 @@ mod tests {
             assert!(parse_chat_join_target(input).is_err(), "{input}");
         }
 
-        assert!(
-            ChatJoinTarget::InviteHash {
-                hash: "valid_1".into()
-            }
-            .validate()
-            .is_ok()
-        );
-        assert!(
-            ChatJoinTarget::InviteHash {
-                hash: "bad/hash".into()
-            }
-            .validate()
-            .is_err()
-        );
-        assert!(
-            ChatJoinTarget::PublicUsername {
-                username: "A-valid".into()
-            }
-            .validate()
-            .is_err()
-        );
+        assert!(ChatJoinTarget::InviteHash {
+            hash: "valid_1".into()
+        }
+        .validate()
+        .is_ok());
+        assert!(ChatJoinTarget::InviteHash {
+            hash: "bad/hash".into()
+        }
+        .validate()
+        .is_err());
+        assert!(ChatJoinTarget::PublicUsername {
+            username: "A-valid".into()
+        }
+        .validate()
+        .is_err());
     }
 
     #[test]

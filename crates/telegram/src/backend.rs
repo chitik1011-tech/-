@@ -18,8 +18,8 @@ use grammers_client::{
 use tg_media_cache::{CacheConfig, MediaCache};
 use tg_mobile_core::{
     AttachmentDownloadState, AuthorizationState, BackendFuture, BackendUpdateReceiver,
-    BackendUpdateSender, ConnectionToken, CoreCommand, CoreError, CoreEvent, DownloadState,
-    ChatJoinTarget, ForwardMessagesResult, ForwardOutcome, MessageLinkResolution, MessagePeer,
+    BackendUpdateSender, ChatJoinTarget, ConnectionToken, CoreCommand, CoreError, CoreEvent,
+    DownloadState, ForwardMessagesResult, ForwardOutcome, MessageLinkResolution, MessagePeer,
     MessageSummary, OutgoingMediaAttachment, OutgoingSend, PeerReference, PeerResolution,
     TelegramBackend, TransferDirection, TransferError, TransferManager, TransferState,
     TransferToken, UploadState, backend_update_channel, parse_chat_join_target,
@@ -1260,13 +1260,9 @@ impl GrammersBackend {
                             .client
                             .resolve_username(&username)
                             .await
-                            .map_err(|error| {
-                                crate::error::api_error("resolve join target", error)
-                            })?
+                            .map_err(|error| crate::error::api_error("resolve join target", error))?
                             .ok_or_else(|| {
-                                CoreError::InvalidInput(
-                                    "Telegram username was not found".into(),
-                                )
+                                CoreError::InvalidInput("Telegram username was not found".into())
                             })?;
                         let joinable = match &peer {
                             Peer::Channel(_) => true,
@@ -1303,12 +1299,11 @@ impl GrammersBackend {
                         .client
                         .accept_invite_link(&format!("https://t.me/+{hash}"))
                         .await
-                        .map_err(|error| {
-                            crate::error::api_error("join Telegram invite", error)
-                        })?
+                        .map_err(|error| crate::error::api_error("join Telegram invite", error))?
                         .ok_or_else(|| {
                             CoreError::Backend(
-                                "Telegram did not confirm joining; the invite may require approval".into(),
+                                "Telegram did not confirm joining; the invite may require approval"
+                                    .into(),
                             )
                         })?,
                 };
