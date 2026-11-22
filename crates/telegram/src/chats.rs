@@ -129,18 +129,46 @@ pub(crate) async fn load_chats_page(
 }
 
 fn chat_summary(dialog: &grammers_client::peer::Dialog, chat_id: i64) -> ChatSummary {
+    let snapshot = dialog_snapshot_flags(&dialog.raw);
     ChatSummary {
         id: chat_id,
         title: dialog.peer().name().unwrap_or_default().to_owned(),
         unread_count: unread_count(&dialog.raw),
         unread_mentions_count: unread_mentions_count(&dialog.raw),
         unread_reactions_count: unread_reactions_count(&dialog.raw),
-        archived: None,
+        archived: snapshot.archived,
         muted: None,
-        pinned: None,
-        is_unread: None,
+        pinned: snapshot.pinned,
+        is_unread: snapshot.is_unread,
         last_message: dialog.last_message.as_ref().map(message_to_summary),
     }
+}
+
+/// Dialog snapshots are authoritative for Telegram's archive folder, pinned
+/// state, and manual unread marker. Preserve `None` for wrapper dialog forms
+/// that do not carry these account-specific fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct DialogSnapshotFlags {
+    archived: Option<bool>,
+    pinned: Option<bool>,
+    is_unread: Option<bool>,
+}
+
+fn dialog_snapshot_flags(dialog: &tl::enums::Dialog) -> DialogSnapshotFlags {
+    match dialog {
+        tl::enums::Dialog::Dialog(dialog) => DialogSnapshotFlags {
+            archived: Some(is_archive_folder(dialog.folder_id)),
+            pinned: Some(dialog.pinned),
+            is_unread: Some(dialog.unread_mark),
+        },
+        tl::enums::Dialog::Folder(_) | tl::enums::Dialog::Community(_) => {
+            DialogSnapshotFlags::default()
+        }
+    }
+}
+
+fn is_archive_folder(folder_id: Option<i32>) -> bool {
+    folder_id == Some(1)
 }
 
 fn unread_mentions_count(dialog: &tl::enums::Dialog) -> Option<u32> {
@@ -171,11 +199,19 @@ fn normalize_unread(value: i32) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_unread;
+    use super::{is_archive_folder, normalize_unread};
 
     #[test]
     fn unread_count_never_wraps_negative_values() {
         assert_eq!(normalize_unread(15), 15);
         assert_eq!(normalize_unread(-1), 0);
+    }
+
+    #[test]
+    fn archive_status_uses_the_server_folder_id() {
+        assert!(is_archive_folder(Some(1)));
+        assert!(!is_archive_folder(Some(0)));
+        assert!(!is_archive_folder(Some(2)));
+        assert!(!is_archive_folder(None));
     }
 }
