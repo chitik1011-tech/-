@@ -75,6 +75,7 @@ class VoicePlaybackCoordinator internal constructor(
     @Volatile
     var state: VoicePlaybackState = VoicePlaybackState()
         private set
+    private var playbackRequested = false
     private var resumeOnForeground = false
     private var hostStopped = false
     private var released = false
@@ -89,7 +90,7 @@ class VoicePlaybackCoordinator internal constructor(
     }
 
     fun toggle(file: File) {
-        if (released) return
+        if (released || hostStopped) return
         if (!file.isFile) {
             retirePlayer(stop = true)
             update(VoicePlaybackState(
@@ -100,11 +101,15 @@ class VoicePlaybackCoordinator internal constructor(
         }
         val currentPlayer = player
         val currentEpoch = playbackEpoch
-        if (state.filePath == file.absolutePath && currentPlayer != null && state.isPlaying) {
+        if (state.filePath == file.absolutePath && currentPlayer != null &&
+            (state.isPlaying || playbackRequested)
+        ) {
+            playbackRequested = false
             runPlayerAction(currentPlayer, currentEpoch) { it.pause() }
             return
         }
         if (state.filePath == file.absolutePath && currentPlayer != null) {
+            playbackRequested = true
             runPlayerAction(currentPlayer, currentEpoch) { it.play(file) }
             return
         }
@@ -126,8 +131,9 @@ class VoicePlaybackCoordinator internal constructor(
     fun onHostStop() {
         if (released || hostStopped) return
         hostStopped = true
-        resumeOnForeground = state.isPlaying
+        resumeOnForeground = state.isPlaying || playbackRequested
         if (resumeOnForeground) player?.let { current ->
+            playbackRequested = false
             runPlayerAction(current, playbackEpoch) { it.pause() }
         }
     }
@@ -138,6 +144,7 @@ class VoicePlaybackCoordinator internal constructor(
         if (resumeOnForeground) state.filePath?.let { path ->
             val file = File(path)
             if (file.isFile) player?.let { current ->
+                playbackRequested = true
                 runPlayerAction(current, playbackEpoch) { it.play(file) }
             } else {
                 toggle(file)
@@ -167,6 +174,7 @@ class VoicePlaybackCoordinator internal constructor(
         player = nextPlayer
         try {
             nextPlayer.setListener(listenerFor(nextPlayer, epoch))
+            playbackRequested = true
             nextPlayer.play(file)
         } catch (_: RuntimeException) {
             failPlayback(nextPlayer, epoch, "Не удалось воспроизвести голосовое сообщение")
@@ -176,12 +184,18 @@ class VoicePlaybackCoordinator internal constructor(
     private fun listenerFor(source: VoicePlayerPort, epoch: Long) = object : VoicePlayerPort.Listener {
         override fun onPlayingChanged(playing: Boolean) {
             if (!isCurrent(source, epoch)) return
+            if (playing && hostStopped) {
+                playbackRequested = false
+                runPlayerAction(source, epoch) { it.pause() }
+                return
+            }
             update(state.copy(isPlaying = playing, error = null))
             if (playing) startProgressTick(source, epoch) else stopProgressTick()
         }
 
         override fun onCompleted() {
             if (!isCurrent(source, epoch)) return
+            playbackRequested = false
             stopProgressTick()
             val durationMs = runCatching { source.durationMs() }
                 .getOrNull()
@@ -258,6 +272,7 @@ class VoicePlaybackCoordinator internal constructor(
         playbackEpoch++
         val previous = player
         player = null
+        playbackRequested = false
         stopProgressTick()
         if (previous != null) {
             runCatching { previous.setListener(null) }
