@@ -40,4 +40,31 @@ class AuthorizationSubmissionPolicyTest {
             assertFalse(canSubmitAuthorizationInput(step, AuthorizationUiStep.WaitingForCode, false))
         }
     }
+
+    @Test
+    fun floodWaitBlocksEveryAuthorizationStepUntilCountdownReachesZero() {
+        val inputSteps = listOf(
+            AuthorizationUiStep.WaitingForPhoneNumber,
+            AuthorizationUiStep.WaitingForCode,
+            AuthorizationUiStep.WaitingForPassword,
+        )
+        for (step in inputSteps) {
+            assertFalse(
+                canSubmitAuthorizationInput(
+                    currentStep = step,
+                    expectedStep = step,
+                    isLoading = false,
+                    retryAfterSeconds = 1,
+                ),
+            )
+            assertTrue(
+                canSubmitAuthorizationInput(
+                    currentStep = step,
+                    expectedStep = step,
+                    isLoading = false,
+                    retryAfterSeconds = 0,
+                ),
+            )
+        }
+    }
 }
