@@ -622,7 +622,7 @@ impl CoreState {
                         before_message_id.is_none_or(|cursor| *message_id < cursor)
                     });
                 let page_has_more = *has_more && next_cursor.is_some();
-                self.merge_message_page(*chat_id, messages, next_cursor, page_has_more);
+                self.merge_message_page(*chat_id, messages);
 
                 let history = self.message_history.entry(*chat_id).or_default();
                 history.loading = false;
@@ -648,6 +648,7 @@ impl CoreState {
                 history.loading = false;
                 history.requested_before_message_id = None;
                 history.error = Some(error.clone());
+                self.deleted_message_ids.remove(chat_id);
                 self.last_error = Some(error.clone());
             }
             CoreEvent::PinnedMessagesLoaded {
@@ -1178,13 +1179,7 @@ impl CoreState {
         self.refresh_chat_preview(chat_id);
     }
 
-    fn merge_message_page(
-        &mut self,
-        chat_id: i64,
-        messages: &[MessageSummary],
-        next_cursor: Option<i64>,
-        has_more: bool,
-    ) {
+    fn merge_message_page(&mut self, chat_id: i64, messages: &[MessageSummary]) {
         let mut page_ids = BTreeSet::new();
         let deleted_ids = self
             .deleted_message_ids
@@ -1223,24 +1218,10 @@ impl CoreState {
             cache.retain(|message| !evicted_ids.contains(&message.id));
         }
 
-        if has_more {
-            if let Some(next_cursor) = next_cursor {
-                let remove_tombstones =
-                    if let Some(deleted_ids) = self.deleted_message_ids.get_mut(&chat_id) {
-                        // Every later page is strictly older than this cursor, so
-                        // IDs at or above it can no longer be resurrected by paging.
-                        deleted_ids.retain(|message_id| *message_id < next_cursor);
-                        deleted_ids.is_empty()
-                    } else {
-                        false
-                    };
-                if remove_tombstones {
-                    self.deleted_message_ids.remove(&chat_id);
-                }
-            }
-        } else {
-            self.deleted_message_ids.remove(&chat_id);
-        }
+        // A new page request is issued only after this response is accepted.
+        // Future Telegram reads start after any deletion already observed, so
+        // these tombstones are needed only to filter this in-flight response.
+        self.deleted_message_ids.remove(&chat_id);
 
         self.refresh_chat_preview(chat_id);
     }

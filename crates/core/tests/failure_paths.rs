@@ -323,6 +323,36 @@ async fn shutdown_stops_without_waiting_for_in_flight_backend_command() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn shutdown_clears_tombstones_for_interrupted_message_pages() {
+    let (updates_tx, updates_rx) = mpsc::channel(8);
+    let store = MemoryStateStore::default();
+    let core = spawn_core_with_store(TestBackend::with_updates(updates_rx), store.clone());
+
+    updates_tx
+        .send(Ok(CoreEvent::MessagesPageLoading {
+            chat_id: 7,
+            before_message_id: None,
+        }))
+        .await
+        .unwrap();
+    updates_tx
+        .send(Ok(CoreEvent::MessagesDeleted {
+            chat_id: Some(7),
+            message_ids: vec![9],
+        }))
+        .await
+        .unwrap();
+    wait_for_state(&core, |state| state.deleted_message_ids.contains_key(&7)).await;
+
+    core.shutdown().await.unwrap();
+    wait_until_closed(&core).await;
+
+    let persisted = store.snapshot().unwrap().unwrap();
+    assert!(persisted.deleted_message_ids.is_empty());
+    assert!(!persisted.message_history[&7].loading);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn restart_restores_the_state_flushed_during_shutdown() {
     let store = MemoryStateStore::default();
     let mut initial = CoreState::default();
