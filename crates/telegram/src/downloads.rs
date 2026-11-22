@@ -5,7 +5,7 @@ use std::{
 };
 
 use grammers_client::{Client, media::Media};
-use tg_media_cache::{CacheLease, MediaCache};
+use tg_media_cache::{CacheLease, CacheWriter, MediaCache};
 use tg_mobile_core::{
     AttachmentDownloadState, BackendUpdateSender, CoreEvent, DownloadState, TransferManager,
     TransferSnapshot, TransferState, TransferToken,
@@ -208,17 +208,13 @@ async fn run_download(
         .await
         .map_err(|_| "Telegram media download failed".to_owned())?
     {
-        writer.write_all(&chunk).map_err(|error| {
-            if error.kind() == std::io::ErrorKind::FileTooLarge {
-                format!(
-                    "media is larger than the {}-byte download cache limit",
-                    cache.max_bytes()
-                )
-            } else {
-                "could not write downloaded media".to_owned()
-            }
-        })?;
-        transferred = transferred.saturating_add(chunk.len() as u64);
+        transferred = write_download_chunk(
+            &mut writer,
+            transferred,
+            &chunk,
+            target.total_bytes,
+            cache.max_bytes(),
+        )?;
         transfers
             .report_progress(active, transferred)
             .map_err(|_| "download progress state became invalid".to_owned())?;
@@ -258,6 +254,29 @@ async fn run_download(
         pending_publication.mark_published();
     }
     Ok(())
+}
+
+fn write_download_chunk(
+    writer: &mut CacheWriter,
+    transferred: u64,
+    chunk: &[u8],
+    expected_size: Option<u64>,
+    cache_limit: u64,
+) -> Result<u64, String> {
+    let next_total = transferred
+        .checked_add(chunk.len() as u64)
+        .ok_or_else(|| "downloaded media size overflowed".to_owned())?;
+    if expected_size.is_some_and(|expected| next_total > expected) {
+        return Err("Telegram media exceeded its advertised size".into());
+    }
+    writer.write_all(chunk).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::FileTooLarge {
+            format!("media is larger than the {cache_limit}-byte download cache limit")
+        } else {
+            "could not write downloaded media".to_owned()
+        }
+    })?;
+    Ok(next_total)
 }
 
 async fn emit_snapshots(
@@ -396,6 +415,29 @@ mod tests {
         assert!(validate_cache_size(Some(11), 10).is_err());
         assert!(validate_cache_size(Some(10), 10).is_ok());
         assert!(validate_cache_size(None, 10).is_ok());
+    }
+
+    #[test]
+    fn chunk_larger_than_telegram_media_size_is_rejected_before_cache_write() {
+        let (root, cache) = test_cache();
+        let reference = "telegram-media-overrun";
+        let mut writer = cache.begin_write(reference).expect("writer");
+
+        assert_eq!(
+            write_download_chunk(&mut writer, 0, b"abc", Some(5), 1024).expect("first chunk"),
+            3
+        );
+        assert_eq!(
+            write_download_chunk(&mut writer, 3, b"def", Some(5), 1024)
+                .expect_err("oversized media chunk"),
+            "Telegram media exceeded its advertised size"
+        );
+        drop(writer);
+
+        assert!(cache.get(reference).expect("lookup").is_none());
+        assert_eq!(cache.used_bytes().expect("cache size"), 0);
+        drop(cache);
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
