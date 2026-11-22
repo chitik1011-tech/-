@@ -548,9 +548,7 @@ impl CoreState {
                 }
             }
             CoreEvent::ChatsPageFailed { cursor, error } => {
-                if !self.chat_pagination.loading
-                    || self.chat_pagination.requested_cursor != *cursor
-                {
+                if !self.chat_pagination.loading || self.chat_pagination.requested_cursor != *cursor {
                     return;
                 }
                 self.chat_page_baseline = None;
