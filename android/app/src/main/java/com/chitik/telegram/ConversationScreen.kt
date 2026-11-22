@@ -859,12 +859,6 @@ fun ConversationScreen(
                                         groupPosition = groupPosition,
                                         voicePlaybackCoordinator = voicePlaybackCoordinator,
                                         onPollVote = onPollVote,
-                                        pinned = message.id in state.pinnedMessageIds,
-                                        pending = message.id in state.pendingPinnedMessageIds,
-                                        canTogglePin = state.capabilities.canPinMessages == true,
-                                        onTogglePin = {
-                                            onTogglePin(state.chatId, message.id, message.id in state.pinnedMessageIds)
-                                        },
                                         onOpenLocation = onOpenLocation,
                                         onDownloadMedia = { attachmentIndex, retry ->
                                             message.id.toLongOrNull()?.let { messageId ->
@@ -950,6 +944,9 @@ fun ConversationScreen(
         MessageActionDialog(
             message = message,
             mutationPending = state.messageMutationPending,
+            canPin = state.capabilities.canPinMessages == true,
+            pinned = message.id in state.pinnedMessageIds,
+            pinPending = message.id in state.pendingPinnedMessageIds,
             onDismiss = { actionTarget = null },
             onReply = {
                 onReplyMessage(message)
@@ -966,6 +963,10 @@ fun ConversationScreen(
             },
             onDelete = {
                 deletionTarget = message
+                actionTarget = null
+            },
+            onTogglePin = {
+                onTogglePin(message.chatId, message.id, message.id in state.pinnedMessageIds)
                 actionTarget = null
             },
         )
@@ -1131,10 +1132,6 @@ private fun MessageBubble(
     groupPosition: ConversationMessageGroupPosition,
     voicePlaybackCoordinator: VoicePlaybackCoordinator,
     onPollVote: (ConversationPollUi, List<List<Int>>) -> Unit,
-    pinned: Boolean,
-    pending: Boolean,
-    canTogglePin: Boolean,
-    onTogglePin: () -> Unit,
     onOpenLocation: (ConversationLocationUi) -> Unit,
     onDownloadMedia: (attachmentIndex: Int, retry: Boolean) -> Unit,
     onCancelMedia: (attachmentIndex: Int) -> Unit,
@@ -1248,14 +1245,6 @@ private fun MessageBubble(
                     )
                 }
                 ReactionRow(message.reactions, reactionPending, reactionError, onReaction)
-                
-                if (pending) {
-                    CircularProgressIndicator(modifier = Modifier.width(16.dp), strokeWidth = 2.dp)
-                } else if (canTogglePin) {
-                    TextButton(onClick = onTogglePin, contentPadding = PaddingValues(0.dp)) {
-                        Text(if (pinned) "Открепить" else "Закрепить", style = MaterialTheme.typography.labelSmall)
-                    }
-                }
                 if (message.timestamp.isNotBlank()) {
                     Spacer(Modifier.height(2.dp))
                     Row(
@@ -1287,12 +1276,23 @@ private fun MessageBubble(
 private fun MessageActionDialog(
     message: ConversationMessageUi,
     mutationPending: Boolean,
+    canPin: Boolean,
+    pinned: Boolean,
+    pinPending: Boolean,
     onDismiss: () -> Unit,
     onReply: () -> Unit,
     onSelectForForward: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
+    onTogglePin: () -> Unit,
 ) {
+    val pinAction = messagePinActionPresentation(
+        message = message,
+        canPin = canPin,
+        isPinned = pinned,
+        isPending = pinPending,
+        mutationPending = mutationPending,
+    )
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Действия с сообщением") },
@@ -1300,6 +1300,14 @@ private fun MessageActionDialog(
             Column {
                 TextButton(onClick = onReply, enabled = !mutationPending) { Text("Ответить") }
                 TextButton(onClick = onSelectForForward, enabled = !mutationPending) { Text("Выбрать для пересылки") }
+                pinAction.label?.let { label ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (pinAction.pending) {
+                            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                        }
+                        TextButton(onClick = onTogglePin, enabled = pinAction.enabled) { Text(label) }
+                    }
+                }
                 TextButton(onClick = onEdit, enabled = !mutationPending && canEditMessageText(message)) { Text("Изменить") }
                 TextButton(onClick = onDelete, enabled = !mutationPending) { Text("Удалить…") }
                 Text("«Удалить у меня» работает только в личных и обычных группах; каналы требуют удаления у всех.")
