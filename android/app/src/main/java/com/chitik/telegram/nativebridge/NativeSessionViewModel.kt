@@ -1,6 +1,10 @@
 package com.chitik.telegram.nativebridge
 
 import android.app.Application
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -139,6 +143,8 @@ data class NativeUiState(
     val voiceRecording: VoiceRecordingUiState = VoiceRecordingUiState(),
     val deleteError: String? = null,
     val busy: Boolean = false,
+    val connectionRecoveryNeeded: Boolean = false,
+    val connectionRecoveryAttempts: Int = 0,
     val lastEventType: String = "none",
     val lastEventPayload: String = "",
     val error: String? = null,
@@ -191,11 +197,14 @@ internal fun NativeUiState.applyConnectionLifecycle(payload: String): NativeUiSt
         "logout",
         "shutdown",
     )
+    val terminalFailure = eventType == "connect_failed" &&
+        event?.optBoolean("retryable", true) == false
     val generationChanged = token != null && reactionConnectionToken != null &&
         token != reactionConnectionToken
     val updated = copy(reactionConnectionToken = token ?: reactionConnectionToken)
-    return if (disconnected || generationChanged) {
+    return if (disconnected || generationChanged || terminalFailure || eventType == "transport_connected") {
         updated.copy(
+            connectionRecoveryNeeded = terminalFailure,
             chatActivities = emptyMap(),
             latestChatActivityGeneration = 0L,
         ).clearPendingReactionsAfterConnectionChange()
@@ -326,6 +335,28 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
     private val notifications = TelegramNotificationPublisher(application)
     private val notificationEventGate = NotificationEventGate()
     private val liveReadReceiptPolicy = LiveReadReceiptPolicy()
+    private val connectivityManager = application.getSystemService(
+        Context.CONNECTIVITY_SERVICE,
+    ) as? ConnectivityManager
+    private val connectionRecoveryInProgress = java.util.concurrent.atomic.AtomicBoolean(false)
+    @Volatile
+    private var recoveryNetwork: Network? = null
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) {
+            onValidatedNetworkChanged(network)
+        }
+
+        override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
+            if (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) {
+                onValidatedNetworkChanged(network)
+            }
+        }
+
+        override fun onLost(network: Network) {
+            // Keep the last identity: a flapping interface may reappear as the same Network.
+            // The attempt budget resets only after a genuinely different validated Network.
+        }
+    }
     @Volatile
     private var restartHandleAfterLogout = false
     private var authorizationRetryJob: Job? = null
@@ -333,8 +364,84 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
     private var contactsRequestCounter = 0L
 
     init {
+        try {
+            connectivityManager?.registerDefaultNetworkCallback(networkCallback)
+        } catch (_: Exception) {
+            // Activity resume remains a recovery trigger if callback registration is unavailable.
+        }
         restoreAuthorizationFloodWait()
         initializeNativeSession()
+    }
+
+    private fun onValidatedNetworkChanged(network: Network) {
+        val capabilities = connectivityManager?.getNetworkCapabilities(network) ?: return
+        if (!capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) return
+        if (recoveryNetwork != network) {
+            recoveryNetwork = network
+            _state.update { it.copy(connectionRecoveryAttempts = 0) }
+        }
+        tryRecoverTerminalConnection()
+    }
+
+    fun recoverConnectionIfNeeded() = tryRecoverTerminalConnection()
+
+    private fun isValidatedNetworkAvailable(): Boolean {
+        val manager = connectivityManager ?: return false
+        val network = manager.activeNetwork ?: return false
+        return try {
+            manager.getNetworkCapabilities(network)
+                ?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun tryRecoverTerminalConnection() {
+        val current = _state.value
+        if (!shouldAutomaticallyRecoverConnection(
+                authorized = current.authorization == AuthorizationUiStep.Ready,
+                terminalFailure = current.connectionRecoveryNeeded,
+                networkValidated = isValidatedNetworkAvailable(),
+                attempts = current.connectionRecoveryAttempts,
+            ) ||
+            !connectionRecoveryInProgress.compareAndSet(false, true)
+        ) return
+
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val before = _state.value
+                if (before.authorization != AuthorizationUiStep.Ready ||
+                    !before.connectionRecoveryNeeded ||
+                    !isValidatedNetworkAvailable()
+                ) return@launch
+                _state.update {
+                    it.copy(
+                        connectionRecoveryAttempts = it.connectionRecoveryAttempts + 1,
+                        busy = true,
+                    )
+                }
+                val config = TelegramRuntimeConfigStore.load(getApplication())
+                    ?: throw IllegalStateException("Telegram configuration is unavailable")
+                val newHandle = replaceNativeHandle(config)
+                lifecycle.runIfOpen {
+                    _state.update {
+                        it.copy(
+                            nativeHandle = newHandle,
+                            telegramConfigured = true,
+                            busy = false,
+                            error = null,
+                        )
+                    }
+                }
+                sendStartCommand()
+            } catch (error: Exception) {
+                lifecycle.runIfOpen {
+                    _state.update { it.copy(busy = false, error = error.message ?: error::class.java.simpleName) }
+                }
+            } finally {
+                connectionRecoveryInProgress.set(false)
+            }
+        }
     }
 
     private fun restoreAuthorizationFloodWait() {
@@ -1645,6 +1752,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                         lastEventPayload = payload,
                     )
                 }
+                if (_state.value.connectionRecoveryNeeded) tryRecoverTerminalConnection()
             }
             "messages_deleted" -> {
                 val deleted = parseDeletedMessages(payload)
@@ -2949,6 +3057,11 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
     }
 
     override fun onCleared() {
+        try {
+            connectivityManager?.unregisterNetworkCallback(networkCallback)
+        } catch (_: Exception) {
+            // Callback may not have been registered.
+        }
         cancelVoiceRecording()
         voiceRecorder.close()
         voiceRecordingJob?.cancel()

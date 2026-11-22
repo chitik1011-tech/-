@@ -397,7 +397,10 @@ private fun TelegramRustApp(
             updateVisibility(lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))
             val observer = LifecycleEventObserver { _, event ->
                 when (event) {
-                    Lifecycle.Event.ON_START -> updateVisibility(true)
+                    Lifecycle.Event.ON_START -> {
+                        updateVisibility(true)
+                        viewModel.recoverConnectionIfNeeded()
+                    }
                     Lifecycle.Event.ON_STOP -> updateVisibility(false)
                     else -> Unit
                 }
