@@ -40,6 +40,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Refresh
@@ -49,6 +50,7 @@ import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.ManageSearch
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -299,6 +301,7 @@ fun ChatListScreen(
                     )
                 }
             }
+            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             if (error != null && asyncContentErrorPlacement(contentMode) == AsyncContentErrorPlacement.Inline) {
                 ErrorRetryState(
                     title = "Couldn’t load chats", message = error,
@@ -308,18 +311,18 @@ fun ChatListScreen(
             when (contentMode) {
                 AsyncContentMode.Loading -> LoadingState(
                     message = "Loading chats…",
-                    modifier = Modifier.weight(1f).fillMaxWidth().padding(24.dp),
+                    modifier = Modifier.fillMaxSize().padding(24.dp),
                 )
                 AsyncContentMode.Empty -> EmptyState(
                     title = "No conversations yet",
                     description = "Your Telegram conversations will appear here.",
                     actionLabel = if (hasMoreChats && query.isBlank()) "Load more chats" else "Refresh chats",
                     onAction = if (hasMoreChats && query.isBlank()) onLoadMoreChats else onRefresh,
-                    modifier = Modifier.weight(1f).fillMaxWidth().padding(24.dp),
+                    modifier = Modifier.fillMaxSize().padding(24.dp),
                 )
                 AsyncContentMode.Error -> error?.let { message ->
                     Box(
-                        modifier = Modifier.weight(1f).fillMaxWidth().padding(24.dp),
+                        modifier = Modifier.fillMaxSize().padding(24.dp),
                         contentAlignment = Alignment.Center,
                     ) {
                         ErrorRetryState(
@@ -332,7 +335,7 @@ fun ChatListScreen(
                     }
                 }
                 AsyncContentMode.Content -> LazyColumn(
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    modifier = Modifier.fillMaxSize(),
                     state = listState,
                 ) {
                     if (visibleChats.isEmpty()) {
@@ -390,6 +393,15 @@ fun ChatListScreen(
                         }
                     }
                 }
+            }
+            if (chatListShouldShowNewChatAction(searching)) {
+                FloatingActionButton(
+                    onClick = onOpenContacts,
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
+                ) {
+                    Icon(Icons.Default.Edit, contentDescription = "New message")
+                }
+            }
             }
         }
     }
@@ -490,6 +502,8 @@ private fun ChatListRow(chat: ChatListEntry, selected: Boolean, onClick: () -> U
 }
 
 internal data class ChatListMessageSearchAction(val onClick: () -> Unit)
+
+internal fun chatListShouldShowNewChatAction(searching: Boolean): Boolean = !searching
 
 internal fun chatListMessageSearchAction(
     onOpenMessageSearch: (() -> Unit)?,
