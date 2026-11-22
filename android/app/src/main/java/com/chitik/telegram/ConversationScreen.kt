@@ -966,23 +966,27 @@ fun ConversationScreen(
                                 }
                             }
                         }
-                        AnimatedVisibility(
-                            visible = showFloatingDate && floatingDateLabel != null,
-                            enter = fadeIn(),
-                            exit = fadeOut(),
+                        Column(
                             modifier = Modifier.align(Alignment.TopCenter).padding(top = 6.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
                         ) {
-                            Surface(
-                                shape = RoundedCornerShape(14.dp),
-                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.92f),
-                                contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            AnimatedVisibility(
+                                visible = showFloatingDate && floatingDateLabel != null,
+                                enter = fadeIn(),
+                                exit = fadeOut(),
                             ) {
-                                Text(
-                                    text = floatingDateLabel.orEmpty(),
-                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
-                                    style = MaterialTheme.typography.labelMedium,
-                                    textAlign = TextAlign.Center,
-                                )
+                                Surface(
+                                    shape = RoundedCornerShape(14.dp),
+                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.92f),
+                                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                ) {
+                                    Text(
+                                        text = floatingDateLabel.orEmpty(),
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        textAlign = TextAlign.Center,
+                                    )
+                                }
                             }
                         }
                         if (showNewMessages) {
