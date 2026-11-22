@@ -526,10 +526,24 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
 
             val callback = object : NativeEventCallback {
                 override fun onNativeEvent(type: String, payload: String) {
-                    this@NativeSessionViewModel.onNativeEvent(
-                        creation.generation,
-                        type,
-                        payload,
+                    dispatchNativeCallbackSafely(
+                        dispatch = {
+                            this@NativeSessionViewModel.onNativeEvent(
+                                creation.generation,
+                                type,
+                                payload,
+                            )
+                        },
+                        onFailure = { error ->
+                            lifecycle.runIfOpen {
+                                _state.update {
+                                    it.copy(
+                                        busy = false,
+                                        error = "Could not process a Telegram update (${error::class.java.simpleName})",
+                                    )
+                                }
+                            }
+                        },
                     )
                 }
             }
