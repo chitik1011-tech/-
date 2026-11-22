@@ -5,6 +5,26 @@ import org.junit.Test
 
 class AsyncContentStatesTest {
     @Test
+    fun emptyLoadFailureIsCenteredWhileStaleContentFailureStaysInline() {
+        assertEquals(
+            AsyncContentErrorPlacement.Centered,
+            asyncContentErrorPlacement(AsyncContentMode.Error),
+        )
+        assertEquals(
+            AsyncContentErrorPlacement.Inline,
+            asyncContentErrorPlacement(AsyncContentMode.Content),
+        )
+        assertEquals(
+            AsyncContentErrorPlacement.Hidden,
+            asyncContentErrorPlacement(AsyncContentMode.Loading),
+        )
+        assertEquals(
+            AsyncContentErrorPlacement.Hidden,
+            asyncContentErrorPlacement(AsyncContentMode.Empty),
+        )
+    }
+
+    @Test
     fun resolvesLoadingEmptyErrorAndContentBranches() {
         assertEquals(
             AsyncContentMode.Loading,

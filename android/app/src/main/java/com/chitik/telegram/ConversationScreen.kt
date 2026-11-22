@@ -758,7 +758,10 @@ fun ConversationScreen(
                     }) { Text("Повторить") }
                 }
             }
-            state.error?.takeIf { contentMode != AsyncContentMode.Loading && state.deleteError == null }?.let { message ->
+            state.error?.takeIf {
+                asyncContentErrorPlacement(contentMode) == AsyncContentErrorPlacement.Inline &&
+                    state.deleteError == null
+            }?.let { message ->
                 ErrorRetryState(
                     title = "Не удалось загрузить сообщения",
                     message = message,
@@ -798,7 +801,20 @@ fun ConversationScreen(
                     modifier = Modifier.fillMaxSize().padding(24.dp),
                 )
 
-                AsyncContentMode.Error -> Unit
+                AsyncContentMode.Error -> state.error?.takeIf { state.deleteError == null }?.let { message ->
+                    Box(
+                        modifier = Modifier.fillMaxSize().weight(1f).padding(24.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        ErrorRetryState(
+                            title = "Не удалось загрузить сообщения",
+                            message = message,
+                            retryLabel = "Повторить",
+                            retryEnabled = !state.loading,
+                            onRetry = onRetry,
+                        )
+                    }
+                }
 
                 AsyncContentMode.Content -> {
                     Box(modifier = Modifier.fillMaxSize().weight(1f)) {

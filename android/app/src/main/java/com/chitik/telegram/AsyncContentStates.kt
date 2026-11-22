@@ -27,6 +27,19 @@ enum class AsyncContentMode {
     Content,
 }
 
+/** Places empty failures in the available viewport while keeping stale-data failures inline. */
+internal enum class AsyncContentErrorPlacement {
+    Hidden,
+    Centered,
+    Inline,
+}
+
+internal fun asyncContentErrorPlacement(mode: AsyncContentMode): AsyncContentErrorPlacement = when (mode) {
+    AsyncContentMode.Loading, AsyncContentMode.Empty -> AsyncContentErrorPlacement.Hidden
+    AsyncContentMode.Error -> AsyncContentErrorPlacement.Centered
+    AsyncContentMode.Content -> AsyncContentErrorPlacement.Inline
+}
+
 /** Resolves empty-screen state with loading taking precedence over stale errors. */
 fun resolveAsyncContentMode(
     isLoading: Boolean,
