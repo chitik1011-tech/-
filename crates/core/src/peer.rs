@@ -32,9 +32,7 @@ pub fn parse_chat_join_target(input: &str) -> Result<ChatJoinTarget, PeerParseEr
     if let Some(username) = input.strip_prefix('@') {
         let username = username.to_ascii_lowercase();
         validate_username(&username)?;
-        return Ok(ChatJoinTarget::PublicUsername {
-            username,
-        });
+        return Ok(ChatJoinTarget::PublicUsername { username });
     }
 
     if input.starts_with("http://") || input.starts_with("https://") {
@@ -74,9 +72,7 @@ fn parse_chat_join_url(input: &str) -> Result<ChatJoinTarget, PeerParseError> {
         [username] => {
             let username = username.to_ascii_lowercase();
             validate_username(&username)?;
-            Ok(ChatJoinTarget::PublicUsername {
-                username,
-            })
+            Ok(ChatJoinTarget::PublicUsername { username })
         }
         [invite] if invite.starts_with('+') => {
             let hash = &invite[1..];
