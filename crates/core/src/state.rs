@@ -1162,8 +1162,7 @@ impl CoreState {
         for message in messages.iter().filter(|message| message.chat_id == chat_id) {
             page_ids.insert(message.id);
             if let Some(index) = cache.iter().position(|cached| cached.id == message.id) {
-                let mut merged = message.clone();
-                preserve_reaction_snapshot(&cache[index], &mut merged);
+                let merged = merge_message_snapshot(&cache[index], message);
                 cache[index] = merged;
             } else {
                 cache.push(message.clone());
@@ -1486,6 +1485,9 @@ impl CoreState {
     fn upsert_message(&mut self, message: MessageSummary) -> bool {
         let messages = self.messages.entry(message.chat_id).or_default();
         let inserted = if let Some(index) = messages.iter().position(|item| item.id == message.id) {
+            // Live stream events are applied in receipt order. Keep the latest
+            // duplicate event authoritative; only history-page snapshots need
+            // edit-aware merging because their request may have predated an edit.
             let mut merged = message;
             preserve_reaction_snapshot(&messages[index], &mut merged);
             messages[index] = merged;
@@ -1560,6 +1562,16 @@ fn preserve_reaction_snapshot(existing: &MessageSummary, incoming: &mut MessageS
         incoming.reactions.clone_from(&existing.reactions);
         incoming.reaction_revision = existing.reaction_revision;
     }
+}
+
+fn merge_message_snapshot(existing: &MessageSummary, incoming: &MessageSummary) -> MessageSummary {
+    let mut merged = if message_edit_is_newer(existing, incoming) {
+        incoming.clone()
+    } else {
+        existing.clone()
+    };
+    preserve_reaction_snapshot(existing, &mut merged);
+    merged
 }
 
 #[cfg(test)]
