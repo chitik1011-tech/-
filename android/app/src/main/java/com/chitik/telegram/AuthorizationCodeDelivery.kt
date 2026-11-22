@@ -47,12 +47,39 @@ internal fun deliveryAfterAuthorizationChange(
 /** Phone submission starts a fresh code request, even if Telegram rejects the request. */
 internal fun deliveryAfterPhoneRequest(): LoginCodeDeliveryMethod? = null
 
-/** Ignore the bridge's default pre-restore snapshot until Core marks it authoritative. */
+/**
+ * Ignore pre-restore snapshots and drop code/2FA stages restored from disk: their Grammers
+ * LoginToken/PasswordToken lived only in the previous native handle and cannot be resumed.
+ */
 internal fun authorizationFromRestoreSnapshot(
     current: AuthorizationUiStep,
     snapshot: AuthorizationUiStep,
     restoreComplete: Boolean,
-): AuthorizationUiStep = if (restoreComplete) snapshot else current
+    priorRestoreComplete: Boolean = false,
+): AuthorizationUiStep = when {
+    !restoreComplete -> current
+    !priorRestoreComplete && snapshot in setOf(
+        AuthorizationUiStep.WaitingForCode,
+        AuthorizationUiStep.WaitingForPassword,
+    ) -> AuthorizationUiStep.WaitingForPhoneNumber
+    else -> snapshot
+}
+
+/** Explains when disk state refers to a challenge token that only existed in the old Rust handle. */
+internal fun authorizationRestoreRecoveryMessage(
+    snapshot: AuthorizationUiStep,
+    restoreComplete: Boolean,
+    priorRestoreComplete: Boolean,
+): String? = if (
+    restoreComplete && !priorRestoreComplete && snapshot in setOf(
+        AuthorizationUiStep.WaitingForCode,
+        AuthorizationUiStep.WaitingForPassword,
+    )
+) {
+    "Sign-in was interrupted. Enter your phone number to request a new code."
+} else {
+    null
+}
 
 internal fun authorizationUiCanOpen(
     libraryLoaded: Boolean,
