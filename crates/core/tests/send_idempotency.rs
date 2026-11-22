@@ -40,6 +40,7 @@ fn media_send_completion_survives_reconnect_but_not_retry_or_account_replacement
         mime_type: "audio/ogg".into(),
         size_bytes: 100,
         voice_duration_ms: Some(1_000),
+        voice_waveform: None,
         video_duration_ms: None,
         video_width: None,
         video_height: None,

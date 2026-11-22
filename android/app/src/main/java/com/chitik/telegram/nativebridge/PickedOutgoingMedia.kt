@@ -20,6 +20,7 @@ data class PickedOutgoingMedia(
     val videoWidth: Int? = null,
     val videoHeight: Int? = null,
     val voiceDurationMs: Long? = null,
+    val voiceWaveform: List<Int>? = null,
 )
 
 /**

@@ -37,6 +37,7 @@ class OutgoingTextSendSupportTest {
             mimeType = "audio/ogg",
             sizeBytes = 4096L,
             voiceDurationMs = 1_275L,
+            voiceWaveform = listOf(163, 60, 34, 15),
         )
         val wire = org.json.JSONObject(reliableMediaCommand(123L, -99L, media))
         val payload = wire.getJSONObject("payload")
@@ -46,6 +47,7 @@ class OutgoingTextSendSupportTest {
         assertEquals("audio/ogg", attachment.getString("mime_type"))
         assertEquals("voice-1.ogg", attachment.getString("file_name"))
         assertEquals(1_275L, attachment.getLong("voice_duration_ms"))
+        assertEquals(163, attachment.getJSONArray("voice_waveform").getInt(0))
         assertEquals(-99L, payload.getLong("chat_id"))
     }
 
@@ -109,10 +111,11 @@ class OutgoingTextSendSupportTest {
 
     @Test
     fun voiceOutboxPreservesDurationAndRejectsMissingVoiceMetadata() {
-        val event = """{"type":"message_send_state_changed","payload":{"client_id":43,"chat_id":99,"text":"","media":{"kind":"voice","path":"/private/voice.ogg","file_name":"voice.ogg","mime_type":"audio/ogg","size_bytes":4096,"voice_duration_ms":1275},"state":{"status":"uploading","bytes_transferred":2048,"total_bytes":4096}}}"""
+        val event = """{"type":"message_send_state_changed","payload":{"client_id":43,"chat_id":99,"text":"","media":{"kind":"voice","path":"/private/voice.ogg","file_name":"voice.ogg","mime_type":"audio/ogg","size_bytes":4096,"voice_duration_ms":1275,"voice_waveform":[163,60,34,15]},"state":{"status":"uploading","bytes_transferred":2048,"total_bytes":4096}}}"""
         val send = parseOutgoingTextSendEvent(event)
         assertEquals("voice", send?.media?.kind)
         assertEquals(1_275L, send?.media?.voiceDurationMs)
+        assertEquals(listOf(163, 60, 34, 15), send?.media?.voiceWaveform)
         assertEquals(50, send?.progressPercent)
         assertTrue(send?.canCancel == true)
 

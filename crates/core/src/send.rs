@@ -29,6 +29,9 @@ pub struct OutgoingMediaAttachment {
     /// Voice recording length in milliseconds. Telegram stores voice duration in seconds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub voice_duration_ms: Option<u64>,
+    /// Telegram's packed little-endian 5-bit voice amplitude samples, when captured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub voice_waveform: Option<Vec<u8>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub video_duration_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -71,6 +74,14 @@ impl OutgoingMediaAttachment {
         }
         if self.kind != OutgoingMediaKind::Voice && self.voice_duration_ms.is_some() {
             return Err("voice duration can only be set for voice media".into());
+        }
+        if self.kind != OutgoingMediaKind::Voice && self.voice_waveform.is_some() {
+            return Err("voice waveform can only be set for voice media".into());
+        }
+        if self.voice_waveform.as_ref().is_some_and(|waveform| {
+            waveform.is_empty() || waveform.len() > 4096
+        }) {
+            return Err("voice waveform must contain between 1 and 4096 bytes".into());
         }
         if self.kind == OutgoingMediaKind::Voice {
             if !self.mime_type.eq_ignore_ascii_case("audio/ogg") {
@@ -440,6 +451,7 @@ mod tests {
             mime_type: "image/jpeg".into(),
             size_bytes: 512,
             voice_duration_ms: None,
+            voice_waveform: None,
             video_duration_ms: None,
             video_width: None,
             video_height: None,
@@ -496,6 +508,26 @@ mod tests {
         voice.mime_type = "audio/ogg".into();
         voice.file_name = "note.mp3".into();
         assert!(voice.validate().is_err());
+    }
+
+    #[test]
+    fn voice_waveform_is_bounded_and_only_valid_for_voice_media() {
+        let mut voice = valid_media();
+        voice.kind = OutgoingMediaKind::Voice;
+        voice.file_name = "note.ogg".into();
+        voice.mime_type = "audio/ogg".into();
+        voice.voice_duration_ms = Some(1_250);
+        voice.voice_waveform = Some(vec![0, 255, 31]);
+        assert!(voice.validate().is_ok());
+
+        voice.voice_waveform = Some(Vec::new());
+        assert!(voice.validate().is_err());
+        voice.voice_waveform = Some(vec![0; 4097]);
+        assert!(voice.validate().is_err());
+
+        let mut photo = valid_media();
+        photo.voice_waveform = Some(vec![0]);
+        assert!(photo.validate().is_err());
     }
 
     #[test]

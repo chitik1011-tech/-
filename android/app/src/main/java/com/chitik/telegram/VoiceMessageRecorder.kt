@@ -15,6 +15,8 @@ data class RecordedVoiceMessage internal constructor(
     val file: File,
     val durationMs: Long,
     val sizeBytes: Long,
+    /** Packed Telegram 5-bit amplitude samples captured while recording. */
+    val waveform: List<Int>?,
 ) {
     val path: String get() = file.absolutePath
     val fileName: String get() = file.name
@@ -97,6 +99,7 @@ internal class VoiceRecordingController(
         val file: File,
         val engine: VoiceRecordingEngine,
         val startedAtMs: Long,
+        val amplitudeSamples: MutableList<Int> = mutableListOf(),
     )
 
     private var active: ActiveRecording? = null
@@ -142,6 +145,22 @@ internal class VoiceRecordingController(
         }
     }
 
+    /** Samples the platform recorder between UI ticks without blocking the chat thread. */
+    @Synchronized
+    fun sampleAmplitude(): Int? {
+        val recording = active ?: return null
+        val amplitude = runCatching { recording.engine.sampleAmplitude() }.getOrNull()
+            ?.takeIf { it >= 0 } ?: return null
+        if (recording.amplitudeSamples.size >= MAX_AMPLITUDE_SAMPLES) {
+            val compacted = recording.amplitudeSamples.chunked(2)
+                .map { bucket -> bucket.maxOrNull() ?: 0 }
+            recording.amplitudeSamples.clear()
+            recording.amplitudeSamples.addAll(compacted)
+        }
+        recording.amplitudeSamples += amplitude
+        return amplitude
+    }
+
     @Synchronized
     fun stop(): VoiceRecorderResult {
         val recording = active ?: return VoiceRecorderResult.Failed(VoiceRecorderFailure.NOT_RECORDING)
@@ -171,7 +190,12 @@ internal class VoiceRecordingController(
             return VoiceRecorderResult.Failed(VoiceRecorderFailure.FINALIZATION_FAILED)
         }
         return VoiceRecorderResult.RecordingReady(
-            RecordedVoiceMessage(recording.file, durationMs, sizeBytes),
+            RecordedVoiceMessage(
+                recording.file,
+                durationMs,
+                sizeBytes,
+                packTelegramVoiceWaveform(recording.amplitudeSamples),
+            ),
         )
     }
 
@@ -195,6 +219,7 @@ internal class VoiceRecordingController(
         const val MIN_OGG_OPUS_API = 29
         const val MIN_DURATION_MS = 1_000L
         const val MAX_DURATION_MS = 48L * 60L * 60L * 1_000L
+        const val MAX_AMPLITUDE_SAMPLES = 4096
     }
 }
 
@@ -203,6 +228,7 @@ internal interface VoiceRecordingEngine {
     fun prepareAndStart(output: File)
     fun stop()
     fun release()
+    fun sampleAmplitude(): Int? = null
 }
 
 /** Uses the platform encoder directly; no alternate codec/container is ever written as `.ogg`. */
@@ -226,6 +252,8 @@ private class AndroidOggOpusRecorder : VoiceRecordingEngine {
     override fun stop() {
         checkNotNull(recorder).stop()
     }
+
+    override fun sampleAmplitude(): Int? = recorder?.maxAmplitude
 
     override fun release() {
         recorder?.release()

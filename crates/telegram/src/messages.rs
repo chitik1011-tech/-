@@ -872,7 +872,7 @@ fn voice_document_attributes(
     vec![
         Attribute::Voice {
             duration: Duration::from_secs(duration_seconds),
-            waveform: None,
+            waveform: attachment.voice_waveform.clone(),
         }
         .into(),
         Attribute::FileName(attachment.file_name.clone()).into(),
@@ -1176,6 +1176,7 @@ mod tests {
             mime_type: "audio/ogg".into(),
             size_bytes: 4096,
             voice_duration_ms: Some(1_250),
+            voice_waveform: Some(vec![0b1010_0011, 0b0011_1100]),
             video_duration_ms: None,
             video_width: None,
             video_height: None,
@@ -1184,7 +1185,9 @@ mod tests {
         assert!(matches!(
             &attributes[0],
             tl::enums::DocumentAttribute::Audio(audio)
-                if audio.voice && audio.duration == 2 && audio.waveform.is_none()
+                if audio.voice
+                    && audio.duration == 2
+                    && audio.waveform.as_deref() == Some([0b1010_0011, 0b0011_1100].as_slice())
         ));
         assert!(matches!(
             &attributes[1],
