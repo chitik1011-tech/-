@@ -100,6 +100,51 @@ fn pages_merge_in_server_order_deduplicate_and_keep_newer_live_messages() {
 }
 
 #[test]
+fn in_flight_dialog_snapshot_cannot_undo_live_chat_actions() {
+    let mut state = CoreState::default();
+    let initial = chat(8, "group", 0);
+    state.account.chats = vec![initial];
+    state.reduce(&CoreEvent::ChatsPageLoading { cursor: None });
+
+    state.reduce(&CoreEvent::ChatArchived {
+        chat_id: 8,
+        archived: true,
+    });
+    state.reduce(&CoreEvent::ChatMuted {
+        chat_id: 8,
+        muted: true,
+    });
+    state.reduce(&CoreEvent::ChatPinned {
+        chat_id: 8,
+        pinned: true,
+    });
+    state.reduce(&CoreEvent::ChatUnreadChanged {
+        chat_id: 8,
+        unread: false,
+    });
+
+    let mut stale = chat(8, "renamed on server", 0);
+    stale.unread_count = 4;
+    stale.archived = Some(false);
+    stale.muted = Some(false);
+    stale.pinned = Some(false);
+    stale.is_unread = Some(true);
+    state.reduce(&CoreEvent::ChatsPageLoaded(ChatPage {
+        requested_cursor: None,
+        chats: vec![stale],
+        next_cursor: None,
+    }));
+
+    let chat = &state.account.chats[0];
+    assert_eq!(chat.title, "renamed on server");
+    assert_eq!(chat.unread_count, 0);
+    assert_eq!(chat.archived, Some(true));
+    assert_eq!(chat.muted, Some(true));
+    assert_eq!(chat.pinned, Some(true));
+    assert_eq!(chat.is_unread, Some(false));
+}
+
+#[test]
 fn stale_completions_are_ignored_and_failed_cursor_can_be_retried() {
     let mut state = CoreState::default();
     state.reduce(&CoreEvent::ChatsPageLoading {
