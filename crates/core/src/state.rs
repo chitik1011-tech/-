@@ -346,7 +346,9 @@ impl CoreState {
                 self.last_error = None;
             }
             CoreEvent::AuthorizationChanged(authorization) => {
-                if *authorization != crate::model::AuthorizationState::Ready {
+                if self.account.authorization == crate::model::AuthorizationState::Ready
+                    && *authorization != crate::model::AuthorizationState::Ready
+                {
                     // A restored CoreState can outlive the Telegram session
                     // file. If startup discovers that authorization is gone,
                     // discard persisted account data before another account
