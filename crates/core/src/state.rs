@@ -880,7 +880,8 @@ impl CoreState {
                 self.outbox.retain(|_, send| send.chat_id != *chat_id);
                 self.last_error = None;
             }
-            CoreEvent::MessageMutationSucceeded { .. }
+            CoreEvent::ChatMemberInvited { .. }
+            | CoreEvent::MessageMutationSucceeded { .. }
             | CoreEvent::MessageMutationFailed { .. } => {}
             CoreEvent::MessageEdited(message) => {
                 if self.apply_message_edit(message) {

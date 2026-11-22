@@ -18,11 +18,11 @@ use grammers_client::{
 use tg_media_cache::{CacheConfig, MediaCache};
 use tg_mobile_core::{
     AttachmentDownloadState, AuthorizationState, BackendFuture, BackendUpdateReceiver,
-    BackendUpdateSender, ChatJoinTarget, ConnectionToken, CoreCommand, CoreError, CoreEvent,
-    DownloadState, ForwardMessagesResult, ForwardOutcome, MessageLinkResolution, MessagePeer,
-    MessageSummary, OutgoingMediaAttachment, OutgoingSend, PeerReference, PeerResolution,
-    TelegramBackend, TransferDirection, TransferError, TransferManager, TransferState,
-    TransferToken, UploadState, backend_update_channel, parse_chat_join_target,
+    BackendUpdateSender, ChatAction, ChatJoinTarget, ConnectionToken, CoreCommand, CoreError,
+    CoreEvent, DownloadState, ForwardMessagesResult, ForwardOutcome, MessageLinkResolution,
+    MessagePeer, MessageSummary, OutgoingMediaAttachment, OutgoingSend, PeerReference,
+    PeerResolution, TelegramBackend, TransferDirection, TransferError, TransferManager,
+    TransferState, TransferToken, UploadState, backend_update_channel, parse_chat_join_target,
 };
 use tokio::{
     sync::{broadcast, mpsc, watch},
@@ -1383,6 +1383,88 @@ impl GrammersBackend {
                 );
                 events
             }
+            CoreCommand::InviteUserToChat { chat_id, user_id } => {
+                self.require_ready().await?;
+                let chat_ref = find_peer(&self.peers, chat_id)
+                    .await
+                    .ok_or(TelegramBackendError::UnknownChat(chat_id))?;
+                if !matches!(chat_ref.id.kind(), PeerKind::Chat | PeerKind::Channel) {
+                    return Err(CoreError::InvalidInput(
+                        "users can only be invited to groups and channels".into(),
+                    ));
+                }
+                let chat_peer = self
+                    .client
+                    .resolve_peer(chat_ref.clone())
+                    .await
+                    .map_err(|error| crate::error::api_error("load invite permissions", error))?;
+                let capabilities = crate::capabilities::from_peer(&chat_peer, chat_id);
+                require_invite_permission(&capabilities)?;
+
+                let user_ref = find_peer(&self.peers, user_id).await.ok_or_else(|| {
+                    CoreError::InvalidInput(
+                        "invite target is not a resolved Telegram contact".into(),
+                    )
+                })?;
+                if user_ref.id.kind() != PeerKind::User {
+                    return Err(CoreError::InvalidInput(
+                        "invite target must be a Telegram user".into(),
+                    ));
+                }
+                let user = self
+                    .client
+                    .resolve_peer(user_ref)
+                    .await
+                    .map_err(|error| crate::error::api_error("resolve invite target", error))?;
+                if crate::ids::peer_id_to_core(user.id()) != user_id {
+                    return Err(CoreError::InvalidInput(
+                        "resolved invite target does not match the requested user id".into(),
+                    ));
+                }
+                let input_user = input_user_for_invite(&user)?;
+
+                match chat_ref.id.kind() {
+                    PeerKind::Chat => {
+                        let Peer::Group(group) = &chat_peer else {
+                            return Err(CoreError::InvalidInput(
+                                "Telegram chat target is not a basic group".into(),
+                            ));
+                        };
+                        let tl::enums::Chat::Chat(group) = &group.raw else {
+                            return Err(CoreError::InvalidInput(
+                                "Telegram group data is unavailable".into(),
+                            ));
+                        };
+                        self.client
+                            .invoke(&tl::functions::messages::AddChatUser {
+                                chat_id: group.id,
+                                user_id: input_user,
+                                fwd_limit: 0,
+                            })
+                            .await
+                            .map_err(|error| {
+                                crate::error::api_error("invite user to basic group", error)
+                            })?;
+                    }
+                    PeerKind::Channel => {
+                        self.client
+                            .invoke(&tl::functions::channels::InviteToChannel {
+                                channel: chat_ref.clone().into(),
+                                users: vec![input_user],
+                            })
+                            .await
+                            .map_err(|error| {
+                                crate::error::api_error("invite user to channel", error)
+                            })?;
+                    }
+                    _ => {
+                        return Err(CoreError::InvalidInput(
+                            "chat peer kind is not supported for invitations".into(),
+                        ));
+                    }
+                }
+                vec![CoreEvent::ChatMemberInvited { chat_id, user_id }]
+            }
             CoreCommand::LoadContacts {
                 offset,
                 limit,
@@ -2145,6 +2227,67 @@ impl GrammersBackend {
                 reason: "Telegram community peers are not yet supported".into(),
             },
         })
+    }
+}
+
+/// Permission snapshots are advisory only when they explicitly say `true`;
+/// unknown or denied rights must never issue a member-management RPC.
+fn require_invite_permission(
+    capabilities: &tg_mobile_core::ChatCapabilities,
+) -> tg_mobile_core::Result<()> {
+    match capabilities.permission(ChatAction::InviteUsers) {
+        tg_mobile_core::CapabilityValue::Known(true) => Ok(()),
+        tg_mobile_core::CapabilityValue::Known(false) => Err(CoreError::InvalidInput(
+            "Telegram permissions do not allow inviting users to this chat".into(),
+        )),
+        tg_mobile_core::CapabilityValue::Unknown => Err(CoreError::InvalidInput(
+            "Telegram did not report permission to invite users to this chat".into(),
+        )),
+    }
+}
+
+fn input_user_for_invite(peer: &Peer) -> tg_mobile_core::Result<tl::enums::InputUser> {
+    let Peer::User(user) = peer else {
+        return Err(CoreError::InvalidInput(
+            "invite target did not resolve to a Telegram user".into(),
+        ));
+    };
+    let tl::enums::User::User(user) = &user.raw else {
+        return Err(CoreError::InvalidInput(
+            "deleted Telegram users cannot be invited".into(),
+        ));
+    };
+    let Some(access_hash) = user.access_hash else {
+        return Err(CoreError::InvalidInput(
+            "Telegram did not provide an access hash for the invite target".into(),
+        ));
+    };
+    Ok(tl::enums::InputUser::User(tl::types::InputUser {
+        user_id: user.id,
+        access_hash,
+    }))
+}
+
+#[cfg(test)]
+mod invite_permission_tests {
+    use super::require_invite_permission;
+    use tg_mobile_core::{CapabilityValue, ChatCapabilities};
+
+    #[test]
+    fn only_an_authoritative_allowed_invite_permission_authorizes_the_rpc() {
+        let allowed = ChatCapabilities {
+            can_invite_users: CapabilityValue::Known(true),
+            ..ChatCapabilities::default()
+        };
+        let denied = ChatCapabilities {
+            can_invite_users: CapabilityValue::Known(false),
+            ..ChatCapabilities::default()
+        };
+        let unknown = ChatCapabilities::default();
+
+        assert!(require_invite_permission(&allowed).is_ok());
+        assert!(require_invite_permission(&denied).is_err());
+        assert!(require_invite_permission(&unknown).is_err());
     }
 }
 

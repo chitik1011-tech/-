@@ -45,6 +45,11 @@ pub enum CoreCommand {
     JoinChat {
         input: String,
     },
+    /// Invite one known Telegram user to a group or channel.
+    InviteUserToChat {
+        chat_id: i64,
+        user_id: i64,
+    },
     /// Load one page from the authenticated account's Telegram contacts.
     LoadContacts {
         offset: usize,
@@ -236,6 +241,7 @@ impl CoreCommand {
             Self::LoadProfile { .. } => "load_profile",
             Self::LeaveChat { .. } => "leave_chat",
             Self::JoinChat { .. } => "join_chat",
+            Self::InviteUserToChat { .. } => "invite_user_to_chat",
             Self::LoadContacts { .. } => "load_contacts",
             Self::LoadMessages { .. } => "load_messages",
             Self::LoadMessagesPage { .. } => "load_messages_page",
@@ -580,6 +586,16 @@ impl CoreCommand {
             Self::JoinChat { input } => parse_chat_join_target(input)
                 .map(|_| ())
                 .map_err(Into::into),
+            Self::InviteUserToChat { chat_id, user_id } => {
+                validate_chat_id(*chat_id)?;
+                if *user_id <= 0 {
+                    Err(CoreError::InvalidInput(
+                        "invite target user id must be positive".into(),
+                    ))
+                } else {
+                    Ok(())
+                }
+            }
             Self::UpdateDraft(draft) => draft.validate(),
             Self::ClearDraft {
                 chat_id,
