@@ -16,6 +16,13 @@ class ReplyTargetNavigationTest {
         assertEquals(-1, replyTargetIndex(messages, "3"))
     }
 
+    @Test
+    fun replyComposerExposesOnlyANonBlankNavigationTarget() {
+        assertEquals("18", replyComposerTargetId("18"))
+        assertEquals(null, replyComposerTargetId(null))
+        assertEquals(null, replyComposerTargetId("  "))
+    }
+
     private fun message(id: String) = ConversationMessageUi(
         id = id,
         chatId = "2",
