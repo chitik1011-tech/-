@@ -426,6 +426,13 @@ fn raw_peer_to_core(peer: &tl::enums::Peer) -> i64 {
     }
 }
 
+/// Telegram's inbox read updates carry the remaining unread count as a signed
+/// protocol integer. Treat a malformed negative value as unavailable instead
+/// of converting it to zero and clearing the chat's unread badge.
+fn inbox_unread_count(still_unread_count: i32) -> Option<u32> {
+    u32::try_from(still_unread_count).ok()
+}
+
 async fn next_with_recovery<S, F, Fut>(
     stream: &mut S,
     shutdown: &mut watch::Receiver<bool>,
@@ -956,7 +963,7 @@ async fn map_update(
                     chat_id: raw_peer_to_core(&update.peer),
                     direction: ReadDirection::Inbox,
                     max_message_id: i64::from(update.max_id),
-                    unread_count: Some(u32::try_from(update.still_unread_count).unwrap_or(0)),
+                    unread_count: inbox_unread_count(update.still_unread_count),
                 }])
             }
             tl::enums::Update::ReadHistoryOutbox(update) => {
@@ -972,7 +979,7 @@ async fn map_update(
                     chat_id: crate::ids::channel_id_to_core(update.channel_id),
                     direction: ReadDirection::Inbox,
                     max_message_id: i64::from(update.max_id),
-                    unread_count: Some(u32::try_from(update.still_unread_count).unwrap_or(0)),
+                    unread_count: inbox_unread_count(update.still_unread_count),
                 }])
             }
             tl::enums::Update::ReadChannelOutbox(update) => {
@@ -1068,9 +1075,9 @@ mod tests {
     use super::{
         ActivityGenerations, ActivitySignal, MAX_TRACKED_CHAT_ACTIVITIES, NextOutcome,
         RetryBackoff, UPDATE_RETRY_INITIAL_DELAY, UPDATE_RETRY_MAX_DELAY, UpdateSource,
-        activity_signal, emit_lifecycle, emit_update, is_transient_update_error,
-        map_raw_activity_update, message_added_if_new, next_with_recovery, update_token_is_current,
-        wait_for_current_attempt,
+        activity_signal, emit_lifecycle, emit_update, inbox_unread_count,
+        is_transient_update_error, map_raw_activity_update, message_added_if_new,
+        next_with_recovery, update_token_is_current, wait_for_current_attempt,
     };
     use super::{
         ConnectionState, TelegramUpdate, map_raw_dialog_unread_mark, map_raw_pinned_update,
@@ -1102,6 +1109,13 @@ mod tests {
             reactions: Vec::new(),
             reaction_revision: None,
         }
+    }
+
+    #[test]
+    fn malformed_negative_inbox_unread_count_is_not_treated_as_zero() {
+        assert_eq!(inbox_unread_count(-1), None);
+        assert_eq!(inbox_unread_count(0), Some(0));
+        assert_eq!(inbox_unread_count(23), Some(23));
     }
 
     #[test]
