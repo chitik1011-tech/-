@@ -732,6 +732,11 @@ fun ConversationScreen(
         ) {
             if (state.pinnedMessageIds.isNotEmpty()) {
                 val pinnedId = state.pinnedMessageIds.last()
+                val pinnedLabel = pinnedMessageBannerLabel(
+                    messageId = pinnedId,
+                    messages = state.messages,
+                    pinnedCount = state.pinnedMessageIds.size,
+                )
                 Surface(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
                     shape = RoundedCornerShape(12.dp),
@@ -744,11 +749,7 @@ fun ConversationScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
                         Text(
-                            text = if (state.pinnedMessageIds.size > 1) {
-                                "Закреплено: #$pinnedId (+${state.pinnedMessageIds.size - 1})"
-                            } else {
-                                "Закреплено: #$pinnedId"
-                            },
+                            text = pinnedLabel,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f),
