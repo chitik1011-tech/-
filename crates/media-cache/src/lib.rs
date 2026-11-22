@@ -25,6 +25,8 @@ static SHARED_STATES: OnceLock<Mutex<HashMap<PathBuf, Weak<Mutex<State>>>>> = On
 /// Configuration for a media cache.
 ///
 /// `root` should be an app-private directory supplied by the host application.
+/// Completed entries are bounded by `max_bytes`; concurrent staging writes share
+/// an additional aggregate budget of the same size.
 #[derive(Clone, Debug)]
 pub struct CacheConfig {
     pub root: PathBuf,
@@ -53,6 +55,7 @@ pub enum CacheError {
 struct State {
     leases: HashMap<String, usize>,
     last_access: HashMap<String, u64>,
+    staging_bytes: u64,
     clock: u64,
 }
 
@@ -98,7 +101,7 @@ impl MediaCache {
         Ok(cache)
     }
 
-    /// Maximum size of one completed cache entry and its staging write.
+    /// Maximum completed-cache size and aggregate in-progress staging-write size.
     pub fn max_bytes(&self) -> u64 {
         self.inner.max_bytes
     }
@@ -167,6 +170,7 @@ impl MediaCache {
             file: Some(file),
             written_bytes: 0,
             max_bytes: self.inner.max_bytes,
+            reservation_released: false,
             committed: false,
         })
     }
@@ -420,6 +424,7 @@ pub struct CacheWriter {
     file: Option<File>,
     written_bytes: u64,
     max_bytes: u64,
+    reservation_released: bool,
     committed: bool,
 }
 
@@ -461,6 +466,10 @@ impl CacheWriter {
         }
 
         let mut state = self.cache.lock_state()?;
+        if !self.reservation_released {
+            state.staging_bytes = state.staging_bytes.saturating_sub(self.written_bytes);
+            self.reservation_released = true;
+        }
         if state.leases.get(&self.key).copied().unwrap_or(0) > 0 {
             return Err(CacheError::InUse);
         }
@@ -503,15 +512,30 @@ impl Write for CacheWriter {
                 "cache entry exceeds its configured size limit",
             ));
         }
+        let mut state = self
+            .cache
+            .inner
+            .state
+            .lock()
+            .map_err(|_| io::Error::other("cache state lock was poisoned"))?;
+        let staging_remaining = self.max_bytes.saturating_sub(state.staging_bytes);
+        if staging_remaining == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::FileTooLarge,
+                "concurrent cache staging writes exceed the configured limit",
+            ));
+        }
         let allowed = buffer
             .len()
-            .min(usize::try_from(remaining).unwrap_or(usize::MAX));
+            .min(usize::try_from(remaining).unwrap_or(usize::MAX))
+            .min(usize::try_from(staging_remaining).unwrap_or(usize::MAX));
         let written = self
             .file
             .as_mut()
             .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "cache writer is closed"))?
             .write(&buffer[..allowed])?;
         self.written_bytes = self.written_bytes.saturating_add(written as u64);
+        state.staging_bytes = state.staging_bytes.saturating_add(written as u64);
         Ok(written)
     }
 
@@ -528,6 +552,12 @@ impl Drop for CacheWriter {
         if !self.committed {
             self.file.take();
             let _ = fs::remove_file(&self.temp_path);
+            if let Ok(mut state) = self.cache.lock_state() {
+                if !self.reservation_released {
+                    state.staging_bytes = state.staging_bytes.saturating_sub(self.written_bytes);
+                    self.reservation_released = true;
+                }
+            }
         }
     }
 }
@@ -583,6 +613,27 @@ mod tests {
             .expect("get")
             .is_none());
         assert_eq!(cache.used_bytes().expect("size"), 0);
+    }
+
+    #[test]
+    fn concurrent_staging_writes_share_the_cache_size_budget() {
+        let (_dir, cache) = cache(5);
+        let mut first = cache.begin_write("first-staging").expect("first writer");
+        first.write_all(b"1234").expect("first partial file");
+
+        let mut second = cache.begin_write("second-staging").expect("second writer");
+        let error = second
+            .write_all(b"abc")
+            .expect_err("aggregate staging bytes must stay bounded");
+        assert_eq!(error.kind(), io::ErrorKind::FileTooLarge);
+        assert_eq!(second.written_bytes, 1);
+        assert_eq!(cache.lock_state().expect("state").staging_bytes, 5);
+
+        drop(second);
+        assert_eq!(cache.lock_state().expect("state").staging_bytes, 4);
+        drop(first);
+        assert_eq!(cache.lock_state().expect("state").staging_bytes, 0);
+        assert_eq!(cache.used_bytes().expect("completed cache size"), 0);
     }
 
     #[test]
