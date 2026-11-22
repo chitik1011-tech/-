@@ -10,6 +10,7 @@ import com.chitik.telegram.authorizationFloodWaitMessage
 import com.chitik.telegram.authorizationFloodWaitSeconds
 import com.chitik.telegram.canSubmitAuthorizationInput
 import com.chitik.telegram.authorizationFromRestoreSnapshot
+import com.chitik.telegram.authorizationRestoreRecoveryMessage
 import com.chitik.telegram.deliveryAfterAuthorizationChange
 import com.chitik.telegram.deliveryAfterAuthorizationError
 import com.chitik.telegram.deliveryAfterPhoneRequest
@@ -2368,6 +2369,11 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 return@onSuccess
             }
             val restoreWasComplete = _state.value.sessionRestoreComplete
+            val restoreRecoveryMessage = authorizationRestoreRecoveryMessage(
+                snapshot = parsed.authorization,
+                restoreComplete = parsed.restoreComplete,
+                priorRestoreComplete = restoreWasComplete,
+            )
             if (NotificationCleanupPolicy.shouldClearOnRestoredAuthorizationState(
                     restoreWasComplete = restoreWasComplete,
                     restoreIsComplete = true,
@@ -2389,6 +2395,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                         current = it.authorization,
                         snapshot = parsed.authorization,
                         restoreComplete = parsed.restoreComplete,
+                        priorRestoreComplete = restoreWasComplete,
                     ),
                     sessionRestoreComplete = true,
                     chats = parsed.chats.map { chat ->
@@ -2412,7 +2419,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                     contactsLoading = false,
                     lastEventType = "state",
                     lastEventPayload = payloadWithoutPrivateState(payload),
-                    error = null,
+                    error = restoreRecoveryMessage,
                 ).let { parsedState ->
                     parsedState.activeTextSendId?.let(parsed.outbox::get)?.let(parsedState::applyOutgoingTextSend)
                         ?: parsedState

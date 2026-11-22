@@ -132,4 +132,60 @@ class AuthorizationCodeDeliveryTest {
         assertEquals(false, authorizationUiCanOpen(libraryLoaded = true, sessionRestoreComplete = false))
         assertEquals(true, authorizationUiCanOpen(libraryLoaded = true, sessionRestoreComplete = true))
     }
+
+    @Test
+    fun processRestoreDropsEphemeralCodeAndPasswordChallenges() {
+        for (challenge in listOf(
+            AuthorizationUiStep.WaitingForCode,
+            AuthorizationUiStep.WaitingForPassword,
+        )) {
+            assertEquals(
+                AuthorizationUiStep.WaitingForPhoneNumber,
+                authorizationFromRestoreSnapshot(
+                    current = AuthorizationUiStep.Starting,
+                    snapshot = challenge,
+                    restoreComplete = true,
+                    priorRestoreComplete = false,
+                ),
+            )
+            assertEquals(
+                "Sign-in was interrupted. Enter your phone number to request a new code.",
+                authorizationRestoreRecoveryMessage(
+                    snapshot = challenge,
+                    restoreComplete = true,
+                    priorRestoreComplete = false,
+                ),
+            )
+        }
+    }
+
+    @Test
+    fun liveAuthSnapshotsPreserveChallengesAndAuthorizedRestoreIsUnaffected() {
+        assertEquals(
+            AuthorizationUiStep.WaitingForCode,
+            authorizationFromRestoreSnapshot(
+                current = AuthorizationUiStep.WaitingForCode,
+                snapshot = AuthorizationUiStep.WaitingForCode,
+                restoreComplete = true,
+                priorRestoreComplete = true,
+            ),
+        )
+        assertEquals(
+            AuthorizationUiStep.Ready,
+            authorizationFromRestoreSnapshot(
+                current = AuthorizationUiStep.Starting,
+                snapshot = AuthorizationUiStep.Ready,
+                restoreComplete = true,
+                priorRestoreComplete = false,
+            ),
+        )
+        assertEquals(
+            null,
+            authorizationRestoreRecoveryMessage(
+                snapshot = AuthorizationUiStep.WaitingForCode,
+                restoreComplete = true,
+                priorRestoreComplete = true,
+            ),
+        )
+    }
 }
