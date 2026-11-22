@@ -463,7 +463,9 @@ impl CoreState {
                             // while a dialog page is in flight. Preserve only
                             // values that actually changed since request start,
                             // allowing the page to refresh all other fields.
-                            if existing.unread_count != at_request.unread_count {
+                            if existing.unread_count != at_request.unread_count
+                                || existing.is_unread != at_request.is_unread
+                            {
                                 incoming.unread_count = existing.unread_count;
                             }
                             if existing.archived != at_request.archived {
