@@ -346,6 +346,15 @@ impl CoreState {
                 self.last_error = None;
             }
             CoreEvent::AuthorizationChanged(authorization) => {
+                if self.account.authorization == crate::model::AuthorizationState::Ready
+                    && *authorization != crate::model::AuthorizationState::Ready
+                {
+                    // A restored CoreState can outlive the Telegram session
+                    // file. If startup discovers that authorization is gone,
+                    // discard persisted account data before another account
+                    // can sign in and reuse the same local client handle.
+                    self.clear_authenticated_session();
+                }
                 self.account.authorization = authorization.clone();
                 self.last_error = None;
             }
@@ -1847,6 +1856,41 @@ mod message_ordering_tests {
         assert!(state.last_error.is_none());
         assert_eq!(state.connection_machine.phase(), LinkPhase::Disconnected);
         assert_ne!(state.connection_machine.token(), token);
+    }
+
+    #[test]
+    fn lost_authorization_clears_restored_account_data_before_relogin() {
+        let mut state = CoreState::default();
+        seed_chat(&mut state, 1);
+        state.account.authorization = crate::model::AuthorizationState::Ready;
+        state.reduce(&CoreEvent::MessageAdded(message(7, 1, false)));
+        state
+            .outbox
+            .insert(900, OutgoingSend::sending(900, 42, "private pending text"));
+        state
+            .send_ledger
+            .insert(900, OutgoingSend::sending(900, 42, "private pending text"));
+        state.read_receipts.insert(
+            42,
+            ReadReceipt {
+                inbox_max_message_id: 7,
+                outbox_max_message_id: 0,
+            },
+        );
+
+        state.reduce(&CoreEvent::AuthorizationChanged(
+            crate::model::AuthorizationState::WaitingForPhoneNumber,
+        ));
+
+        assert_eq!(
+            state.account.authorization,
+            crate::model::AuthorizationState::WaitingForPhoneNumber
+        );
+        assert!(state.account.chats.is_empty());
+        assert!(state.messages.is_empty());
+        assert!(state.outbox.is_empty());
+        assert!(state.send_ledger.is_empty());
+        assert!(state.read_receipts.is_empty());
     }
 }
 
