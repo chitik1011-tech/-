@@ -30,9 +30,10 @@ impl ChatJoinTarget {
 pub fn parse_chat_join_target(input: &str) -> Result<ChatJoinTarget, PeerParseError> {
     let input = input.trim();
     if let Some(username) = input.strip_prefix('@') {
-        validate_username(username)?;
+        let username = username.to_ascii_lowercase();
+        validate_username(&username)?;
         return Ok(ChatJoinTarget::PublicUsername {
-            username: username.to_ascii_lowercase(),
+            username,
         });
     }
 
@@ -71,9 +72,10 @@ fn parse_chat_join_url(input: &str) -> Result<ChatJoinTarget, PeerParseError> {
     let segments: Vec<_> = path.split('/').collect();
     match segments.as_slice() {
         [username] => {
-            validate_username(username)?;
+            let username = username.to_ascii_lowercase();
+            validate_username(&username)?;
             Ok(ChatJoinTarget::PublicUsername {
-                username: username.to_ascii_lowercase(),
+                username,
             })
         }
         [invite] if invite.starts_with('+') => {
