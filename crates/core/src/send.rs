@@ -439,7 +439,12 @@ impl OutgoingSendState {
     pub const fn is_terminal(&self) -> bool {
         matches!(
             self,
-            Self::Sent { .. } | Self::Rejected { .. } | Self::Failed { retryable: false, .. }
+            Self::Sent { .. }
+                | Self::Rejected { .. }
+                | Self::Failed {
+                    retryable: false,
+                    ..
+                }
         )
     }
 }
