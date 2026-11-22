@@ -298,7 +298,7 @@ fun ChatListScreen(
                     )
                 }
             }
-            if (error != null && contentMode != AsyncContentMode.Loading) {
+            if (error != null && asyncContentErrorPlacement(contentMode) == AsyncContentErrorPlacement.Inline) {
                 ErrorRetryState(
                     title = "Couldn’t load chats", message = error,
                     retryLabel = "Try again", retryEnabled = !isLoading, onRetry = onRefresh,
@@ -316,7 +316,20 @@ fun ChatListScreen(
                     onAction = if (hasMoreChats && query.isBlank()) onLoadMoreChats else onRefresh,
                     modifier = Modifier.weight(1f).fillMaxWidth().padding(24.dp),
                 )
-                AsyncContentMode.Error -> Unit
+                AsyncContentMode.Error -> error?.let { message ->
+                    Box(
+                        modifier = Modifier.weight(1f).fillMaxWidth().padding(24.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        ErrorRetryState(
+                            title = "Couldn’t load chats",
+                            message = message,
+                            retryLabel = "Try again",
+                            retryEnabled = !isLoading,
+                            onRetry = onRefresh,
+                        )
+                    }
+                }
                 AsyncContentMode.Content -> LazyColumn(
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                     state = listState,
