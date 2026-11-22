@@ -5,6 +5,10 @@ internal fun canEditMessageText(message: ConversationMessageUi): Boolean =
     message.isOutgoing && message.text.isNotBlank() && message.poll == null &&
         message.serviceAction == null && message.location == null
 
+/** Text exposed by Telegram's long-press Copy action; media-only messages have no text action. */
+internal fun messageContextCopyText(message: ConversationMessageUi): String? =
+    message.text.takeIf(String::isNotBlank)
+
 // Core encodes channel peers below -1e12, while users and basic groups occupy the
 // remaining ranges. Delete-for-me is unsupported for channel peers by Telegram.
 internal fun supportsDeleteForMe(chatId: Long): Boolean = chatId > -1_000_000_000_000L
