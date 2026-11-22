@@ -84,6 +84,49 @@ fn load_contacts_command_round_trips_through_the_canonical_wire() {
 }
 
 #[test]
+fn add_contact_by_username_validates_and_round_trips_through_wire() {
+    let command = CoreCommand::AddContactByUsername {
+        username: "@Example_User".into(),
+    };
+    assert_eq!(command.kind(), "add_contact_by_username");
+    assert!(command.validate().is_ok());
+    assert!(CoreCommand::AddContactByUsername {
+        username: " Example_User ".into(),
+    }
+    .validate()
+    .is_ok());
+    let encoded = serde_json::to_string(&command).unwrap();
+    assert_eq!(decode_command(&encoded).unwrap(), command);
+
+    for username in ["", "@bad name", "tg://user?id=42", "https://t.me/+invite"] {
+        assert!(CoreCommand::AddContactByUsername {
+            username: username.into(),
+        }
+        .validate()
+        .is_err());
+    }
+}
+
+#[test]
+fn successful_contact_add_updates_book_even_while_a_list_request_is_active() {
+    let mut state = CoreState::default();
+    state.reduce(&CoreEvent::ContactsLoadStarted {
+        request_id: 3,
+        offset: 0,
+        query: Some("unrelated search".into()),
+    });
+    let contact = contact(44, "Katherine Johnson");
+    let event = CoreEvent::ContactAdded(contact.clone());
+    let wire = encode_event(&event).unwrap();
+    let decoded: CoreEvent = serde_json::from_str(&wire).unwrap();
+    assert_eq!(decoded, event);
+
+    state.reduce(&decoded);
+    assert_eq!(state.contacts.get(44), Some(&contact));
+    assert!(state.last_error.is_none());
+}
+
+#[test]
 fn refreshed_contact_pages_reduce_to_canonical_jni_state_without_phone_fields() {
     let mut state = CoreState::default();
     let first = CoreEvent::ContactsLoaded {

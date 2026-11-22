@@ -589,6 +589,11 @@ impl CoreState {
                 self.last_error = Some(error.clone());
             }
             CoreEvent::ContactsRefreshRequested => {}
+            CoreEvent::ContactAdded(contact) => {
+                if self.contacts.upsert(contact.clone()).unwrap_or(false) {
+                    self.last_error = None;
+                }
+            }
             CoreEvent::MessagesLoaded { chat_id, messages } => {
                 self.merge_messages(*chat_id, messages);
                 self.last_error = None;

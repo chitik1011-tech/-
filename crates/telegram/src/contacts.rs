@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 
 use grammers_client::{Client, peer::User, tl};
 use tg_mobile_core::{
-    Contact, ContactBook, CoreError, MAX_CONTACT_PAGE_LIMIT, normalize_contact_search_query,
-    validate_contact_search,
+    Contact, ContactBook, CoreError, MAX_CONTACT_PAGE_LIMIT, PeerReference,
+    normalize_contact_search_query, parse_peer_reference, validate_contact_search,
 };
 
 use crate::{
@@ -11,6 +11,100 @@ use crate::{
     error::api_error,
     ids::peer_id_to_core,
 };
+
+/// Save a resolved public username as an account contact through Telegram's real RPC.
+pub(crate) async fn add_contact_by_username(
+    client: &Client,
+    peers: &PeerRegistry,
+    input: &str,
+) -> tg_mobile_core::Result<Contact> {
+    let input = input.trim();
+    let normalized = if input.starts_with('@')
+        || input.starts_with("http://")
+        || input.starts_with("https://")
+    {
+        input.to_owned()
+    } else {
+        format!("@{input}")
+    };
+    let PeerReference::Username { username } = parse_peer_reference(&normalized)? else {
+        return Err(CoreError::InvalidInput(
+            "adding a contact requires a public Telegram username".into(),
+        ));
+    };
+    let Some(resolved) = client
+        .resolve_username(&username)
+        .await
+        .map_err(|error| api_error("resolve contact username", error))?
+    else {
+        return Err(CoreError::InvalidInput(
+            "Telegram username was not found".into(),
+        ));
+    };
+    let grammers_client::peer::Peer::User(user) = resolved else {
+        return Err(CoreError::InvalidInput(
+            "username does not identify a Telegram user".into(),
+        ));
+    };
+    if user.deleted() {
+        return Err(CoreError::InvalidInput(
+            "deleted Telegram users cannot be added as contacts".into(),
+        ));
+    }
+
+    let tl::enums::User::User(raw_user) = &user.raw else {
+        return Err(CoreError::InvalidInput(
+            "Telegram user details are unavailable".into(),
+        ));
+    };
+    let Some(access_hash) = raw_user.access_hash else {
+        return Err(CoreError::InvalidInput(
+            "Telegram did not provide an access hash for the contact".into(),
+        ));
+    };
+    let input_user = tl::enums::InputUser::User(tl::types::InputUser {
+        user_id: raw_user.id,
+        access_hash,
+    });
+    let first_name = user
+        .first_name()
+        .filter(|name| !name.trim().is_empty())
+        .or_else(|| user.username())
+        .unwrap_or("Telegram user")
+        .to_owned();
+    let last_name = user.last_name().unwrap_or_default().to_owned();
+
+    let _: tl::enums::Updates = client
+        .invoke(&tl::functions::contacts::AddContact {
+            add_phone_privacy_exception: false,
+            id: input_user,
+            first_name: first_name.clone(),
+            last_name: last_name.clone(),
+            phone: String::new(),
+            note: None,
+        })
+        .await
+        .map_err(|error| api_error("add Telegram contact", error))?;
+
+    let user_id = peer_id_to_core(user.id());
+    if let Some(peer_ref) = user
+        .to_ref()
+        .await
+        .map_err(|error| CoreError::Backend(error.to_string()))?
+    {
+        remember_peer(peers, user_id, peer_ref).await;
+    }
+    contact_summary(
+        user_id,
+        &first_name,
+        &last_name,
+        user.username(),
+        false,
+        user.is_bot(),
+        user.photo().map(|photo| photo.photo_id),
+        true,
+    )
+}
 
 /// Load Telegram's contact snapshot, remember usable peer references for direct
 /// conversation navigation, and return one stable-ID-ordered page.
