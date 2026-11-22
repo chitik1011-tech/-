@@ -10,7 +10,7 @@ use tokio::{
 use crate::{
     activity::{ChatActivityTracker, CHAT_ACTIVITY_EXPIRY_CHECK_INTERVAL_MS},
     backend::{BackendUpdateReceiver, TelegramBackend},
-    capabilities::CapabilityValue,
+    capabilities::{CapabilityValue, ChatAction, ChatKind},
     command::CoreCommand,
     connection_machine::{LinkEvent, LinkPhase},
     error::{CoreError, Result},
@@ -1213,6 +1213,25 @@ fn command_capability_error(command: &CoreCommand, state: &CoreState) -> Option<
                 }
             }
         }
+        CoreCommand::InviteUserToChat { chat_id, .. } => {
+            let Some(capabilities) = state.chat_capabilities.get(chat_id) else {
+                return Some(
+                    "Telegram has not confirmed invite permission; refresh chats first".into(),
+                );
+            };
+            if !matches!(
+                capabilities.chat_kind,
+                ChatKind::Group | ChatKind::Supergroup | ChatKind::Channel
+            ) {
+                return Some("Inviting users is only supported for groups and channels".into());
+            }
+            if !capabilities.allows(ChatAction::InviteUsers) {
+                return Some(
+                    "Telegram has not confirmed that you can invite users to this chat".into(),
+                );
+            }
+            None
+        }
         _ => None,
     }
 }
@@ -1343,6 +1362,50 @@ mod capability_tests {
             ChatCapabilities {
                 chat_id: 12,
                 chat_kind: crate::capabilities::ChatKind::Private,
+                ..ChatCapabilities::default()
+            },
+        );
+        assert!(command_capability_error(&command, &state).is_some());
+    }
+
+    #[test]
+    fn inviting_users_requires_group_kind_and_authoritative_invite_right() {
+        let command = CoreCommand::InviteUserToChat {
+            chat_id: -12,
+            user_id: 34,
+        };
+        let mut state = CoreState::default();
+        state.account.authorization = crate::model::AuthorizationState::Ready;
+        assert!(command_capability_error(&command, &state).is_some());
+
+        state.chat_capabilities.insert(
+            -12,
+            ChatCapabilities {
+                chat_id: -12,
+                chat_kind: ChatKind::Supergroup,
+                can_invite_users: CapabilityValue::Known(false),
+                ..ChatCapabilities::default()
+            },
+        );
+        assert!(command_capability_error(&command, &state).is_some());
+
+        state.chat_capabilities.insert(
+            -12,
+            ChatCapabilities {
+                chat_id: -12,
+                chat_kind: ChatKind::Group,
+                can_invite_users: CapabilityValue::Known(true),
+                ..ChatCapabilities::default()
+            },
+        );
+        assert_eq!(command_capability_error(&command, &state), None);
+
+        state.chat_capabilities.insert(
+            -12,
+            ChatCapabilities {
+                chat_id: -12,
+                chat_kind: ChatKind::Private,
+                can_invite_users: CapabilityValue::Known(true),
                 ..ChatCapabilities::default()
             },
         );

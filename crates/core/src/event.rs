@@ -157,6 +157,11 @@ pub enum CoreEvent {
     ChatLeft {
         chat_id: i64,
     },
+    /// Telegram accepted an invitation to add this user to a group or channel.
+    ChatMemberInvited {
+        chat_id: i64,
+        user_id: i64,
+    },
     ChatArchived {
         chat_id: i64,
         archived: bool,
@@ -303,6 +308,7 @@ impl CoreEvent {
             Self::MessageAdded(_) => "message_added",
             Self::ProfileUpdated(_) => "profile_updated",
             Self::ChatLeft { .. } => "chat_left",
+            Self::ChatMemberInvited { .. } => "chat_member_invited",
             Self::ChatArchived { .. } => "chat_archived",
             Self::ChatMuted { .. } => "chat_muted",
             Self::ChatPinned { .. } => "chat_pinned",
