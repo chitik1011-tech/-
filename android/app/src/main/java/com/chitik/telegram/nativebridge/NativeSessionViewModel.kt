@@ -20,6 +20,7 @@ import com.chitik.telegram.ChatListPreview
 import com.chitik.telegram.ChatCapabilitiesUi
 import com.chitik.telegram.parseChatCapabilities
 import com.chitik.telegram.ConversationMessageUi
+import com.chitik.telegram.isUnreadIncomingMessage
 import com.chitik.telegram.MessageTimestampFormatter
 import com.chitik.telegram.ConversationReactionUi
 import com.chitik.telegram.ReactionRevisionUi
@@ -2343,8 +2344,10 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
             val authorization = parseAuthorization(account.optString("authorization"))
             val chats = parseChats(account.optJSONArray("chats") ?: JSONArray())
             val polls = parsePolls(root.optJSONObject("polls"))
-            val readOutboxMaxIds = parseReadOutboxMaxIds(root.optJSONObject("read_receipts"))
-            val messages = parseMessages(root.optJSONObject("messages"), polls, readOutboxMaxIds)
+            val readReceipts = root.optJSONObject("read_receipts")
+            val readInboxMaxIds = parseReadMaxMessageIds(readReceipts, "inbox_max_message_id")
+            val readOutboxMaxIds = parseReadMaxMessageIds(readReceipts, "outbox_max_message_id")
+            val messages = parseMessages(root.optJSONObject("messages"), polls, readInboxMaxIds, readOutboxMaxIds)
             val profiles = parseProfiles(root.optJSONObject("profiles") ?: JSONObject())
             val contacts = parseContactListState(root.optJSONObject("contacts"))
             val capabilities = parseChatCapabilities(root.optJSONObject("chat_capabilities"))
@@ -2620,6 +2623,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
     private fun parseMessages(
         root: JSONObject?,
         polls: Map<Pair<Long, Long>, ConversationPollUi>,
+        readInboxMaxIds: Map<Long, Long>,
         readOutboxMaxIds: Map<Long, Long>,
     ): Map<Long, List<ConversationMessageUi>> {
         if (root == null) return emptyMap()
@@ -2633,6 +2637,8 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                 val messages = buildList {
                     for (index in 0 until array.length()) {
                         val message = array.optJSONObject(index) ?: continue
+                        val messageId = message.optLong("id")
+                        val isOutgoing = message.optBoolean("outgoing")
                         val timestamp = message.optLong("timestamp_unix")
                         val forwarded = message.optJSONObject("forwarded_from")
                         val forwardLabel = forwarded?.optString("sender_display_name")?.takeIf(String::isNotBlank)
@@ -2641,14 +2647,20 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                             ?: forwarded?.optLong("chat_id")?.takeIf { it != 0L }?.let { "чат $it" }
                         add(
                             ConversationMessageUi(
-                                id = message.optLong("id").toString(),
+                                id = messageId.toString(),
                                 chatId = chatId.toString(),
                                 text = message.optString("text"),
                                 timestamp = formatTimestamp(timestamp),
                                 dateSeparator = MessageTimestampFormatter.formatDateSeparator(timestamp),
-                                isOutgoing = message.optBoolean("outgoing"),
-                                isRead = message.optBoolean("outgoing") &&
-                                    message.optLong("id") <= (readOutboxMaxIds[chatId] ?: 0L),
+                                isOutgoing = isOutgoing,
+                                isRead = isOutgoing && messageId <= (readOutboxMaxIds[chatId] ?: 0L),
+                                // An outbox-only receipt creates a default inbox boundary of zero;
+                                // the shared policy treats that unknown boundary conservatively.
+                                isUnread = isUnreadIncomingMessage(
+                                    messageId = messageId,
+                                    isOutgoing = isOutgoing,
+                                    inboxReadBoundary = readInboxMaxIds[chatId],
+                                ),
                                 attachments = parseMediaAttachments(
                                     message.optJSONArray("attachments") ?: JSONArray(),
                                 ),
@@ -2660,7 +2672,7 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
                                     ?.toString(),
                                 serviceAction = parseServiceAction(message),
                                 location = parseLocation(message.optJSONObject("location")),
-                                poll = polls[chatId to message.optLong("id")],
+                                poll = polls[chatId to messageId],
                                 reactions = parseReactions(message.optJSONArray("reactions")),
                                 reactionRevision = parseReactionRevision(message.optJSONObject("reaction_revision")),
                             ),
@@ -2672,14 +2684,14 @@ class NativeSessionViewModel(application: Application) : AndroidViewModel(applic
         }
     }
 
-    private fun parseReadOutboxMaxIds(root: JSONObject?): Map<Long, Long> {
+    private fun parseReadMaxMessageIds(root: JSONObject?, key: String): Map<Long, Long> {
         if (root == null) return emptyMap()
         return buildMap {
             val keys = root.keys()
             while (keys.hasNext()) {
                 val chatId = keys.next().toLongOrNull() ?: continue
                 val receipt = root.optJSONObject(chatId.toString()) ?: continue
-                put(chatId, receipt.optLong("outbox_max_message_id", 0L).coerceAtLeast(0L))
+                put(chatId, receipt.optLong(key, 0L).coerceAtLeast(0L))
             }
         }
     }

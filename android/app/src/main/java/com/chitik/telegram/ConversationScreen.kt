@@ -143,6 +143,7 @@ data class ConversationMessageUi(
     val isOutgoing: Boolean,
     val attachments: List<MediaAttachmentUi> = emptyList(),
     val isRead: Boolean = false,
+    val isUnread: Boolean = false,
     val poll: ConversationPollUi? = null,
     val pollVoting: Boolean = false,
     val pollError: String? = null,
@@ -383,6 +384,9 @@ fun ConversationScreen(
         hasError = state.error != null,
     )
     val latestMessageId = state.messages.lastOrNull()?.id
+    val unreadBoundaryIndex = remember(state.messages) {
+        firstUnreadIncomingMessageIndex(state.messages)
+    }
     val submitMessage = remember(state.chatId, state.draft, state.sending, state.capabilities, onSend) {
         {
             val text = state.draft.trim()
@@ -847,6 +851,9 @@ fun ConversationScreen(
                                     if (showsDateSeparator) {
                                         ConversationDateSeparator(message.dateSeparator)
                                     }
+                                    if (index == unreadBoundaryIndex) {
+                                        ConversationUnreadSeparator()
+                                    }
                                     MessageBubble(
                                         message = message,
                                         groupPosition = groupPosition,
@@ -1088,6 +1095,27 @@ private fun ConversationDateSeparator(label: String) {
         ) {
             Text(
                 text = label,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
+                style = MaterialTheme.typography.labelMedium,
+                textAlign = TextAlign.Center,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ConversationUnreadSeparator() {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+        horizontalArrangement = Arrangement.Center,
+    ) {
+        Surface(
+            shape = RoundedCornerShape(14.dp),
+            color = MaterialTheme.colorScheme.primaryContainer,
+            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+        ) {
+            Text(
+                text = "Непрочитанные сообщения",
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
                 style = MaterialTheme.typography.labelMedium,
                 textAlign = TextAlign.Center,
