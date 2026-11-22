@@ -605,6 +605,9 @@ impl MockTelegramBackend {
             CoreCommand::KickChatMember { .. } => Err(CoreError::Backend(
                 "removing group members requires the Telegram MTProto backend".into(),
             )),
+            CoreCommand::EditChatTitle { .. } => Err(CoreError::Backend(
+                "editing chat titles requires the Telegram MTProto backend".into(),
+            )),
             CoreCommand::Logout => {
                 self.authorization = AuthorizationState::Closed;
                 Ok(vec![CoreEvent::AuthorizationChanged(

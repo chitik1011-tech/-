@@ -10,6 +10,7 @@ use crate::{
 };
 
 pub const MAX_CHAT_LOAD_LIMIT: usize = 500;
+pub const MAX_CHAT_TITLE_CHARS: usize = 128;
 pub const MAX_MESSAGE_LOAD_LIMIT: usize = 200;
 pub const MAX_EDIT_MESSAGE_TEXT_BYTES: usize = 64 * 1024;
 pub const MAX_REACTION_BYTES: usize = 128;
@@ -54,6 +55,11 @@ pub enum CoreCommand {
     KickChatMember {
         chat_id: i64,
         user_id: i64,
+    },
+    /// Change a group, supergroup, or channel title.
+    EditChatTitle {
+        chat_id: i64,
+        title: String,
     },
     /// Load one page from the authenticated account's Telegram contacts.
     LoadContacts {
@@ -252,6 +258,7 @@ impl CoreCommand {
             Self::JoinChat { .. } => "join_chat",
             Self::InviteUserToChat { .. } => "invite_user_to_chat",
             Self::KickChatMember { .. } => "kick_chat_member",
+            Self::EditChatTitle { .. } => "edit_chat_title",
             Self::LoadContacts { .. } => "load_contacts",
             Self::AddContactByUsername { .. } => "add_contact_by_username",
             Self::LoadMessages { .. } => "load_messages",
@@ -617,6 +624,19 @@ impl CoreCommand {
                 } else {
                     Ok(())
                 }
+            }
+            Self::EditChatTitle { chat_id, title } => {
+                validate_chat_id(*chat_id)?;
+                let title = title.trim();
+                if title.is_empty() {
+                    return Err(CoreError::InvalidInput("chat title is empty".into()));
+                }
+                if title.chars().count() > MAX_CHAT_TITLE_CHARS {
+                    return Err(CoreError::InvalidInput(format!(
+                        "chat title exceeds {MAX_CHAT_TITLE_CHARS} characters"
+                    )));
+                }
+                Ok(())
             }
             Self::UpdateDraft(draft) => draft.validate(),
             Self::ClearDraft {

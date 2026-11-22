@@ -1512,6 +1512,66 @@ impl GrammersBackend {
                     .map_err(|error| crate::error::api_error("kick Telegram chat member", error))?;
                 vec![CoreEvent::ChatMemberKicked { chat_id, user_id }]
             }
+            CoreCommand::EditChatTitle { chat_id, title } => {
+                self.require_ready().await?;
+                let chat_ref = find_peer(&self.peers, chat_id)
+                    .await
+                    .ok_or(TelegramBackendError::UnknownChat(chat_id))?;
+                if !matches!(chat_ref.id.kind(), PeerKind::Chat | PeerKind::Channel) {
+                    return Err(CoreError::InvalidInput(
+                        "only groups and channels have editable titles".into(),
+                    ));
+                }
+                let chat_peer = self
+                    .client
+                    .resolve_peer(chat_ref.clone())
+                    .await
+                    .map_err(|error| crate::error::api_error("load title permissions", error))?;
+                let capabilities = crate::capabilities::from_peer(&chat_peer, chat_id);
+                require_change_info_permission(&capabilities)?;
+                let title = title.trim().to_owned();
+
+                match chat_ref.id.kind() {
+                    PeerKind::Chat => {
+                        let Peer::Group(group) = &chat_peer else {
+                            return Err(CoreError::InvalidInput(
+                                "Telegram chat target is not a basic group".into(),
+                            ));
+                        };
+                        let tl::enums::Chat::Chat(group) = &group.raw else {
+                            return Err(CoreError::InvalidInput(
+                                "Telegram group data is unavailable".into(),
+                            ));
+                        };
+                        self.client
+                            .invoke(&tl::functions::messages::EditChatTitle {
+                                chat_id: group.id,
+                                title: title.clone(),
+                            })
+                            .await
+                            .map_err(|error| {
+                                crate::error::api_error("edit basic group title", error)
+                            })?;
+                    }
+                    PeerKind::Channel => {
+                        self.client
+                            .invoke(&tl::functions::channels::EditTitle {
+                                channel: chat_ref.into(),
+                                title: title.clone(),
+                            })
+                            .await
+                            .map_err(|error| {
+                                crate::error::api_error("edit group or channel title", error)
+                            })?;
+                    }
+                    _ => {
+                        return Err(CoreError::InvalidInput(
+                            "title editing is only supported for groups and channels".into(),
+                        ));
+                    }
+                }
+                vec![CoreEvent::ChatTitleChanged { chat_id, title }]
+            }
             CoreCommand::LoadContacts {
                 offset,
                 limit,
@@ -2312,6 +2372,20 @@ fn require_ban_permission(
     }
 }
 
+fn require_change_info_permission(
+    capabilities: &tg_mobile_core::ChatCapabilities,
+) -> tg_mobile_core::Result<()> {
+    match capabilities.permission(ChatAction::ChangeInfo) {
+        tg_mobile_core::CapabilityValue::Known(true) => Ok(()),
+        tg_mobile_core::CapabilityValue::Known(false) => Err(CoreError::InvalidInput(
+            "Telegram permissions do not allow changing this chat's title".into(),
+        )),
+        tg_mobile_core::CapabilityValue::Unknown => Err(CoreError::InvalidInput(
+            "Telegram did not report permission to change this chat's title".into(),
+        )),
+    }
+}
+
 fn input_user_for_invite(peer: &Peer) -> tg_mobile_core::Result<tl::enums::InputUser> {
     let Peer::User(user) = peer else {
         return Err(CoreError::InvalidInput(
@@ -2377,6 +2451,29 @@ mod ban_permission_tests {
         assert!(require_ban_permission(&allowed).is_ok());
         assert!(require_ban_permission(&denied).is_err());
         assert!(require_ban_permission(&unknown).is_err());
+    }
+}
+
+#[cfg(test)]
+mod change_info_permission_tests {
+    use super::require_change_info_permission;
+    use tg_mobile_core::{CapabilityValue, ChatCapabilities};
+
+    #[test]
+    fn only_an_authoritative_change_info_right_authorizes_title_rpc() {
+        let allowed = ChatCapabilities {
+            can_change_info: CapabilityValue::Known(true),
+            ..ChatCapabilities::default()
+        };
+        let denied = ChatCapabilities {
+            can_change_info: CapabilityValue::Known(false),
+            ..ChatCapabilities::default()
+        };
+        let unknown = ChatCapabilities::default();
+
+        assert!(require_change_info_permission(&allowed).is_ok());
+        assert!(require_change_info_permission(&denied).is_err());
+        assert!(require_change_info_permission(&unknown).is_err());
     }
 }
 
