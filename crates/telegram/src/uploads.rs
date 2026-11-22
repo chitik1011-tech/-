@@ -437,7 +437,14 @@ mod tests {
         let path = test_file_path();
         fs::write(&path, b"12345").expect("create original file");
         let file = File::open(&path).await.expect("open file");
-        file.set_len(3).await.expect("truncate after open");
+        tokio::fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .await
+            .expect("open writable file handle")
+            .set_len(3)
+            .await
+            .expect("truncate after opening read handle");
 
         let media = OutgoingMediaAttachment {
             kind: OutgoingMediaKind::Document,
