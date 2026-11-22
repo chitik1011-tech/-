@@ -108,6 +108,50 @@ fn matching_pages_merge_chronologically_and_advance_cursor() {
 }
 
 #[test]
+fn deleted_message_is_not_resurrected_by_an_in_flight_page() {
+    let mut state = CoreState::default();
+    state.reduce(&CoreEvent::MessagesPageLoading {
+        chat_id: 7,
+        before_message_id: None,
+    });
+
+    state.reduce(&CoreEvent::MessagesDeleted {
+        chat_id: Some(7),
+        message_ids: vec![7],
+    });
+    assert!(state.deleted_message_ids[&7].contains(&7));
+
+    state.reduce(&CoreEvent::MessagesPageLoaded {
+        chat_id: 7,
+        before_message_id: None,
+        messages: vec![message(6, 600), message(7, 700)],
+        next_before_message_id: Some(5),
+        has_more: true,
+    });
+
+    assert_eq!(
+        state
+            .messages_for_chat(7)
+            .iter()
+            .map(|message| message.id)
+            .collect::<Vec<_>>(),
+        vec![6]
+    );
+    // The next request is strictly older than the deleted ID, so its tombstone
+    // no longer needs to remain in persisted state.
+    assert!(!state.deleted_message_ids.contains_key(&7));
+}
+
+#[test]
+fn old_persisted_state_defaults_deleted_message_tombstones_to_empty() {
+    let mut value = serde_json::to_value(CoreState::default()).unwrap();
+    value.as_object_mut().unwrap().remove("deleted_message_ids");
+
+    let restored: CoreState = serde_json::from_value(value).unwrap();
+    assert!(restored.deleted_message_ids.is_empty());
+}
+
+#[test]
 fn older_page_survives_merge_into_a_full_message_cache() {
     let mut state = CoreState::default();
     let recent_window = (513..=1024)

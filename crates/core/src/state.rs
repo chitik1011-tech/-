@@ -54,6 +54,10 @@ pub struct CoreState {
     #[serde(default)]
     pub connection_machine: ConnectionMachine,
     pub messages: BTreeMap<i64, Vec<MessageSummary>>,
+    /// Deleted message IDs that may still appear in an in-flight history page.
+    /// Older persisted snapshots omit this field and default to an empty map.
+    #[serde(default)]
+    pub deleted_message_ids: BTreeMap<i64, BTreeSet<i64>>,
     #[serde(default)]
     pub profiles: BTreeMap<i64, PeerProfile>,
     /// FIFO order for the bounded, in-memory profile cache.
@@ -116,6 +120,7 @@ impl Default for CoreState {
             connection_state: ConnectionState::Disconnected,
             connection_machine: ConnectionMachine::default(),
             messages: BTreeMap::new(),
+            deleted_message_ids: BTreeMap::new(),
             profiles: BTreeMap::new(),
             profile_order: VecDeque::new(),
             read_receipts: BTreeMap::new(),
@@ -190,6 +195,13 @@ impl CoreState {
             return Err(CoreError::InvalidInput(format!(
                 "poll cache exceeds {MAX_CACHED_POLLS} entries"
             )));
+        }
+        for (chat_id, message_ids) in &self.deleted_message_ids {
+            if *chat_id == 0 || message_ids.iter().any(|id| *id <= 0) {
+                return Err(CoreError::InvalidInput(
+                    "deleted message state contains an invalid identifier".into(),
+                ));
+            }
         }
         let mut ordered_poll_ids = BTreeSet::new();
         if self
@@ -604,17 +616,18 @@ impl CoreState {
                     return;
                 }
 
-                self.merge_message_page(*chat_id, messages);
-
                 let next_cursor = (*next_before_message_id)
                     .filter(|message_id| *message_id > 0)
                     .filter(|message_id| {
                         before_message_id.is_none_or(|cursor| *message_id < cursor)
                     });
+                let page_has_more = *has_more && next_cursor.is_some();
+                self.merge_message_page(*chat_id, messages, next_cursor, page_has_more);
+
                 let history = self.message_history.entry(*chat_id).or_default();
                 history.loading = false;
                 history.requested_before_message_id = None;
-                history.has_more = *has_more && next_cursor.is_some();
+                history.has_more = page_has_more;
                 history.next_before_message_id = if history.has_more { next_cursor } else { None };
                 history.error = None;
                 self.last_error = None;
@@ -907,9 +920,19 @@ impl CoreState {
                     let mut updated = false;
                     match chat_id {
                         Some(chat_id) => {
-                            updated = self.delete_cached_messages(*chat_id, &deleted);
+                            updated |= self.record_in_flight_page_deletions(*chat_id, &deleted);
+                            updated |= self.delete_cached_messages(*chat_id, &deleted);
                         }
                         None => {
+                            let loading_chat_ids = self
+                                .message_history
+                                .iter()
+                                .filter(|(_, history)| history.loading)
+                                .map(|(chat_id, _)| *chat_id)
+                                .collect::<Vec<_>>();
+                            for chat_id in loading_chat_ids {
+                                updated |= self.record_in_flight_page_deletions(chat_id, &deleted);
+                            }
                             let mut chat_ids =
                                 self.messages.keys().copied().collect::<BTreeSet<_>>();
                             chat_ids.extend(self.account.chats.iter().map(|chat| chat.id));
@@ -1155,11 +1178,25 @@ impl CoreState {
         self.refresh_chat_preview(chat_id);
     }
 
-    fn merge_message_page(&mut self, chat_id: i64, messages: &[MessageSummary]) {
+    fn merge_message_page(
+        &mut self,
+        chat_id: i64,
+        messages: &[MessageSummary],
+        next_cursor: Option<i64>,
+        has_more: bool,
+    ) {
         let mut page_ids = BTreeSet::new();
+        let deleted_ids = self
+            .deleted_message_ids
+            .get(&chat_id)
+            .cloned()
+            .unwrap_or_default();
         let cache = self.messages.entry(chat_id).or_default();
 
-        for message in messages.iter().filter(|message| message.chat_id == chat_id) {
+        for message in messages
+            .iter()
+            .filter(|message| message.chat_id == chat_id && !deleted_ids.contains(&message.id))
+        {
             page_ids.insert(message.id);
             if let Some(index) = cache.iter().position(|cached| cached.id == message.id) {
                 let merged = merge_message_snapshot(&cache[index], message);
@@ -1186,7 +1223,50 @@ impl CoreState {
             cache.retain(|message| !evicted_ids.contains(&message.id));
         }
 
+        if has_more {
+            if let Some(next_cursor) = next_cursor {
+                let remove_tombstones =
+                    if let Some(deleted_ids) = self.deleted_message_ids.get_mut(&chat_id) {
+                        // Every later page is strictly older than this cursor, so
+                        // IDs at or above it can no longer be resurrected by paging.
+                        deleted_ids.retain(|message_id| *message_id < next_cursor);
+                        deleted_ids.is_empty()
+                    } else {
+                        false
+                    };
+                if remove_tombstones {
+                    self.deleted_message_ids.remove(&chat_id);
+                }
+            }
+        } else {
+            self.deleted_message_ids.remove(&chat_id);
+        }
+
         self.refresh_chat_preview(chat_id);
+    }
+
+    fn record_in_flight_page_deletions(&mut self, chat_id: i64, deleted: &BTreeSet<i64>) -> bool {
+        let Some(history) = self.message_history.get(&chat_id) else {
+            return false;
+        };
+        if !history.loading {
+            return false;
+        }
+
+        let cursor = history.requested_before_message_id;
+        let relevant = deleted
+            .iter()
+            .copied()
+            .filter(|message_id| cursor.is_none_or(|cursor| *message_id < cursor))
+            .collect::<Vec<_>>();
+        if !relevant.is_empty() {
+            let tombstones = self.deleted_message_ids.entry(chat_id).or_default();
+            let before = tombstones.len();
+            tombstones.extend(relevant);
+            tombstones.len() != before
+        } else {
+            false
+        }
     }
 
     fn refresh_chat_preview(&mut self, chat_id: i64) {
