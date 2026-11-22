@@ -21,6 +21,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
@@ -396,6 +397,7 @@ fun ChatListScreen(
 @Composable
 private fun ChatListRow(chat: ChatListEntry, selected: Boolean, onClick: () -> Unit) {
     val presentation = chat.toChatListRowPresentation()
+    val rowSemantics = chatListRowSemantics(presentation, selected)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -405,7 +407,8 @@ private fun ChatListRow(chat: ChatListEntry, selected: Boolean, onClick: () -> U
             )
             .clickable(onClick = onClick)
             .semantics(mergeDescendants = true) {
-                contentDescription = presentation.accessibilityLabel
+                contentDescription = rowSemantics.accessibilityLabel
+                this.selected = rowSemantics.selected
             }
             .heightIn(min = TelegramUiTokens.chatRowHeight)
             .padding(horizontal = TelegramUiTokens.horizontalInset, vertical = TelegramUiTokens.chatRowVerticalInset),
