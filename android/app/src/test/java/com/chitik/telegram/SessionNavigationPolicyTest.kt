@@ -49,17 +49,15 @@ class SessionNavigationPolicyTest {
 
     @Test
     fun preservesChatOnlyForTheSameResolvedAccount() {
-        assertFalse(
-            shouldClearChatSelectionForAccountMismatch(
-                selectedChatId = -41L,
+        assertTrue(
+            chatSelectionBelongsToActiveAccount(
                 selectedChatAccountUserId = 100L,
                 accountIdentityResolved = true,
                 activeAccountUserId = 100L,
             ),
         )
         assertFalse(
-            shouldClearChatSelectionForAccountMismatch(
-                selectedChatId = -41L,
+            chatSelectionBelongsToActiveAccount(
                 selectedChatAccountUserId = 100L,
                 accountIdentityResolved = false,
                 activeAccountUserId = null,

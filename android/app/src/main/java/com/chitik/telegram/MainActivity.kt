@@ -330,6 +330,8 @@ private fun TelegramRustApp(
         state.busy,
         state.loadingHistoryBefore,
         selectedChatId,
+        selectedChatAccountUserId,
+        state.accountIdentityResolved,
         state.messages,
         incomingLink,
         incomingNotificationRoute,
@@ -337,7 +339,11 @@ private fun TelegramRustApp(
         showGlobalMessageSearch,
     ) {
         val restoredChatId = selectedChatId
-        if (shouldLoadRestoredSelectedChat(
+        if (chatSelectionBelongsToActiveAccount(
+                selectedChatAccountUserId = selectedChatAccountUserId.takeIf { it > 0L },
+                accountIdentityResolved = state.sessionRestoreComplete && state.accountIdentityResolved,
+                activeAccountUserId = state.accountUserId,
+            ) && shouldLoadRestoredSelectedChat(
                 activityStateRestored = activityStateRestored,
                 sessionRestoreComplete = state.sessionRestoreComplete,
                 authorizationReady = state.authorization == AuthorizationUiStep.Ready,

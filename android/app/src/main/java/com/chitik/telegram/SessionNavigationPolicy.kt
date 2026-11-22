@@ -16,4 +16,12 @@ internal fun shouldClearChatSelectionForAccountMismatch(
     accountIdentityResolved: Boolean,
     activeAccountUserId: Long?,
 ): Boolean = selectedChatId != 0L && accountIdentityResolved &&
-    selectedChatAccountUserId != activeAccountUserId
+    !chatSelectionBelongsToActiveAccount(selectedChatAccountUserId, accountIdentityResolved, activeAccountUserId)
+
+/** A persisted chat selection is trusted only after matching a resolved positive Telegram ID. */
+internal fun chatSelectionBelongsToActiveAccount(
+    selectedChatAccountUserId: Long?,
+    accountIdentityResolved: Boolean,
+    activeAccountUserId: Long?,
+): Boolean = accountIdentityResolved && selectedChatAccountUserId != null &&
+    selectedChatAccountUserId > 0L && selectedChatAccountUserId == activeAccountUserId
