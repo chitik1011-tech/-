@@ -1,7 +1,7 @@
 use std::{
     collections::{HashMap, VecDeque},
     future::Future,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -82,6 +82,23 @@ fn cancel_download_transfer(
         Ok(token) => Ok(Some(token)),
         Err(TransferError::InvalidTransition { .. } | TransferError::StaleToken) => Ok(None),
         Err(error) => Err(error),
+    }
+}
+
+/// Returns a safe snapshot for a request that encounters an existing transfer
+/// task which has not quite exited yet. A completed transfer without its cache
+/// path must be restarted rather than surfaced as `NotDownloaded` to a waiter.
+fn active_download_state(
+    snapshot: &tg_mobile_core::TransferSnapshot,
+    local_path: Option<PathBuf>,
+    retry: bool,
+) -> Option<AttachmentDownloadState> {
+    match snapshot.state {
+        TransferState::Download(DownloadState::Downloaded) => {
+            local_path.map(|local_path| AttachmentDownloadState::Downloaded { local_path })
+        }
+        TransferState::Download(DownloadState::Failed | DownloadState::Cancelled) if retry => None,
+        _ => Some(state_from_snapshot(snapshot, None)),
     }
 }
 
@@ -814,12 +831,27 @@ impl GrammersBackend {
                                 .map(|existing| existing.event_generation)
                         })
                         .unwrap_or(snapshot.token.generation);
-                    return Ok(vec![media_event(
-                        &target,
-                        target.event_generation,
-                        session_generation,
-                        state_from_snapshot(&snapshot, None),
-                    )]);
+                    let local_path = if matches!(
+                        snapshot.state,
+                        TransferState::Download(DownloadState::Downloaded)
+                    ) {
+                        self.media_cache
+                            .get_with_expected_size(&target.reference, target.total_bytes)
+                            .map_err(|error| {
+                                CoreError::Backend(format!("media cache lookup failed: {error}"))
+                            })
+                            .map(|lease| lease.map(|lease| lease.path().to_path_buf()))?
+                    } else {
+                        None
+                    };
+                    if let Some(state) = active_download_state(&snapshot, local_path, retry) {
+                        return Ok(vec![media_event(
+                            &target,
+                            target.event_generation,
+                            session_generation,
+                            state,
+                        )]);
+                    }
                 }
             }
         }
@@ -832,21 +864,40 @@ impl GrammersBackend {
             .get_by_key(TransferDirection::Download, &target.reference)
             .map_err(|error| CoreError::Backend(error.to_string()))?
         {
-            if attach_download_target(
-                &mut self.media_tasks,
-                key,
-                &mut target,
-                retry,
-                snapshot.token.generation,
-            )
-            .is_some()
-            {
-                return Ok(vec![media_event(
-                    &target,
-                    target.event_generation,
-                    session_generation,
-                    state_from_snapshot(&snapshot, None),
-                )]);
+            let is_downloaded = matches!(
+                snapshot.state,
+                TransferState::Download(DownloadState::Downloaded)
+            );
+            let local_path = if is_downloaded {
+                self.media_cache
+                    .get_with_expected_size(&target.reference, target.total_bytes)
+                    .map_err(|error| {
+                        CoreError::Backend(format!("media cache lookup failed: {error}"))
+                    })
+                    .map(|lease| lease.map(|lease| lease.path().to_path_buf()))?
+            } else {
+                None
+            };
+            // A transfer is marked Downloaded before it finishes publishing its
+            // final event. Never join that task with a NotDownloaded snapshot;
+            // use the committed cache entry if present, otherwise restart below.
+            if let Some(state) = active_download_state(&snapshot, local_path, retry) {
+                if attach_download_target(
+                    &mut self.media_tasks,
+                    key,
+                    &mut target,
+                    retry,
+                    snapshot.token.generation,
+                )
+                .is_some()
+                {
+                    return Ok(vec![media_event(
+                        &target,
+                        target.event_generation,
+                        session_generation,
+                        state,
+                    )]);
+                }
             }
         }
 
@@ -2128,9 +2179,36 @@ mod shared_media_download_tests {
     };
 
     use super::{
-        ActiveMediaTask, MediaTarget, attach_download_target, detach_shared_download_target,
+        ActiveMediaTask, MediaTarget, active_download_state, attach_download_target,
+        detach_shared_download_target,
     };
     use tg_mobile_core::{DownloadState, TransferDirection, TransferManager, TransferState};
+
+    #[test]
+    fn completed_shared_task_is_not_rejoined_without_its_committed_cache_path() {
+        let transfers = TransferManager::new();
+        let remote = transfers
+            .request(TransferDirection::Download, "completed-media", Some(3))
+            .expect("request transfer");
+        let queued = transfers
+            .queue_download(remote.token)
+            .expect("queue transfer");
+        let downloading = transfers.start_download(queued).expect("start transfer");
+        let completed = transfers.complete(downloading).expect("complete transfer");
+        let snapshot = transfers.get(completed).expect("snapshot");
+
+        assert_eq!(active_download_state(&snapshot, None, true), None);
+        assert_eq!(
+            active_download_state(
+                &snapshot,
+                Some(std::path::PathBuf::from("/cache/completed.media")),
+                true,
+            ),
+            Some(tg_mobile_core::AttachmentDownloadState::Downloaded {
+                local_path: "/cache/completed.media".into(),
+            })
+        );
+    }
 
     #[tokio::test]
     async fn duplicate_attachment_joins_existing_download_instead_of_restarting_it() {
